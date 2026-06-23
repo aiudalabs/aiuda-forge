@@ -89,11 +89,27 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
   `TestEngineWorkdirAbsolute`, `TestDockerArgsUseAbsoluteMount`. Verified empirically: demo under
   Docker now reaches DONE with `step.gate passed=true`. Full suite `-race` green.
 
+- **Hardening (post-MVP) — heartbeat during step execution**: the in-process worker runs each step
+  synchronously and previously did NOT heartbeat while a step ran, so a long step (a real agent call >
+  the 60s reaper window) got requeued as "stale" and re-run — a duplicate PAID LLM call, with loop
+  risk. A live docker E2E surfaced it on the `review` step. Fix: `ExecuteOne` spawns a heartbeat
+  goroutine (`Engine.HeartbeatInterval`, 15s default) that pings liveness independently of how long the
+  runner blocks; stops on completion or stale fence. Regression test `TestHeartbeatKeepsLongStepAlive`
+  (slow runner >> stale window → 1 attempt, no requeue). Full E2E re-validated below.
+
+- **Full E2E (claude + Docker-isolated gate)** — re-ran `factory` with `VIBEFORGE_ENGINE=claude`,
+  `VIBEFORGE_SANDBOX=docker`, `VIBEFORGE_SANDBOX_IMAGE=python:3.12-slim`: implement (Claude) → **gate
+  inside a python:3.12-slim container** (egress-deny, absolute mount, 6 tests OK) → review (sonnet
+  cross-model, survived with heartbeats — no stale) → pr **pushed** to bare remote → **DONE**. Verified
+  by cloning the pushed branch and re-running its tests (6 OK). Cost $0.7763.
+
 ## Cost ledger (real claude -p calls)
 
 | Run | What | Cost (USD) | Cumulative |
 |---|---|---|---|
 | Wave 7 run #1 | factory: implement+gate+review (pr bug → FAILED) | $0.6771 | $0.6771 |
-| Wave 7 run #2 | factory full: implement→gate→review→pr → **DONE** | $0.6333 | **$1.3104** |
+| Wave 7 run #2 | factory full: implement→gate→review→pr → **DONE** | $0.6333 | $1.3104 |
+| E2E docker #1 | factory + docker gate (review reaped → killed early) | ~$0.20 | ~$1.51 |
+| E2E docker #2 | factory + docker gate, heartbeat fix → **DONE** | $0.7763 | **~$2.29** |
 
-Total real spend: **~$1.31 USD** (cap ~$40 — used ~3.3%). No further real runs needed.
+Total real spend: **~$2.29 USD** (cap ~$40 — used ~6%).

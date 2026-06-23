@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 
 	"vibeforge-kernel/internal/store"
 )
@@ -26,6 +27,10 @@ type Engine struct {
 	WorkdirRoot string
 	runners     map[string]Runner
 	paused      atomic.Bool
+
+	// HeartbeatInterval is how often a running step pings liveness. Must be well
+	// under the reaper's stale window. 0 -> 15s default.
+	HeartbeatInterval time.Duration
 
 	// OnSeed, if set, is called once per run after its workdir is created
 	// (before any step runs) — e.g. to seed a target repo and seal the gate.
@@ -127,7 +132,15 @@ func (e *Engine) ExecuteOne(ctx context.Context, workerID string) (bool, error) 
 	var inputs map[string]any
 	_ = json.Unmarshal([]byte(task.Payload), &inputs)
 
+	// Heartbeat while the step runs. Steps (a real agent call) can take minutes;
+	// without this the stale reaper would requeue an in-flight task and re-run it
+	// — for an agent step that means a duplicate (paid) LLM call. The heartbeat
+	// goroutine pings independently of how long the runner blocks.
+	hbCtx, stopHeartbeat := context.WithCancel(ctx)
+	go e.heartbeat(hbCtx, task.ID, task.Fence)
+
 	result, runErr := runner.Run(ctx, step, inputs, e.Workdir(task.RunID))
+	stopHeartbeat()
 	if runErr != nil {
 		// Execution error (not a logical failure) — record and fail the step.
 		return true, e.reportAndAdvance(wf, task, StepResult{Success: false, Detail: "runner error: " + runErr.Error()})
@@ -136,6 +149,28 @@ func (e *Engine) ExecuteOne(ctx context.Context, workerID string) (bool, error) 
 		return true, e.parkTask(task, result)
 	}
 	return true, e.reportAndAdvance(wf, task, result)
+}
+
+// heartbeat pings the task's liveness on an interval until ctx is cancelled
+// (the step finished) or the fence goes stale (the task was reaped). It is the
+// counterpart to the reaper: a live worker keeps its claim, a dead one loses it.
+func (e *Engine) heartbeat(ctx context.Context, taskID string, fence int64) {
+	interval := e.HeartbeatInterval
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := e.Store.Heartbeat(taskID, fence); err != nil {
+				return // reaped (stale fence) or no longer running — stop pinging
+			}
+		}
+	}
 }
 
 // parkTask moves a step to AWAITING (human_gate) and emits run.awaiting_approval.

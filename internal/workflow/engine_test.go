@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"vibeforge-kernel/internal/store"
 )
@@ -20,6 +21,76 @@ func newEngine(t *testing.T, loader Loader) *Engine {
 	e.Register("echo", EchoRunner{})
 	e.Register("gate", GateRunner{})
 	return e
+}
+
+// slowRunner blocks for d before succeeding — stands in for a long agent call.
+type slowRunner struct{ d time.Duration }
+
+func (s slowRunner) Run(ctx context.Context, _ Step, _ map[string]any, _ string) (StepResult, error) {
+	select {
+	case <-time.After(s.d):
+	case <-ctx.Done():
+	}
+	return StepResult{Success: true, Output: map[string]any{"slept": true}}, nil
+}
+
+// TestHeartbeatKeepsLongStepAlive: a step that runs longer than the reaper's
+// stale window must NOT be requeued — the in-flight heartbeat keeps the claim.
+// Without the fix the reaper requeues it and it re-runs (a duplicate paid LLM
+// call for an agent step). Regression test for the live-E2E finding.
+func TestHeartbeatKeepsLongStepAlive(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "hb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	wf, _ := Parse([]byte("id: slow\nversion: 1.0.0\nsteps:\n  - id: work\n    type: slow\n"))
+	e := NewEngine(st, MapLoader{"slow": wf}, t.TempDir())
+	e.HeartbeatInterval = 10 * time.Millisecond
+	e.Register("slow", slowRunner{d: 300 * time.Millisecond}) // runs >> stale window
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.WorkerLoop(ctx, "w")
+	go e.ReaperLoop(ctx, 80, 20*time.Millisecond) // stale after 80ms, checked every 20ms
+
+	runID, err := e.StartRun("slow", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for terminal (or fail on timeout).
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		run, _ := e.Store.GetRun(runID)
+		if store.IsTerminal(run.Status) {
+			if run.Status != store.StatusDone {
+				t.Fatalf("expected DONE, got %s", run.Status)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run did not finish in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The step ran exactly once (claimed once, never reaped/re-run).
+	tasks, _ := e.Store.TasksForRun(runID)
+	if len(tasks) != 1 {
+		t.Fatalf("expected exactly 1 task (no requeue), got %d", len(tasks))
+	}
+	if tasks[0].Attempts != 1 {
+		t.Fatalf("expected 1 attempt (heartbeat prevented reaping), got %d", tasks[0].Attempts)
+	}
+	// No stale-requeue event.
+	events, _ := e.Store.EventsAfter(runID, 0)
+	for _, ev := range events {
+		if containsStr(ev.Data, "stale") {
+			t.Fatalf("step was reaped despite heartbeat: %s", ev.Data)
+		}
+	}
 }
 
 // TestEngineWorkdirAbsolute: run workdirs MUST be absolute. A relative workdir
