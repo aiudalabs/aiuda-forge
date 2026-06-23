@@ -54,5 +54,5 @@ docs/             13_ARQUITECTURA_DE_CERO.md (design), 14_API_CONTRACT_v2.md (co
 
 ## Stack
 
-Go 1.23+. Pure-Go sqlite (`modernc.org/sqlite`, no CGO). Static single binary deploy.
+Go 1.25 (toolchain; module floor pulled up by deps; kernel code is 1.23-clean). Pure-Go sqlite (`modernc.org/sqlite`, no CGO). Static single binary deploy.
 Tests use a deterministic echo Backend (no LLM); the real engine is `claude -p`.
