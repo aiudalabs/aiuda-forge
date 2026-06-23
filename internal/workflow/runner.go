@@ -16,6 +16,22 @@ type StepResult struct {
 	Success bool           `json:"success"`
 	Output  map[string]any `json:"output"`
 	Detail  string         `json:"detail"`
+
+	// Park signals that the step is not finished but is waiting on an external
+	// signal (a human approval). The engine moves the task to AWAITING and stops
+	// advancing until ApproveStep resolves it. Used by the human_gate step type.
+	Park bool `json:"-"`
+
+	// Events are extra bus events the runner wants emitted (e.g. step.gate,
+	// step.verify). The engine forwards them generically — it does not interpret
+	// them, so this stays methodology-free.
+	Events []ResultEvent `json:"-"`
+}
+
+// ResultEvent is a runner-emitted bus event forwarded verbatim by the engine.
+type ResultEvent struct {
+	Type string
+	Data map[string]any
 }
 
 // Runner executes a single resolved step in workdir. Implementations are keyed

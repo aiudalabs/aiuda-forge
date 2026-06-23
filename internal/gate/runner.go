@@ -53,7 +53,18 @@ func (h *HardenedRunner) Run(ctx context.Context, step workflow.Step, _ map[stri
 		Success: res.Passed,
 		Output:  map[string]any{"passed": res.Passed, "tamper": res.Tamper, "sandbox": res.Sandbox},
 		Detail:  detail,
+		Events: []workflow.ResultEvent{{
+			Type: "step.gate",
+			Data: map[string]any{"step": step.ID, "passed": res.Passed, "tamper": res.Tamper, "detail": truncate(detail, 2000)},
+		}},
 	}, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
 
 // MetaRootFor returns the daemon-side meta directory for a run workdir. It is a

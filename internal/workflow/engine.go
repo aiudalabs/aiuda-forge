@@ -127,7 +127,23 @@ func (e *Engine) ExecuteOne(ctx context.Context, workerID string) (bool, error) 
 		// Execution error (not a logical failure) — record and fail the step.
 		return true, e.reportAndAdvance(wf, task, StepResult{Success: false, Detail: "runner error: " + runErr.Error()})
 	}
+	if result.Park {
+		return true, e.parkTask(task, result)
+	}
 	return true, e.reportAndAdvance(wf, task, result)
+}
+
+// parkTask moves a step to AWAITING (human_gate) and emits run.awaiting_approval.
+// The task is NOT advanced; ApproveStep resolves it later. AWAITING is excluded
+// from the stale reaper, so a parked task waits indefinitely without re-running.
+func (e *Engine) parkTask(task *store.Task, result StepResult) error {
+	if err := e.Store.Transition(task.ID, task.Fence, store.StatusAwaiting,
+		map[string]any{"success": false, "output": result.Output, "detail": result.Detail}, ""); err != nil {
+		return err
+	}
+	_, err := e.Store.AppendEvent(task.RunID, task.ID, store.EventRunAwaitingApprv,
+		map[string]any{"step": task.StepID, "detail": result.Detail})
+	return err
 }
 
 // reportAndAdvance records the step result (single emit point via the store
@@ -143,7 +159,11 @@ func (e *Engine) reportAndAdvance(wf *Workflow, task *store.Task, result StepRes
 	if err := e.Store.Transition(task.ID, task.Fence, to, resMap, errMsg); err != nil {
 		return err
 	}
-	// step.gate / step.event style signals could be appended here in later waves.
+	// Forward any runner-emitted events (step.gate, step.verify, ...) verbatim.
+	// The engine does not interpret them — it just publishes to the bus.
+	for _, ev := range result.Events {
+		_, _ = e.Store.AppendEvent(task.RunID, task.ID, ev.Type, ev.Data)
+	}
 	return e.advance(wf, task, result)
 }
 

@@ -61,15 +61,16 @@ func (e *Engine) ApproveStep(runID, stepID string) error {
 		return err
 	}
 	for _, t := range tasks {
-		if t.StepID != stepID || t.Status != store.StatusRunning {
+		if t.StepID != stepID || t.Status != store.StatusAwaiting {
 			continue
 		}
-		// A human_gate task parks in RUNNING until approved; completing it as a
-		// successful step lets advance() enqueue the next step.
+		// Approval is a control action (unfenced): complete the parked gate as a
+		// successful step so advance() enqueues the next step.
 		wf, err := e.Loader.Load(t.WorkflowID)
 		if err != nil {
 			return err
 		}
+		t.Fence = -1
 		return e.reportAndAdvance(wf, t, StepResult{Success: true, Output: map[string]any{"approved": true}, Detail: "approved by human"})
 	}
 	return nil

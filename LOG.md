@@ -51,6 +51,17 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
   retry/delete via HTTP only), E2E stub (trigger→implement→gate→review→pr→DONE), ADD-STEP-NO-RECOMPILE
   (a `simplify` step added via registry PUT runs with zero Go change). Gate green.
 
+- **Wave 6 — verify loop + human_gate**: generalized `on_fail{goto,max}` already covers gate-fix AND
+  qa→dev (Wave 2); added `agentic_verify` step (`internal/agent/verify.go`: fresh verifier, cross-model,
+  parses `VERDICT: works|broken` + evidence; broken→on_fail goto implement; emits `step.verify`) and
+  `human_gate` step (parks task in new `AWAITING` state — excluded from the stale reaper — emits
+  `run.awaiting_approval`; resumes only via `/runs/{id}/steps/{step}/approve`). StepResult gained
+  `Park` + `Events` (engine forwards runner events verbatim, stays methodology-free); gate emits
+  `step.gate`. Added `verifier` agent + `registry/workflows/factory-plus.yaml` (implement→gate→review→
+  verify→human_gate→pr, all data). Tests (-race green): verify broken→fix→works recovers, verify cap
+  honored→FAILED, human_gate parks (AWAITING + awaiting_approval, run not terminal) then approve→DONE,
+  step.verify events emitted. Gate green.
+
 ## Cost ledger (real claude -p calls)
 
 | Wave | What | Est. cost (USD) | Cumulative |

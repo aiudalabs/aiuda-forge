@@ -8,6 +8,7 @@ type Status string
 const (
 	StatusQueued    Status = "QUEUED"
 	StatusRunning   Status = "RUNNING"
+	StatusAwaiting  Status = "AWAITING" // human_gate parked, waiting for approval
 	StatusDone      Status = "DONE"
 	StatusFailed    Status = "FAILED"
 	StatusCancelled Status = "CANCELLED"
@@ -17,10 +18,11 @@ const (
 // allowed. Any transition not present here is rejected by transitionTx.
 var legalTransitions = map[Status]map[Status]bool{
 	StatusQueued:    {StatusRunning: true, StatusCancelled: true},
-	StatusRunning:   {StatusDone: true, StatusFailed: true, StatusQueued: true, StatusCancelled: true},
-	StatusFailed:    {StatusQueued: true}, // retry
-	StatusDone:      {},                   // terminal
-	StatusCancelled: {},                   // terminal
+	StatusRunning:   {StatusDone: true, StatusFailed: true, StatusQueued: true, StatusCancelled: true, StatusAwaiting: true},
+	StatusAwaiting:  {StatusDone: true, StatusFailed: true, StatusCancelled: true}, // approve / reject / cancel
+	StatusFailed:    {StatusQueued: true},                                          // retry
+	StatusDone:      {},                                                            // terminal
+	StatusCancelled: {},                                                            // terminal
 }
 
 func transitionAllowed(from, to Status) bool {

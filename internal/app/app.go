@@ -76,6 +76,14 @@ func Build(cfg Config) (*App, error) {
 	}
 	eng.Register("agent", agentRunner)
 
+	verifyRunner := agent.NewVerifyRunner(backend, agentLoader)
+	verifyRunner.Auth = cfg.AgentAuth
+	if cfg.AgentTimeout > 0 {
+		verifyRunner.Timeout = cfg.AgentTimeout
+	}
+	eng.Register("agentic_verify", verifyRunner)
+
+	eng.Register("human_gate", agent.HumanGateRunner{})
 	eng.Register("pr", pr.NewRunner())
 
 	bus := api.NewBus(st)
