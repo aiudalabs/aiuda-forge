@@ -88,6 +88,51 @@ func TestExitCodePropagates(t *testing.T) {
 	}
 }
 
+// TestDockerArgsUseAbsoluteMount: the docker bind mount must be an ABSOLUTE
+// host path. A relative workdir (".vibeforge-runs/run_x") makes Docker treat it
+// as an invalid named volume — the bug a live run hit. This pins the fix.
+func TestDockerArgsUseAbsoluteMount(t *testing.T) {
+	cfg := Config{Workdir: ".vibeforge-runs/run_abc", EgressDeny: true, AllowEnv: []string{"FOO"}}
+	args, err := dockerArgs(cfg, "echo hi", []string{"FOO=bar", "GH_TOKEN=secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Find the -v value.
+	var mount string
+	for i, a := range args {
+		if a == "-v" && i+1 < len(args) {
+			mount = args[i+1]
+		}
+	}
+	if mount == "" {
+		t.Fatalf("no -v mount in args: %v", args)
+	}
+	if !filepath.IsAbs(mount[:len(mount)-len(":/work")]) {
+		t.Fatalf("bind mount host path must be absolute, got %q", mount)
+	}
+	if mount[0] == '.' {
+		t.Fatalf("relative mount path leaked (docker would reject it): %q", mount)
+	}
+	// egress-deny present, secret scrubbed.
+	if !hasArg(args, "--network") {
+		t.Fatalf("expected --network none, got %v", args)
+	}
+	for _, a := range args {
+		if a == "GH_TOKEN=secret" {
+			t.Fatalf("secret leaked into docker -e args")
+		}
+	}
+}
+
+func hasArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
 // TestCopyTreeNoGit: the agent's working tree must not contain .git.
 func TestCopyTreeNoGit(t *testing.T) {
 	src := t.TempDir()

@@ -38,6 +38,11 @@ func NewEngine(st *store.Store, loader Loader, workdirRoot string) *Engine {
 	if workdirRoot == "" {
 		workdirRoot, _ = os.MkdirTemp("", "vibeforge-runs-")
 	}
+	// Workdirs must be absolute: the docker sandbox bind-mounts them, and Docker
+	// rejects relative paths (treats them as named volumes).
+	if abs, err := filepath.Abs(workdirRoot); err == nil {
+		workdirRoot = abs
+	}
 	return &Engine{Store: st, Loader: loader, WorkdirRoot: workdirRoot, runners: map[string]Runner{}}
 }
 

@@ -108,30 +108,43 @@ type DockerSandbox struct{ cfg Config }
 func (d *DockerSandbox) Kind() string { return "docker" }
 
 func (d *DockerSandbox) Exec(ctx context.Context, command string) (string, int, error) {
-	image := d.cfg.Image
-	if image == "" {
-		image = "alpine:3.20"
+	args, err := dockerArgs(d.cfg, command, os.Environ())
+	if err != nil {
+		return "", -1, err
 	}
-	args := []string{"run", "--rm"}
-	if d.cfg.EgressDeny {
-		args = append(args, "--network", "none")
-	}
-	if d.cfg.OCIRuntime != "" {
-		args = append(args, "--runtime", d.cfg.OCIRuntime) // runsc = gVisor
-	}
-	// Mount the working tree and cd into it.
-	args = append(args, "-v", d.cfg.Workdir+":/work", "-w", "/work")
-	// Only allowlisted env vars cross, with their values from the daemon env.
-	for _, kv := range FilterEnv(os.Environ(), d.cfg.allowSet()) {
-		args = append(args, "-e", kv)
-	}
-	args = append(args, image, "sh", "-c", command)
-
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
-	err := cmd.Run()
-	return buf.String(), exitCodeOf(err), normalizeExecErr(err)
+	runErr := cmd.Run()
+	return buf.String(), exitCodeOf(runErr), normalizeExecErr(runErr)
+}
+
+// dockerArgs builds the `docker run` argument vector (pure, so it is unit
+// testable without Docker). The bind mount MUST be an absolute host path —
+// Docker treats a relative path like ".vibeforge-runs/x" as a (invalid) named
+// volume, not a directory. This is the fix for that footgun.
+func dockerArgs(cfg Config, command string, env []string) ([]string, error) {
+	image := cfg.Image
+	if image == "" {
+		image = "alpine:3.20"
+	}
+	abs, err := filepath.Abs(cfg.Workdir)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"run", "--rm"}
+	if cfg.EgressDeny {
+		args = append(args, "--network", "none")
+	}
+	if cfg.OCIRuntime != "" {
+		args = append(args, "--runtime", cfg.OCIRuntime) // runsc = gVisor
+	}
+	args = append(args, "-v", abs+":/work", "-w", "/work")
+	for _, kv := range FilterEnv(env, cfg.allowSet()) {
+		args = append(args, "-e", kv)
+	}
+	args = append(args, image, "sh", "-c", command)
+	return args, nil
 }
 
 // LocalSandbox runs commands locally with a SCRUBBED env (allowlist applied) and

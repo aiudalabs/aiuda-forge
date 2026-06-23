@@ -81,6 +81,14 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
     available (`VIBEFORGE_SANDBOX=docker`, `VIBEFORGE_SANDBOX_RUNTIME=runsc`) and unit-tested, but the
     live smoke used local for determinism. Agent ran in-process (cwd=workdir), not docker-wrapped.
 
+- **Hardening (post-MVP)** — docker sandbox bind-mount fix: run workdirs are now ALWAYS absolute
+  (`NewEngine` resolves `filepath.Abs`), and `DockerSandbox` resolves the `-v` source to an absolute
+  path via a pure, testable `dockerArgs`. Docker rejects relative `-v` sources (treats them as invalid
+  named volumes) — a live `VIBEFORGE_SANDBOX=docker` run surfaced this. Also wired
+  `VIBEFORGE_SANDBOX_IMAGE` (default alpine; set e.g. `python:3.12-slim` for a real gate). Tests:
+  `TestEngineWorkdirAbsolute`, `TestDockerArgsUseAbsoluteMount`. Verified empirically: demo under
+  Docker now reaches DONE with `step.gate passed=true`. Full suite `-race` green.
+
 ## Cost ledger (real claude -p calls)
 
 | Run | What | Cost (USD) | Cumulative |

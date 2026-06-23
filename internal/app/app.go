@@ -57,6 +57,7 @@ func Build(cfg Config) (*App, error) {
 	hardGate.SandboxTemplate = sandbox.Config{
 		Runtime:    cfg.SandboxRuntime,
 		OCIRuntime: os.Getenv("VIBEFORGE_SANDBOX_RUNTIME"),
+		Image:      os.Getenv("VIBEFORGE_SANDBOX_IMAGE"), // "" -> alpine; set to e.g. python:3.12-slim for a real gate
 		EgressDeny: true,
 	}
 	eng.Register("gate", hardGate)

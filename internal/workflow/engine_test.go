@@ -22,6 +22,25 @@ func newEngine(t *testing.T, loader Loader) *Engine {
 	return e
 }
 
+// TestEngineWorkdirAbsolute: run workdirs MUST be absolute. A relative workdir
+// breaks the docker sandbox (Docker treats a relative -v source as an invalid
+// named volume) and is fragile in general. Pins the root-cause fix.
+func TestEngineWorkdirAbsolute(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "wd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	e := NewEngine(st, nil, ".vibeforge-runs") // deliberately relative
+	if !filepath.IsAbs(e.WorkdirRoot) {
+		t.Fatalf("WorkdirRoot must be absolute, got %q", e.WorkdirRoot)
+	}
+	if !filepath.IsAbs(e.Workdir("run_x")) {
+		t.Fatalf("per-run workdir must be absolute, got %q", e.Workdir("run_x"))
+	}
+}
+
 // TestDemoWorkflowFromYAML: the demo manifest (echo -> gate) runs E2E with no
 // flow-specific code. This is the core thesis check.
 func TestDemoWorkflowFromYAML(t *testing.T) {
