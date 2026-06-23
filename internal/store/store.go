@@ -323,6 +323,26 @@ func (s *Store) EventsAfter(runID string, after int64) ([]*Event, error) {
 	return out, rows.Err()
 }
 
+// AllEventsAfter returns events across ALL runs with seq > after, ascending.
+// This is the global tail the event bus polls.
+func (s *Store) AllEventsAfter(after int64) ([]*Event, error) {
+	rows, err := s.db.Query(`SELECT seq, run_id, task_id, type, data, created_at FROM events
+		WHERE seq>? ORDER BY seq ASC`, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Event
+	for rows.Next() {
+		e := &Event{}
+		if err := rows.Scan(&e.Seq, &e.RunID, &e.TaskID, &e.Type, &e.Data, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // AppendEvent writes a non-transition event (e.g. step.event streaming logs,
 // step.gate, step.verify). Returns the assigned seq. Transition events are
 // emitted internally by the state machine; this is for step-level signals.

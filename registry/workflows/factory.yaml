@@ -1,0 +1,34 @@
+# The real factory flow — defined ENTIRELY in data. The kernel runs this with no
+# flow-specific Go. To add a step (e.g. a `simplify` agent, or `agentic_verify`),
+# edit THIS file — no recompile. That editability is the v2 success criterion.
+id: factory
+version: 1.0.0
+steps:
+  - id: implement
+    type: agent
+    agent: dev
+    inputs:
+      ticket: $trigger.ticket
+
+  - id: gate
+    type: gate
+    command_from: repo          # runs the target repo's .vibeforge-gate in the sandbox
+    on_fail:
+      goto: implement           # gate red -> back to dev with the failure as feedback
+      max: 2
+      feedback: $gate.detail
+
+  - id: review
+    type: agent
+    agent: reviewer
+    model: claude-sonnet-4-6     # CROSS-MODEL: different model than the implementer (opus)
+    prompt: adversarial
+    inputs:
+      ticket: $trigger.ticket
+      diff_hint: "Review the working tree changes that just passed the gate."
+
+  - id: pr
+    type: pr
+    approval: risk-policy        # low risk -> auto; high -> human_gate (Wave 6)
+    inputs:
+      ticket: $trigger.ticket

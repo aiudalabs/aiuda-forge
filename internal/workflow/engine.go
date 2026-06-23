@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"vibeforge-kernel/internal/store"
 )
@@ -24,6 +25,11 @@ type Engine struct {
 	Loader      Loader
 	WorkdirRoot string
 	runners     map[string]Runner
+	paused      atomic.Bool
+
+	// OnSeed, if set, is called once per run after its workdir is created
+	// (before any step runs) — e.g. to seed a target repo and seal the gate.
+	OnSeed func(runID, workdir string) error
 }
 
 // NewEngine builds an engine. workdirRoot is where per-run working trees live;
@@ -59,6 +65,11 @@ func (e *Engine) StartRun(workflowID string, trigger map[string]any) (string, er
 	}
 	if err := os.MkdirAll(e.Workdir(runID), 0o755); err != nil {
 		return "", err
+	}
+	if e.OnSeed != nil {
+		if err := e.OnSeed(runID, e.Workdir(runID)); err != nil {
+			return "", fmt.Errorf("seed run %s: %w", runID, err)
+		}
 	}
 	ctx := Context{"trigger": trigger}
 	first := wf.First()

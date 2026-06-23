@@ -38,6 +38,19 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
   deleted). Tests: no-secret-crosses, default allowlist secret-free, local scrub, exit-code, no-.git
   copy, anti-tamper detects gate edit, suite-integrity detects deleted tests, clean gate passes. Gate green.
 
+- **Wave 5 — API + event bus + factory**: `internal/api` HTTP server fulfilling doc-14 contract
+  (§A ops POST/GET/DELETE /runs, cancel/retry, control/pause|resume, steps/approve|merge, artifacts,
+  metrics/analytics, healthz/readyz, registry CRUD; §B `/runs/{id}/events?after=` replay + `/ws`
+  WebSocket live push tailing the events table; §C `/runs/claim`, `/steps/{id}/report|heartbeat|usage`).
+  Event `Bus` tails the single-source-of-truth events table → fans to WS. `internal/pr` local PR step
+  (branch+commit, push if remote, synthetic when no repo). `internal/app` assembles store+engine+runners
+  (echo/gate/agent/pr)+backend(echo|claude)+bus+server. `cmd/control` (API + in-proc worker + reaper),
+  `cmd/worker` (standalone, shared store). `registry/workflows/factory.yaml` (implement→gate→review
+  cross-model→pr). Contract tests (-race green): PRESENCE (every §A op, no 404/405), EMISSION (factory
+  run emits run.created/step.status_changed/run.status_changed/run.done), NO-PRIVILEGED-PATH (cancel/
+  retry/delete via HTTP only), E2E stub (trigger→implement→gate→review→pr→DONE), ADD-STEP-NO-RECOMPILE
+  (a `simplify` step added via registry PUT runs with zero Go change). Gate green.
+
 ## Cost ledger (real claude -p calls)
 
 | Wave | What | Est. cost (USD) | Cumulative |
