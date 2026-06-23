@@ -75,6 +75,24 @@ func Build(cfg Config) (*App, error) {
 	if cfg.AgentTimeout > 0 {
 		agentRunner.Timeout = cfg.AgentTimeout
 	}
+	// Run the agent INSIDE the per-task sandbox (docker + egress allowlist), on a
+	// .git-less worktree. The agent's image must contain the `claude` CLI
+	// (VIBEFORGE_AGENT_IMAGE); the egress network (VIBEFORGE_SANDBOX_NETWORK)
+	// has no internet gateway — only the egress-proxy is reachable.
+	agentRunner.Sandboxed = true
+	agentRunner.SandboxTemplate = sandbox.Config{
+		Runtime:    cfg.SandboxRuntime,
+		OCIRuntime: os.Getenv("VIBEFORGE_SANDBOX_RUNTIME"),
+		Image:      os.Getenv("VIBEFORGE_AGENT_IMAGE"),
+		Network:    envOr("VIBEFORGE_SANDBOX_NETWORK", sandbox.DefaultEgressNetwork),
+		UID:        os.Getenv("VIBEFORGE_SANDBOX_UID"),
+		// EgressDeny stays false: the agent NEEDS the LLM API (via the proxy).
+	}
+	agentRunner.Egress = agent.EgressConfig{
+		ProxyURL:      os.Getenv("VIBEFORGE_EGRESS_PROXY_URL"),
+		AnthropicBase: os.Getenv("VIBEFORGE_EGRESS_ANTHROPIC_URL"),
+		Open:          os.Getenv("VIBEFORGE_EGRESS") == "open",
+	}
 	eng.Register("agent", agentRunner)
 
 	verifyRunner := agent.NewVerifyRunner(backend, agentLoader)
@@ -96,6 +114,13 @@ func Build(cfg Config) (*App, error) {
 
 // ClaudeBackend builds the real claude -p backend.
 func ClaudeBackend() agent.Backend { return agent.ClaudeBackend{} }
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
 
 // StartBackground launches the in-process worker, reaper and event bus.
 func (a *App) StartBackground(ctx context.Context) {

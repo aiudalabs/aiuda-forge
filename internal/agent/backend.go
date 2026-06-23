@@ -7,6 +7,8 @@ package agent
 import (
 	"context"
 	"time"
+
+	"vibeforge-kernel/internal/sandbox"
 )
 
 // AuthMode selects how the child agent process authenticates.
@@ -35,6 +37,12 @@ type Options struct {
 	Workdir      string        // the agent's working tree (cwd of the child)
 	Timeout      time.Duration // hard wall; 0 = no timeout
 	Auth         Auth
+
+	// Sandbox, when set, runs the agent INSIDE the per-task sandbox (docker exec/
+	// run) instead of on the host. ContainerEnv is the egress/auth allowlist that
+	// reaches the agent process (proxy + LLM credential; never daemon secrets).
+	Sandbox      sandbox.Sandbox
+	ContainerEnv []string
 }
 
 // EventKind classifies a streamed event from the agent.

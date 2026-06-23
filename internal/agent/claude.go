@@ -30,6 +30,7 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	}
 
 	args := []string{
+		bin,
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
@@ -47,6 +48,18 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	args = append(args, c.ExtraArgs...)
 	args = append(args, prompt)
 
+	// Run INSIDE the per-task sandbox when one is provided (v1's
+	// `popen_cmd = sandbox.wrap(cmd)`): only the invoked argv + env change; the
+	// streaming loop below is identical. Without a sandbox, run on the host with
+	// the legacy auth env (used by pure unit tests).
+	var hostArgv, hostEnv []string
+	if opts.Sandbox != nil {
+		hostArgv, hostEnv = opts.Sandbox.WrapAgent(args, opts.ContainerEnv)
+	} else {
+		hostArgv = args
+		hostEnv = childEnv(opts.Auth)
+	}
+
 	// Timeout via a child context; cancellation kills the whole process group.
 	runCtx := ctx
 	var cancel context.CancelFunc
@@ -55,10 +68,11 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 		defer cancel()
 	}
 
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = opts.Workdir
-	cmd.Env = childEnv(opts.Auth)
-	// New process group so we can kill the agent and all its children.
+	cmd := exec.Command(hostArgv[0], hostArgv[1:]...)
+	cmd.Dir = opts.Workdir // ignored by `docker run` (-w sets the container cwd); needed for local
+	cmd.Env = hostEnv
+	// New process group so we can kill the agent (and the docker client / its
+	// children) on cancel.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdout, err := cmd.StdoutPipe()

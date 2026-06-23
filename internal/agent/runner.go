@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"vibeforge-kernel/internal/sandbox"
 	"vibeforge-kernel/internal/workflow"
 )
 
@@ -20,6 +22,14 @@ type StepRunner struct {
 	Agents  Loader
 	Auth    Auth
 	Timeout time.Duration
+
+	// Sandboxed runs the agent INSIDE a per-task sandbox (docker with egress
+	// allowlist, or the local fallback) on a .git-less copy of the worktree, then
+	// syncs edits back so the next step (the gate) sees them. When false, the
+	// agent runs directly on the host workdir (legacy; used by pure unit tests).
+	Sandboxed       bool
+	SandboxTemplate sandbox.Config // Network = egress (NOT none); Image must contain claude
+	Egress          EgressConfig
 
 	// Emit, if set, receives streamed events for the live-log (step.event).
 	Emit func(ev Event)
@@ -53,6 +63,32 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 		Workdir:      workdir,
 		Timeout:      r.Timeout,
 		Auth:         r.Auth,
+	}
+
+	// Sandbox the agent: it works on a .git-less copy; edits sync back to the run
+	// worktree (so the gate sees them) but the agent never touches .git / the remote.
+	if r.Sandboxed {
+		agentDir := workdir + ".agent"
+		_ = os.RemoveAll(agentDir)
+		if err := sandbox.CopyTreeNoGit(workdir, agentDir); err != nil {
+			return workflow.StepResult{Success: false, Detail: "stage agent worktree: " + err.Error()}, nil
+		}
+		defer os.RemoveAll(agentDir)
+		defer func() { _ = sandbox.SyncBack(agentDir, workdir) }() // propagate edits, keep .git
+
+		cfg := r.SandboxTemplate
+		cfg.Workdir = agentDir
+		if cfg.Network == "" {
+			cfg.Network = sandbox.DefaultEgressNetwork
+		}
+		sb := sandbox.New(cfg)
+		opts.Sandbox = sb
+		opts.Workdir = agentDir
+		if sb.Kind() == "docker" {
+			opts.ContainerEnv = EgressEnv(r.Auth, r.Egress) // sentinel/oauth + HTTPS_PROXY allowlist
+		} else {
+			opts.ContainerEnv = localAgentEnv(r.Auth) // host fallback: scrubbed env, no daemon secrets
+		}
 	}
 
 	res, err := r.Backend.Run(ctx, prompt, opts, r.Emit)

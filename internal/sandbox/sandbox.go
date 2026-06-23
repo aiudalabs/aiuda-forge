@@ -26,19 +26,39 @@ var DefaultAllowEnv = []string{"PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR
 
 // Config configures a per-task sandbox.
 type Config struct {
-	Runtime   string   // "docker" | "local"; "" -> auto (docker if available else local)
-	Image     string   // docker image (e.g. "python:3.12-slim")
-	OCIRuntime string  // set to "runsc" (gVisor) via VIBEFORGE_SANDBOX_RUNTIME
-	AllowEnv  []string // env KEY allowlist (DefaultAllowEnv is prepended)
-	EgressDeny bool    // true -> --network none (default-deny egress)
-	Workdir   string   // host path mounted as the sandbox working tree
+	Runtime    string   // "docker" | "local"; "" -> auto (docker if available else local)
+	Image      string   // docker image (e.g. "python:3.12-slim")
+	OCIRuntime string   // set to "runsc" (gVisor) via VIBEFORGE_SANDBOX_RUNTIME
+	AllowEnv   []string // env KEY allowlist (DefaultAllowEnv is prepended)
+	EgressDeny bool     // gate: true -> --network none (default-deny egress)
+	Workdir    string   // host path mounted as the sandbox working tree
+
+	// Network names the docker network for steps that DO need egress (the agent):
+	// a network with NO internet gateway whose only exit is the egress-proxy
+	// (allowlist, default-deny). It must NOT be "none" (the agent needs the LLM
+	// API) nor the default open "bridge". Ignored when EgressDeny is set (gate).
+	Network string
+	// UID runs the container as a non-root user "uid:gid" (defense in depth).
+	UID string
 }
+
+// DefaultEgressNetwork is the per-task agent network (no gateway; only the
+// egress-proxy is reachable). Created by the operator / scripts/egress-up.sh.
+const DefaultEgressNetwork = "vibeforge-egress"
 
 // Sandbox executes commands in isolation.
 type Sandbox interface {
-	// Exec runs command (via bash -c) in the sandbox, returning combined output
-	// and the process exit code.
+	// Exec runs command (via sh -c) in the sandbox, returning combined output and
+	// the process exit code. Used by the GATE (network-denied).
 	Exec(ctx context.Context, command string) (output string, exitCode int, err error)
+
+	// WrapAgent turns an agent argv (e.g. `claude -p ...`) into the host command
+	// that runs it INSIDE the sandbox, plus the env for that host process. This is
+	// the port of v1's `sandbox.wrap(cmd)` + `cli_env()`: the agent's streaming
+	// loop is unchanged — only the invoked binary + env change. containerEnv is the
+	// egress/auth allowlist that must reach the agent (injected as -e for docker).
+	WrapAgent(argv []string, containerEnv []string) (hostArgv []string, hostEnv []string)
+
 	// Kind reports the executor ("docker" or "local").
 	Kind() string
 }
@@ -235,6 +255,27 @@ func CopyTreeNoGit(src, dst string) error {
 		}
 		return copyFile(path, target)
 	})
+}
+
+// SyncBack propagates the agent's edits from its .git-less worktree (src) back
+// into the run worktree (dst), preserving dst's .git. It mirrors v1's
+// export_tree: dst is cleared of everything EXCEPT .git (so deletes/renames the
+// agent made propagate), then src is copied over. The gate (and pr) then see the
+// agent's real result on the run worktree.
+func SyncBack(src, dst string) error {
+	entries, err := os.ReadDir(dst)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == ".git" {
+			continue // the run worktree owns git; the agent never touches it
+		}
+		if err := os.RemoveAll(filepath.Join(dst, e.Name())); err != nil {
+			return err
+		}
+	}
+	return CopyTreeNoGit(src, dst)
 }
 
 func copyFile(src, dst string) error {

@@ -103,6 +103,35 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
   cross-model, survived with heartbeats — no stale) → pr **pushed** to bare remote → **DONE**. Verified
   by cloning the pushed branch and re-running its tests (6 OK). Cost $0.7763.
 
+- **Fix hallazgo #1 — el paso `agent` corre DENTRO del sandbox (egress allowlist)**: portado el patrón
+  validado de v1 (`sandbox.wrap()` + `cli_env()` + `build_sandbox_env()`). Cambios:
+  - `internal/sandbox`: `Sandbox.WrapAgent(argv, containerEnv)` → `docker run -i --network <egress> -v
+    <abs>:/work -e <allowlist> <image> <argv>`; `dockerCliEnv()` (env del binario `docker` en el host,
+    sin secretos del daemon); `Config.Network`/`UID`; `SyncBack` (export del árbol del agente de vuelta
+    al worktree del run, preservando `.git`). Gate sigue con `--network none`; agente con red egress
+    (NO none, NO bridge abierto).
+  - `internal/agent`: `EgressEnv()` (api_key → `ANTHROPIC_BASE_URL`+sentinel; passthrough →
+    `CLAUDE_CODE_OAUTH_TOKEN`; ambos → `HTTPS_PROXY` allowlist), `forbiddenInSandbox`+`MergeAllowed`
+    (GH_TOKEN/DB_*/daemon-secret nunca cruzan), `localAgentEnv` (fallback host scrubbeado). `ClaudeBackend`
+    envuelve el argv vía `opts.Sandbox.WrapAgent` (loop de streaming intacto). `StepRunner.Sandboxed`:
+    corre el agente sobre `CopyTreeNoGit` (árbol sin `.git`) + `SyncBack` (ediciones visibles al gate).
+  - `deploy/egress-proxy/` (tinyproxy default-deny, allowlist `api.anthropic.com`) + `scripts/egress-{up,down}.sh`.
+  - Tests (`-race` verde): agent-en-docker args (mount abs, red egress); red agente ≠ red gate (`none`);
+    ningún secreto del daemon cruza + la credencial del LLM sí (api_key sentinel / passthrough token);
+    forbidden no se cuela por merge; ediciones del agente visibles en el worktree del run; `SyncBack`
+    propaga add/delete y preserva `.git`; agente cableado a docker sandbox.
+  - **Live (egress en vivo, $0 — sin LLM)**: levanté la topología real (red `--internal` sin gateway +
+    `egress-proxy` tinyproxy) y probé desde un contenedor en `vibeforge-egress`: (1) SIN proxy → `Could
+    not resolve host` (cero internet directo); (2) VIA proxy → `api.anthropic.com` = HTTP 405 (LLEGÓ a
+    Anthropic); (3) VIA proxy → `example.com` = `CONNECT 403` (BLOQUEADO por el allowlist). El modelo de
+    red del agente queda demostrado en vivo.
+  - **BLOQUEO honesto (claude real dentro del contenedor):** NO viable en este host. No hay
+    `ANTHROPIC_API_KEY` ni `CLAUDE_CODE_OAUTH_TOKEN`, y la suscripción de macOS guarda el token en el
+    **Keychain** (no en `~/.claude/.credentials.json`), así que NO existe credencial en forma montable a
+    un contenedor Linux. El código + la red están listos; para la corrida real falta UNA de: setear
+    `ANTHROPIC_API_KEY` (modo api_key, el proxy inyecta la key) o generar `CLAUDE_CODE_OAUTH_TOKEN` con
+    `claude setup-token` (passthrough). NO se tomó atajo de red abierta. Costo real: $0.00.
+
 ## Cost ledger (real claude -p calls)
 
 | Run | What | Cost (USD) | Cumulative |
