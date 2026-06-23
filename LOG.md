@@ -12,6 +12,14 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
   transition rejected, stale-fence rejected after reap, heartbeat keeps alive, deps gate claim, events
   emitted on every transition. NOTE: deps pulled module floor to go 1.25 (kernel code is 1.23-clean); CI on 1.25.
 
+- **Wave 2 — Workflow executor**: `internal/workflow` = YAML manifest parser (steps: id/type/agent/
+  model/inputs/on_fail{goto,max,feedback}) + `$ref` resolver ($trigger.x / $step.output) + GENERIC
+  `Engine` (StartRun → enqueue first step; on completion resolve next step's inputs and enqueue, or
+  apply on_fail goto; zero `if step.id==`). Step types `echo` (deterministic stub) + `gate` (runs
+  command, exit code = pass/fail). `registry/workflows/demo.yaml` runs E2E. Tests: demo from YAML →
+  DONE, adding a step in data changes flow (no code), on_fail loop recovers (gate fails once→passes),
+  on_fail cap exhausted → FAILED with max+1 attempts, feedback injected into goto target. Gate green.
+
 ## Cost ledger (real claude -p calls)
 
 | Wave | What | Est. cost (USD) | Cumulative |
