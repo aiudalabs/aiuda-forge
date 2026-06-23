@@ -1,0 +1,8 @@
+/bin/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+/tmp/
+.DS_Store
+vibeforge.db
