@@ -62,10 +62,30 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
   honored→FAILED, human_gate parks (AWAITING + awaiting_approval, run not terminal) then approve→DONE,
   step.verify events emitted. Gate green.
 
+- **Wave 7 — LIVE validation (real `claude -p`)**: built a disposable target repo (bare remote +
+  seed with a REAL gate `python3 -m unittest discover` + baseline green test); ran the FULL `factory`
+  workflow with `VIBEFORGE_ENGINE=claude`, `PR_MODE=local`, sandbox=local, via `cmd/live`. Ticket:
+  "implement add(a,b) in calc.py with unittest tests". **Result: DONE end-to-end.**
+  - `implement` (real Claude, opus): wrote `calc.py` (`def add(a,b): return a+b`) + `test_calc.py`
+    (4 unittest cases). DONE.
+  - `gate` (real `python3 -m unittest`, in sandbox): **Ran 5 tests, OK**. step.gate passed=true,
+    anti-tamper seal intact. DONE.
+  - `review` (real Claude, **sonnet — cross-model**, adversarial): produced a real review verdict
+    ("DEFECT FOUND" on overflow/type edge cases). DONE.
+  - `pr` (local): created branch `vibeforge/<runid>`, committed, **pushed=true** to the bare remote.
+    Verified: cloning the pushed branch and running its tests → `Ran 5 tests OK`.
+  - First attempt exposed a real bug (pr runner double-prefixed `git git …`); fixed + added pr unit
+    tests (regression-covered), re-ran green. The kernel itself was correct throughout — the only
+    defect was in the pr step's command construction, now tested.
+  - Note: gate ran in the LOCAL sandbox (host `python3`, scrubbed env); Docker/gVisor isolation is
+    available (`VIBEFORGE_SANDBOX=docker`, `VIBEFORGE_SANDBOX_RUNTIME=runsc`) and unit-tested, but the
+    live smoke used local for determinism. Agent ran in-process (cwd=workdir), not docker-wrapped.
+
 ## Cost ledger (real claude -p calls)
 
-| Wave | What | Est. cost (USD) | Cumulative |
+| Run | What | Cost (USD) | Cumulative |
 |---|---|---|---|
-| — | (no real calls yet) | $0.00 | $0.00 |
+| Wave 7 run #1 | factory: implement+gate+review (pr bug → FAILED) | $0.6771 | $0.6771 |
+| Wave 7 run #2 | factory full: implement→gate→review→pr → **DONE** | $0.6333 | **$1.3104** |
 
-Cap: ~$40 USD total. Stop real runs if approaching.
+Total real spend: **~$1.31 USD** (cap ~$40 — used ~3.3%). No further real runs needed.

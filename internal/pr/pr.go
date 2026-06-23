@@ -48,17 +48,18 @@ func (r *Runner) Run(ctx context.Context, step workflow.Step, inputs map[string]
 	}
 
 	msg := commitMessage(inputs, runID)
+	// gitRun prepends "git" — these are the args AFTER it.
 	steps := [][]string{
-		{"git", "checkout", "-B", branch},
-		{"git", "add", "-A"},
-		{"git", "-c", "user.email=kernel@vibeforge", "-c", "user.name=vibeforge", "commit", "-m", msg, "--allow-empty"},
+		{"checkout", "-B", branch},
+		{"add", "-A"},
+		{"-c", "user.email=kernel@vibeforge", "-c", "user.name=vibeforge", "commit", "-m", msg, "--allow-empty"},
 	}
 	var log strings.Builder
 	for _, s := range steps {
 		out, err := gitRun(ctx, workdir, s...)
 		log.WriteString(out)
 		if err != nil {
-			return workflow.StepResult{Success: false, Detail: "pr(local) failed at `" + strings.Join(s, " ") + "`: " + err.Error() + "\n" + out}, nil
+			return workflow.StepResult{Success: false, Detail: "pr(local) failed at `git " + strings.Join(s, " ") + "`: " + err.Error() + "\n" + out}, nil
 		}
 	}
 
