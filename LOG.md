@@ -20,6 +20,15 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
   DONE, adding a step in data changes flow (no code), on_fail loop recovers (gate fails once→passes),
   on_fail cap exhausted → FAILED with max+1 attempts, feedback injected into goto target. Gate green.
 
+- **Wave 3 — Agent adapter**: `internal/agent` = generic `Backend` interface + `claude.go` (REAL
+  engine: `claude -p --output-format stream-json --verbose --permission-mode acceptEdits
+  --allowedTools --append-system-prompt`, NDJSON parse of assistant/tool_use/result, hard timeout,
+  process-group SIGKILL on cancel, 3 auth modes subscription/api_key/oauth_token) + `FakeBackend`
+  (deterministic, free) + agent manifest loader (yaml+persona.md, tool allowlist→claude names) +
+  `agent` step runner (per-step model override = cross-model). Tests (fake, no LLM): agent step E2E
+  through generic engine, cross-model override, manifest fallback, failure propagates, NDJSON parse,
+  auth env per mode, registry dev/reviewer manifests load (reviewer model != dev). Gate green.
+
 ## Cost ledger (real claude -p calls)
 
 | Wave | What | Est. cost (USD) | Cumulative |

@@ -1,0 +1,6 @@
+id: dev
+version: 1.0.0
+model: claude-opus-4-8
+skills: []
+tools: [read, edit, write, bash]
+role: "Implement the ticket, leaving the working tree modified. Do NOT commit."
