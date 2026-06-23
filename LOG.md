@@ -29,6 +29,15 @@ Real `claude -p` cost is tracked in the Cost ledger at the bottom.
   through generic engine, cross-model override, manifest fallback, failure propagates, NDJSON parse,
   auth env per mode, registry dev/reviewer manifests load (reviewer model != dev). Gate green.
 
+- **Wave 4 — Sandbox + gate anti-tamper**: `internal/sandbox` = per-task isolation — `FilterEnv`
+  (allowlist; daemon secrets GH_TOKEN/ANTHROPIC_API_KEY/DB_* never cross), `DockerSandbox` (--network
+  none egress-deny, env allowlist, --runtime runsc for gVisor) + `LocalSandbox` fallback (scrubbed env,
+  flagged not-a-boundary), `CopyTreeNoGit` (working tree without .git → agent can't commit/push).
+  `internal/gate` = seal gate-file hash + test-marker count BEFORE agent (daemon-side, outside tree) →
+  `HardenedRunner` runs gate in sandbox + re-checks: ErrTampered (gate edited) / ErrSuiteShrank (tests
+  deleted). Tests: no-secret-crosses, default allowlist secret-free, local scrub, exit-code, no-.git
+  copy, anti-tamper detects gate edit, suite-integrity detects deleted tests, clean gate passes. Gate green.
+
 ## Cost ledger (real claude -p calls)
 
 | Wave | What | Est. cost (USD) | Cumulative |
