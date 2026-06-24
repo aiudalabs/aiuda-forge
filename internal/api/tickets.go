@@ -184,6 +184,23 @@ func (s *Server) addStoryDeps(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// claimStory handles POST /stories/{id}/claim. It atomically transitions the
+// story from backlog → running. Returns 200 {claimed:true} if this caller won
+// the claim, or 409 {claimed:false} if it was already taken.
+func (s *Server) claimStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claimed, err := s.Tickets.ClaimStory(id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !claimed {
+		writeJSON(w, http.StatusConflict, map[string]any{"claimed": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"claimed": true})
+}
+
 // ---- GET /tickets (compat) --------------------------------------------------
 
 // ticketView is the shape the orchestrator's GET /tickets returns, so the

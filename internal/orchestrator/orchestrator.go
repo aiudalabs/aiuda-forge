@@ -26,6 +26,7 @@ const (
 	StatusReady   TicketStatus = "ready"
 	StatusFiring  TicketStatus = "firing"
 	StatusDone    TicketStatus = "done"
+	StatusFailed  TicketStatus = "failed"
 )
 
 // Issue is the orchestrator's view of a GitHub Issue.
@@ -124,14 +125,17 @@ func (o *Orchestrator) RunOnce(ctx context.Context) error {
 	return nil
 }
 
-// reconcileCompletions checks every fired-but-not-completed issue's run and,
-// when that run has finished successfully (DONE), marks the issue completed.
-// This is what advances a ticket from "firing" to "done" and unblocks its
-// dependents — without needing the GitHub issue to be closed by hand.
+// reconcileCompletions checks every fired-but-not-settled issue's run and
+// advances the ticket based on the run's terminal state:
+//   - DONE → mark completed (unblocks dependents)
+//   - FAILED / CANCELLED → mark failed (surfaces in GET /tickets; stops re-polling)
+//
+// This advances a ticket from "firing" to "done" or "failed" without needing
+// the GitHub issue to be closed by hand.
 func (o *Orchestrator) reconcileCompletions(ctx context.Context, issues []Issue) {
 	for i := range issues {
 		n := issues[i].Number
-		if !o.state.IsFired(n) || o.state.IsCompleted(n) {
+		if !o.state.IsFired(n) || o.state.IsCompleted(n) || o.state.IsFailed(n) {
 			continue
 		}
 		runID := o.state.RunID(n)
@@ -143,13 +147,21 @@ func (o *Orchestrator) reconcileCompletions(ctx context.Context, issues []Issue)
 			log.Printf("orchestrator: run status #%d (%s): %v", n, runID, err)
 			continue
 		}
-		if status == "DONE" {
+		switch status {
+		case "DONE":
 			if err := o.state.MarkCompleted(n); err != nil {
 				log.Printf("orchestrator: mark completed #%d: %v", n, err)
 				continue
 			}
 			log.Printf("orchestrator: issue #%d run %s DONE — ticket completed", n, runID)
+		case "FAILED", "CANCELLED":
+			if err := o.state.MarkFailed(n); err != nil {
+				log.Printf("orchestrator: mark failed #%d: %v", n, err)
+				continue
+			}
+			log.Printf("orchestrator: issue #%d run %s %s — ticket failed", n, runID, status)
 		}
+		// In-progress statuses (RUNNING, QUEUED, AWAITING, …): leave it alone.
 	}
 }
 
@@ -275,6 +287,9 @@ func (o *Orchestrator) depsAllDone(deps []int, byNumber map[int]*Issue) bool {
 func (o *Orchestrator) computeStatus(issue *Issue, deps []int, byNumber map[int]*Issue) TicketStatus {
 	if issue.State == "closed" || o.state.IsCompleted(issue.Number) {
 		return StatusDone
+	}
+	if o.state.IsFailed(issue.Number) {
+		return StatusFailed
 	}
 	if o.state.IsFired(issue.Number) {
 		return StatusFiring

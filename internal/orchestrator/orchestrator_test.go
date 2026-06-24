@@ -601,3 +601,86 @@ func TestCompletionUnblocksViaRunStatus(t *testing.T) {
 		}
 	}
 }
+
+// ---- Bug 1: GitHub orchestrator — failed runs surface as StatusFailed --------
+
+// TestFailedRunSurfacesAsFailed: when a fired issue's run reaches FAILED, the
+// ticket advances to StatusFailed and is no longer re-polled each cycle.
+func TestFailedRunSurfacesAsFailed(t *testing.T) {
+	gh := &fakeGitHub{issues: []Issue{
+		{Number: 1, Title: "will fail", State: "open"},
+	}}
+	cp := &fakeControlPlane{}
+	orch := newTestOrchestrator(t, gh, cp)
+	ctx := context.Background()
+
+	// Cycle 1: #1 fires.
+	if err := orch.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("want 1 fired run, got %d", cp.firedCount())
+	}
+
+	// Simulate the run failing.
+	cp.setStatus(fakeRunID(1), "FAILED")
+
+	// Cycle 2: reconcile marks #1 failed.
+	if err := orch.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !orch.state.IsFailed(1) {
+		t.Fatal("#1 should be marked failed after its run reaches FAILED")
+	}
+
+	// GET /tickets must report StatusFailed for #1.
+	tickets, err := orch.Tickets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range tickets {
+		if tk.ID == 1 && tk.Status != StatusFailed {
+			t.Errorf("ticket #1 status: want failed, got %s", tk.Status)
+		}
+	}
+
+	// Cycle 3: #1 is failed — it must NOT be re-fired (IsFailed stops polling).
+	if err := orch.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Errorf("failed ticket must not be re-fired; got %d fires", cp.firedCount())
+	}
+}
+
+// TestCancelledRunSurfacesAsFailed: CANCELLED is a terminal failure like FAILED.
+func TestCancelledRunSurfacesAsFailed(t *testing.T) {
+	gh := &fakeGitHub{issues: []Issue{
+		{Number: 5, Title: "will cancel", State: "open"},
+	}}
+	cp := &fakeControlPlane{}
+	orch := newTestOrchestrator(t, gh, cp)
+	ctx := context.Background()
+
+	if err := orch.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cp.setStatus(fakeRunID(1), "CANCELLED")
+
+	if err := orch.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !orch.state.IsFailed(5) {
+		t.Fatal("#5 should be marked failed after CANCELLED run")
+	}
+
+	tickets, err := orch.Tickets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range tickets {
+		if tk.ID == 5 && tk.Status != StatusFailed {
+			t.Errorf("ticket #5 status: want failed, got %s", tk.Status)
+		}
+	}
+}

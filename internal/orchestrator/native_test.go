@@ -67,7 +67,20 @@ func (p *fakeStoryProvider) Running(_ context.Context) ([]NativeTicket, error) {
 	return out, nil
 }
 
-// MarkRunning flips a story to running and records the run_id.
+// Claim atomically transitions a story from backlog → running.
+// Returns true if this caller won the claim, false if already taken.
+func (p *fakeStoryProvider) Claim(_ context.Context, id string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.stories[id]
+	if !ok || s.status != "backlog" {
+		return false, nil
+	}
+	s.status = "running"
+	return true, nil
+}
+
+// MarkRunning records the run_id on an already-running story.
 func (p *fakeStoryProvider) MarkRunning(_ context.Context, id, runID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -75,7 +88,6 @@ func (p *fakeStoryProvider) MarkRunning(_ context.Context, id, runID string) err
 	if !ok {
 		return nil
 	}
-	s.status = "running"
 	s.runID = runID
 	return nil
 }
@@ -89,6 +101,19 @@ func (p *fakeStoryProvider) MarkDone(_ context.Context, id string) error {
 		return nil
 	}
 	s.status = "done"
+	s.runID = ""
+	return nil
+}
+
+// MarkFailed flips a story to failed.
+func (p *fakeStoryProvider) MarkFailed(_ context.Context, id string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.stories[id]
+	if !ok {
+		return nil
+	}
+	s.status = "failed"
 	s.runID = ""
 	return nil
 }
@@ -262,5 +287,79 @@ func TestNativeDepUnblockEndToEnd(t *testing.T) {
 	}
 	if provider.statusOf("S2") != "running" {
 		t.Errorf("S2 after firing: want running, got %s", provider.statusOf("S2"))
+	}
+}
+
+// ---- Bug 1: terminal non-DONE runs mark the story failed ---------------------
+
+// TestNativeFailedRunMarksStoryFailed: a running story whose run reaches FAILED
+// must be marked "failed" — not left stuck in "running" forever.
+func TestNativeFailedRunMarksStoryFailed(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "will fail", status: "running", runID: "run-fail"},
+	)
+	cp := &fakeControlPlane{}
+	cp.setStatus("run-fail", "FAILED")
+
+	sched := NewNativeScheduler(provider, cp, "dev")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if provider.statusOf("S1") != "failed" {
+		t.Errorf("S1 status: want failed, got %s", provider.statusOf("S1"))
+	}
+}
+
+// TestNativeCancelledRunMarksStoryFailed: CANCELLED is also a terminal failure.
+func TestNativeCancelledRunMarksStoryFailed(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "will cancel", status: "running", runID: "run-cancel"},
+	)
+	cp := &fakeControlPlane{}
+	cp.setStatus("run-cancel", "CANCELLED")
+
+	sched := NewNativeScheduler(provider, cp, "dev")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if provider.statusOf("S1") != "failed" {
+		t.Errorf("S1 status: want failed, got %s", provider.statusOf("S1"))
+	}
+}
+
+// ---- Bug 2: double-fire prevention via Claim-then-fire ----------------------
+
+// TestNativeClaimPreventsDoubleFire: two concurrent-ish claims of the same
+// story — only one succeeds, so FireRun is called exactly once.
+func TestNativeClaimPreventsDoubleFire(t *testing.T) {
+	// shared provider models the store: a single "backlog" story.
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "race target", status: "backlog"},
+	)
+	cp := &fakeControlPlane{}
+
+	sched1 := NewNativeScheduler(provider, cp, "dev")
+	sched2 := NewNativeScheduler(provider, cp, "dev")
+	ctx := context.Background()
+
+	// Both schedulers see S1 as ready and try to claim-then-fire.
+	// Because fakeStoryProvider.Claim is mutex-guarded and transitions
+	// backlog→running atomically, only one can claim it.
+	if _, err := sched1.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sched2.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if cp.firedCount() != 1 {
+		t.Fatalf("want exactly 1 FireRun (double-fire prevented), got %d", cp.firedCount())
+	}
+	if provider.statusOf("S1") != "running" {
+		t.Errorf("S1 status: want running, got %s", provider.statusOf("S1"))
 	}
 }

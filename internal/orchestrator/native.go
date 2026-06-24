@@ -27,10 +27,16 @@ type StoryProvider interface {
 	Ready(ctx context.Context) ([]NativeTicket, error)
 	// Running returns stories currently executing.
 	Running(ctx context.Context) ([]NativeTicket, error)
-	// MarkRunning flips a story to running and records the run that drives it.
+	// Claim atomically transitions a story from backlog → running.
+	// Returns true if this caller claimed it, false if already taken.
+	Claim(ctx context.Context, id string) (bool, error)
+	// MarkRunning records the run_id on a story that was claimed.
 	MarkRunning(ctx context.Context, id, runID string) error
 	// MarkDone advances a story to done once its run finishes.
 	MarkDone(ctx context.Context, id string) error
+	// MarkFailed advances a story to failed when its run ends in a terminal
+	// non-DONE state (FAILED, CANCELLED) so it does not stay stuck.
+	MarkFailed(ctx context.Context, id string) error
 }
 
 // NativeHTTPProvider implements StoryProvider against the control-plane HTTP API.
@@ -94,7 +100,39 @@ type storyStatusReq struct {
 	RunID  string `json:"run_id,omitempty"`
 }
 
+type claimResp struct {
+	Claimed bool `json:"claimed"`
+}
+
+// Claim POSTs /stories/{id}/claim. Returns true if this caller claimed it.
+func (p *NativeHTTPProvider) Claim(ctx context.Context, id string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		p.baseURL+"/stories/"+id+"/claim", nil)
+	if err != nil {
+		return false, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("post /stories/%s/claim: %w", id, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusConflict {
+		return false, nil // already claimed by someone else
+	}
+	if resp.StatusCode >= 300 {
+		return false, fmt.Errorf("post /stories/%s/claim: status %d", id, resp.StatusCode)
+	}
+	var body claimResp
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false, fmt.Errorf("decode claim response: %w", err)
+	}
+	return body.Claimed, nil
+}
+
 // MarkRunning PUTs /stories/{id}/status with status=running and the run_id.
+// The story must already be claimed (status=running from Claim) before this is
+// called; this call only records the run_id on an already-running story.
 func (p *NativeHTTPProvider) MarkRunning(ctx context.Context, id, runID string) error {
 	return p.putStatus(ctx, id, storyStatusReq{Status: "running", RunID: runID})
 }
@@ -102,6 +140,11 @@ func (p *NativeHTTPProvider) MarkRunning(ctx context.Context, id, runID string) 
 // MarkDone PUTs /stories/{id}/status with status=done.
 func (p *NativeHTTPProvider) MarkDone(ctx context.Context, id string) error {
 	return p.putStatus(ctx, id, storyStatusReq{Status: "done"})
+}
+
+// MarkFailed PUTs /stories/{id}/status with status=failed.
+func (p *NativeHTTPProvider) MarkFailed(ctx context.Context, id string) error {
+	return p.putStatus(ctx, id, storyStatusReq{Status: "failed"})
 }
 
 func (p *NativeHTTPProvider) putStatus(ctx context.Context, id string, payload storyStatusReq) error {
@@ -147,15 +190,29 @@ func NewNativeScheduler(provider StoryProvider, cp ControlPlane, workflow string
 	return &NativeScheduler{provider: provider, cp: cp, workflow: workflow}
 }
 
+// terminalFailed reports whether a run status is a terminal failure — the run
+// has ended and will never succeed. Distinct from still-in-progress statuses.
+func terminalFailed(status string) bool {
+	switch status {
+	case "FAILED", "CANCELLED":
+		return true
+	}
+	return false
+}
+
 // RunOnce executes a single poll-and-fire cycle:
 //
-//  1. For each ready story: fire a run; on success, mark the story running.
-//  2. For each running story: check its run's status; if DONE, mark the story done.
+//  1. For each running story: check its run's status; if DONE, mark the story
+//     done; if terminal-failed (FAILED/CANCELLED), mark it failed. Stories whose
+//     run is still in progress (RUNNING/QUEUED/AWAITING) are skipped.
+//  2. For each ready story: CLAIM it first (atomic backlog→running), then fire a
+//     run. If the claim returns false (another scheduler got it), skip — this
+//     prevents double-fire under concurrent schedulers.
 //
 // Completing a story advances its status to "done", which unblocks any
 // dependent stories — they will appear in Ready() on the next cycle.
-// RunOnce returns the number of actions taken (stories marked done + stories
-// fired) so the loop can reset its backoff when there was activity.
+// RunOnce returns the number of actions taken (stories marked done/failed +
+// stories fired) so the loop can reset its backoff when there was activity.
 func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 	actions := 0
 	// Step (a) — advance completions before firing so a dep can unblock in the
@@ -173,23 +230,44 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 			log.Printf("native-scheduler: run status story=%s run=%s: %v", t.ID, t.RunID, err)
 			continue
 		}
-		if status != "DONE" {
+		if status == "DONE" {
+			if err := s.provider.MarkDone(ctx, t.ID); err != nil {
+				log.Printf("native-scheduler: mark done story=%s: %v", t.ID, err)
+				continue
+			}
+			actions++
+			log.Printf("native-scheduler: story %s run %s DONE — marked done", t.ID, t.RunID)
 			continue
 		}
-		if err := s.provider.MarkDone(ctx, t.ID); err != nil {
-			log.Printf("native-scheduler: mark done story=%s: %v", t.ID, err)
-			continue
+		if terminalFailed(status) {
+			if err := s.provider.MarkFailed(ctx, t.ID); err != nil {
+				log.Printf("native-scheduler: mark failed story=%s: %v", t.ID, err)
+				continue
+			}
+			actions++
+			log.Printf("native-scheduler: story %s run %s %s — marked failed", t.ID, t.RunID, status)
 		}
-		actions++
-		log.Printf("native-scheduler: story %s run %s DONE — marked done", t.ID, t.RunID)
+		// In-progress statuses (RUNNING, QUEUED, AWAITING, …): leave it alone.
 	}
 
-	// Step (b) — fire ready stories.
+	// Step (b) — fire ready stories. Claim-then-fire to prevent double-fire.
 	ready, err := s.provider.Ready(ctx)
 	if err != nil {
 		return actions, fmt.Errorf("list ready stories: %w", err)
 	}
 	for _, t := range ready {
+		// Atomically claim backlog → running before firing. If another scheduler
+		// (or a previous cycle that hasn't flushed yet) already claimed it, skip.
+		claimed, err := s.provider.Claim(ctx, t.ID)
+		if err != nil {
+			log.Printf("native-scheduler: claim story=%s: %v", t.ID, err)
+			continue
+		}
+		if !claimed {
+			log.Printf("native-scheduler: story %s already claimed — skipping", t.ID)
+			continue
+		}
+
 		payload := map[string]any{
 			"story_id": t.ID,
 			"title":    t.Title,
@@ -200,12 +278,13 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 			log.Printf("native-scheduler: fire run story=%s: %v", t.ID, err)
 			continue
 		}
+		// Record the run_id on the (already-running) story.
 		if err := s.provider.MarkRunning(ctx, t.ID, runID); err != nil {
 			log.Printf("native-scheduler: mark running story=%s run=%s: %v", t.ID, runID, err)
 			continue
 		}
 		actions++
-		log.Printf("native-scheduler: story %s fired — run %s", t.ID, runID)
+		log.Printf("native-scheduler: story %s claimed and fired — run %s", t.ID, runID)
 	}
 	return actions, nil
 }

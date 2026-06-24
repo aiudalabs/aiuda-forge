@@ -11,6 +11,12 @@ type TicketProvider interface {
 	CreateStory(ctx context.Context, s Story) error
 	UpdateStatus(ctx context.Context, id string, status Status) error
 	Ready(ctx context.Context) ([]Story, error)
+	// ClaimStory atomically transitions a story from backlog → running.
+	// Returns true if this caller claimed it, false if already taken.
+	ClaimStory(ctx context.Context, id string) (bool, error)
+	// MarkFailed sets a story's status to failed. Called when the run driving
+	// the story reaches a terminal non-DONE state (FAILED, CANCELLED).
+	MarkFailed(ctx context.Context, id string) error
 }
 
 // NativeProvider implements TicketProvider backed by Store.
@@ -39,4 +45,12 @@ func (p *NativeProvider) UpdateStatus(_ context.Context, id string, status Statu
 
 func (p *NativeProvider) Ready(_ context.Context) ([]Story, error) {
 	return p.store.Ready()
+}
+
+func (p *NativeProvider) ClaimStory(_ context.Context, id string) (bool, error) {
+	return p.store.ClaimStory(id)
+}
+
+func (p *NativeProvider) MarkFailed(_ context.Context, id string) error {
+	return p.store.MarkFailed(id)
 }

@@ -14,6 +14,9 @@ type stateData struct {
 	// Completed is the set of issue numbers whose runs have finished
 	// successfully. Used by depsAllDone to unblock downstream issues.
 	Completed map[string]bool `json:"completed,omitempty"`
+	// Failed is the set of issue numbers whose runs ended in a terminal
+	// non-DONE state. Stops re-polling and surfaces as StatusFailed.
+	Failed map[string]bool `json:"failed,omitempty"`
 }
 
 // State persists the set of issues that have been fired (and their run IDs) to
@@ -32,6 +35,7 @@ func LoadState(path string) (*State, error) {
 		data: stateData{
 			Fired:     make(map[string]string),
 			Completed: make(map[string]bool),
+			Failed:    make(map[string]bool),
 		},
 	}
 	b, err := os.ReadFile(path)
@@ -49,6 +53,9 @@ func LoadState(path string) (*State, error) {
 	}
 	if s.data.Completed == nil {
 		s.data.Completed = make(map[string]bool)
+	}
+	if s.data.Failed == nil {
+		s.data.Failed = make(map[string]bool)
 	}
 	return s, nil
 }
@@ -90,6 +97,24 @@ func (s *State) MarkCompleted(number int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data.Completed[itoa(number)] = true
+	return s.flush()
+}
+
+// IsFailed returns true when the issue number's run ended in a terminal non-DONE
+// state and the ticket has been recorded as failed.
+func (s *State) IsFailed(number int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.Failed[itoa(number)]
+}
+
+// MarkFailed records that the run for number ended in a terminal failure and
+// persists the state to disk. The ticket will surface as StatusFailed in
+// GET /tickets and will no longer be re-polled by reconcileCompletions.
+func (s *State) MarkFailed(number int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.Failed[itoa(number)] = true
 	return s.flush()
 }
 

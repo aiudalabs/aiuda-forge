@@ -95,6 +95,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /stories", s.needTickets(s.listStoriesHandler))
 	m.HandleFunc("GET /stories/{id}", s.needTickets(s.getStory))
 	m.HandleFunc("PUT /stories/{id}/status", s.needTickets(s.updateStoryStatus))
+	m.HandleFunc("POST /stories/{id}/claim", s.needTickets(s.claimStory))
 	m.HandleFunc("POST /stories/{id}/deps", s.needTickets(s.addStoryDeps))
 	// GET /tickets — compat endpoint matching the orchestrator's shape so the
 	// existing UI can read the native store unchanged.
@@ -351,12 +352,17 @@ func (s *Server) getRegistry(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putRegistry(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
-	path, ok := s.Registry.pathFor(kind, r.PathValue("id"))
+	id := r.PathValue("id")
+	path, ok := s.Registry.pathFor(kind, id)
 	if !ok {
 		httpErr(w, http.StatusNotFound, "unknown registry kind")
 		return
 	}
 	s.putRegistryFile(w, r, path, func(b []byte) error { return validateRegistry(kind, b) })
+	// Invalidate the workflow cache so the next run re-reads the new manifest.
+	if kind == "workflows" && s.Engine != nil {
+		s.Engine.InvalidateWorkflow(id)
+	}
 }
 
 func (s *Server) delRegistry(w http.ResponseWriter, r *http.Request) {

@@ -279,6 +279,32 @@ func (s *Store) UpdateStoryStatus(id string, status Status) error {
 	return nil
 }
 
+// ClaimStory atomically transitions a story from backlog → running.
+// Returns true if this caller claimed it, false if it was already taken.
+func (s *Store) ClaimStory(id string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE stories SET status='running' WHERE id=? AND status='backlog'`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// MarkFailed sets a story's status to failed. Used when the run driving it
+// reaches a terminal non-DONE state (FAILED, CANCELLED) so the story is not
+// stuck in "running" forever.
+func (s *Store) MarkFailed(id string) error {
+	res, err := s.db.Exec(`UPDATE stories SET status='failed' WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetStoryRun records the run_id that is executing a story.
 func (s *Store) SetStoryRun(id, runID string) error {
 	res, err := s.db.Exec(`UPDATE stories SET run_id=? WHERE id=?`, runID, id)

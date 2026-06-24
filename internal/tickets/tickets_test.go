@@ -364,6 +364,77 @@ func TestNativeProviderRoundTrip(t *testing.T) {
 	}
 }
 
+// ---- ClaimStory (Bug 2: double-fire prevention) -----------------------------
+
+func TestClaimStorySucceeds(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "S1", Title: "claimable"}); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err := st.ClaimStory("S1")
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if !claimed {
+		t.Error("first claim should succeed")
+	}
+	got, _ := st.GetStory("S1")
+	if got.Status != tickets.StatusRunning {
+		t.Errorf("status after claim: want running, got %s", got.Status)
+	}
+}
+
+func TestClaimStoryOnlyOneWins(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "S1", Title: "race"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First claim succeeds.
+	first, err := st.ClaimStory("S1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first {
+		t.Error("first claim should win")
+	}
+
+	// Second claim on the same story (now "running") must return false.
+	second, err := st.ClaimStory("S1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second {
+		t.Error("second claim should not win — story already running")
+	}
+}
+
+// ---- MarkFailed (Bug 1: failed run handling) --------------------------------
+
+func TestMarkFailed(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "S1", Title: "S1", Status: tickets.StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.MarkFailed("S1"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	got, _ := st.GetStory("S1")
+	if got.Status != tickets.StatusFailed {
+		t.Errorf("status: want failed, got %s", got.Status)
+	}
+}
+
+func TestMarkFailedNotFound(t *testing.T) {
+	st := openTemp(t)
+	err := st.MarkFailed("missing")
+	if err != tickets.ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 func storyIDs(stories []tickets.Story) []string {
