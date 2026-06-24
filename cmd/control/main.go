@@ -59,6 +59,11 @@ func main() {
 	// the gate BEFORE any agent runs. (A real deployment would take the repo from
 	// the trigger payload; a fixed remote is enough for single-project / demo.)
 	if remote := os.Getenv("TARGET_REMOTE"); remote != "" {
+		// Validate the remote URL before accepting it — git accepts ext:: and file://
+		// URLs that can execute arbitrary commands; reject those schemes up-front.
+		if err := httpx.ValidateRemote(remote); err != nil {
+			log.Fatalf("TARGET_REMOTE rejected: %v", err)
+		}
 		a.Engine.OnSeed = func(runID, workdir string) error {
 			if out, err := exec.Command("git", "clone", "--quiet", remote, workdir).CombinedOutput(); err != nil {
 				return fmt.Errorf("clone target: %v: %s", err, out)
@@ -71,7 +76,17 @@ func main() {
 	defer stop()
 	a.StartBackground(ctx)
 
-	srv := &http.Server{Addr: addr, Handler: httpx.CORS(os.Getenv("VIBEFORGE_CORS_ORIGIN"), a.Server)}
+	apiToken := os.Getenv("VIBEFORGE_API_TOKEN")
+	if apiToken != "" {
+		log.Printf("vibeforge control auth: ENABLED (Bearer token required)")
+	} else {
+		log.Printf("vibeforge control auth: OPEN (no VIBEFORGE_API_TOKEN set)")
+	}
+
+	// CORS outermost (handles OPTIONS preflight before Auth sees it), then Auth,
+	// then the mux. Auth is a no-op when apiToken is empty — demo works unchanged.
+	handler := httpx.CORS(os.Getenv("VIBEFORGE_CORS_ORIGIN"), httpx.Auth(apiToken, a.Server))
+	srv := &http.Server{Addr: addr, Handler: handler}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
