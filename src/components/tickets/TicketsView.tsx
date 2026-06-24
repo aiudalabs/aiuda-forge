@@ -119,7 +119,7 @@ function TicketRow({
     <div className="trow">
       <span className="id">{ticket.id}</span>
       <span>{ticket.title}</span>
-      <span className="dep">{ticket.deps.length > 0 ? ticket.deps.join(", ") : "—"}</span>
+      <span className="dep">{ticket.deps && ticket.deps.length > 0 ? ticket.deps.join(", ") : "—"}</span>
       <span>
         <span className={`pill ${STATUS_CLASS[ticket.status]}`}>
           {STATUS_LABEL[ticket.status]}

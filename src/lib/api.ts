@@ -25,6 +25,7 @@ import {
 import type {
   BoardStats,
   ControlStatus,
+  McpConnection,
   MetricsPayload,
   Notification,
   OrchestratorTicket,
@@ -105,7 +106,44 @@ export async function listRuns(params?: { status?: RunStatus; project?: string }
   if (params?.status) qs.set("status", params.status);
   if (params?.project) qs.set("project", params.project);
   const q = qs.toString();
-  return http<Run[]>(`/runs${q ? `?${q}` : ""}`);
+  // El control-plane envuelve la lista como {runs:[...]}; toleramos también un
+  // array pelado por si el contrato cambia.
+  const res = await http<KernelRun[] | { runs: KernelRun[] }>(`/runs${q ? `?${q}` : ""}`);
+  const raw = Array.isArray(res) ? res : res?.runs ?? [];
+  return raw.map(mapRun);
+}
+
+// KernelRun es el shape que devuelve el kernel en GET /runs (id, workflow_id,
+// status, payload JSON-string, timestamps). El modelo Run de la UI es más rico
+// (ticket, cost, badges…); mapRun traduce uno al otro y rellena lo ausente.
+interface KernelRun {
+  id: string;
+  workflow_id?: string;
+  status: RunStatus;
+  payload?: string;
+  created_at?: number;
+}
+
+function mapRun(r: KernelRun): Run {
+  let issue: number | undefined;
+  let ticketText = "";
+  try {
+    const p = JSON.parse(r.payload ?? "{}");
+    issue = typeof p.issue === "number" ? p.issue : undefined;
+    ticketText = typeof p.ticket === "string" ? p.ticket : "";
+  } catch {
+    /* payload no-JSON: lo dejamos vacío */
+  }
+  const title = ticketText.split("\n")[0] || r.workflow_id || r.id;
+  return {
+    id: r.id,
+    ticket: { id: issue ? `#${issue}` : r.id.slice(0, 11), title },
+    workflow: r.workflow_id ?? "—",
+    status: r.status,
+    cost: 0, // el coste por-run no viene en la lista; el drawer lo trae de /runs/{id}
+    badges: [],
+    createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
+  };
 }
 
 export async function getRun(id: string): Promise<RunDetail> {
@@ -126,8 +164,16 @@ export async function getEvents(id: string, after = 0): Promise<RunEvent[]> {
 
 export async function getStats(): Promise<BoardStats> {
   if (await isMock()) return mockStats;
-  // GET /metrics con desglose; tomamos el resumen del board.
-  return http<BoardStats>(`/metrics`);
+  // GET /metrics trae el desglose; lo mapeamos al resumen del board. by_status
+  // cuenta runs por estado. openPRs no está en el contrato del kernel todavía.
+  const m = await http<MetricsPayload>(`/metrics`);
+  const bs = m.by_status ?? {};
+  return {
+    running: bs.RUNNING ?? 0,
+    awaiting: bs.AWAITING ?? 0,
+    openPRs: bs.DONE ?? 0,
+    projectCost: m.total_cost_usd ?? 0,
+  };
 }
 
 export interface SpendToday {
@@ -315,9 +361,44 @@ export async function deleteRegistryItem(kind: RegistryKind, id: string): Promis
 // Settings — GET/PUT /settings
 // ─────────────────────────────────────────────────────────────────────────────
 
+// El kernel guarda mcp como mapa {nombre: {...}} y merge_policy con claves
+// low/high; la UI usa una lista de conexiones y low_risk/high_risk. Estos
+// adapters traducen en ambos sentidos sin romper el contrato del backend.
+interface RawSettings {
+  mcp?: Record<string, Record<string, unknown>>;
+  agent_auth?: { mode?: string; secret?: string };
+  sandbox?: { runtime?: string; image?: string; egress?: string };
+  merge_policy?: Record<string, string>;
+}
+
+function settingsFromBackend(r: RawSettings): SettingsPayload {
+  const mcp: McpConnection[] = Object.entries(r.mcp ?? {}).map(([name, v]) => ({
+    name,
+    url: String(v?.repo ?? v?.url ?? ""),
+    token: String(v?.token ?? "••••••••"),
+  }));
+  return {
+    mcp,
+    agent_auth: { mode: r.agent_auth?.mode ?? "subscription", secret: r.agent_auth?.secret ?? "" },
+    sandbox: { runtime: r.sandbox?.runtime ?? "", image: r.sandbox?.image ?? "" },
+    merge_policy: { low_risk: r.merge_policy?.low ?? "", high_risk: r.merge_policy?.high ?? "" },
+  };
+}
+
+function settingsToBackend(s: SettingsPayload): RawSettings {
+  const mcp: Record<string, Record<string, unknown>> = {};
+  for (const c of s.mcp ?? []) mcp[c.name] = { url: c.url, token: c.token };
+  return {
+    mcp,
+    agent_auth: s.agent_auth,
+    sandbox: { runtime: s.sandbox.runtime, image: s.sandbox.image },
+    merge_policy: { low: s.merge_policy.low_risk, high: s.merge_policy.high_risk },
+  };
+}
+
 export async function getSettings(): Promise<SettingsPayload> {
   if (await isMock()) return { ...mockSettings };
-  return http<SettingsPayload>(`/settings`);
+  return settingsFromBackend(await http<RawSettings>(`/settings`));
 }
 
 export async function saveSettings(payload: SettingsPayload): Promise<SettingsPayload> {
@@ -325,10 +406,11 @@ export async function saveSettings(payload: SettingsPayload): Promise<SettingsPa
     Object.assign(mockSettings, payload);
     return { ...mockSettings };
   }
-  return http<SettingsPayload>(`/settings`, {
+  const saved = await http<RawSettings>(`/settings`, {
     method: "PUT",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(settingsToBackend(payload)),
   });
+  return settingsFromBackend(saved);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
