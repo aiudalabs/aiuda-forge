@@ -5,11 +5,15 @@
 // es self-contained. Si el control-plane no está, cae al mock.
 // Los run_id se enlazan al drawer del Board.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useCreateStory, useEpics, useTickets } from "@/lib/hooks";
 import { ApiError } from "@/lib/api";
 import { RunDrawer } from "@/components/board/RunDrawer";
+import { DepGraph } from "@/components/tickets/DepGraph";
+import { KanbanBoard } from "@/components/tickets/KanbanBoard";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
+
+type TicketsView = "tabla" | "kanban" | "grafo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -34,77 +38,6 @@ const STATUS_CLASS: Record<TicketStatus, string> = {
   failed: "fail",
 };
 
-// Clase CSS para el nodo del DAG.
-const NODE_CLASS: Record<TicketStatus, string> = {
-  open: "",
-  blocked: "blocked",
-  ready: "ready",
-  firing: "ready",
-  done: "done",
-  failed: "blocked",
-};
-
-// Ícono que acompaña al nodo del DAG.
-const NODE_ICON: Record<TicketStatus, string> = {
-  open: "",
-  blocked: " ⏳",
-  ready: " ⟳",
-  firing: " ⟳",
-  done: " ✓",
-  failed: " ✗",
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cálculo de niveles topológicos para el DAG
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface DagNode {
-  ticket: OrchestratorTicket;
-  level: number;
-  isCycle: boolean;
-}
-
-/**
- * Asigna un nivel topológico a cada ticket:
- *   nivel 0 → sin deps (o deps ausentes del listado)
- *   nivel N → max(nivel de sus deps) + 1
- *
- * Detecta ciclos: los tickets no resueltos tras MAX_ITER iteraciones se
- * marcan isCycle=true para que no bloqueen el render.
- */
-function computeDagLevels(tickets: OrchestratorTicket[]): DagNode[] {
-  const MAX_ITER = tickets.length + 2;
-  const byId = new Map(tickets.map((t) => [t.id, t]));
-  const levels = new Map<string, number>();
-
-  // Iteramos hasta que todos los niveles se estabilicen o agotemos MAX_ITER.
-  let changed = true;
-  let iter = 0;
-  while (changed && iter < MAX_ITER) {
-    changed = false;
-    iter++;
-    for (const t of tickets) {
-      const knownDeps = t.deps.filter((d) => byId.has(d));
-      let level = 0;
-      if (knownDeps.length > 0) {
-        const depLevels = knownDeps.map((d) => levels.get(d) ?? -1);
-        if (depLevels.some((l) => l < 0)) continue; // dep todavía sin nivel
-        level = Math.max(...depLevels) + 1;
-      }
-      if (!levels.has(t.id) || levels.get(t.id) !== level) {
-        levels.set(t.id, level);
-        changed = true;
-      }
-    }
-  }
-
-  return tickets.map((t) => ({
-    ticket: t,
-    level: levels.get(t.id) ?? 0,
-    isCycle: !levels.has(t.id),
-  }));
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Componente raíz
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,6 +46,7 @@ export function TicketsView() {
   const { data: tickets, isLoading, isError, refetch } = useTickets();
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [showNewStory, setShowNewStory] = useState(false);
+  const [view, setView] = useState<TicketsView>("tabla");
 
   const list = tickets ?? [];
 
@@ -123,6 +57,30 @@ export function TicketsView() {
         <span className="c">store nativo · backlog</span>
         <span className="sp" />
         <span className="tag">{list.length} stories</span>
+
+        {/* Toggle Tabla / Kanban / Grafo */}
+        <div
+          style={{
+            display: "flex",
+            gap: 2,
+            background: "var(--bg2)",
+            border: "1px solid var(--stroke)",
+            borderRadius: 10,
+            padding: 3,
+          }}
+        >
+          {(["tabla", "kanban", "grafo"] as TicketsView[]).map((v) => (
+            <button
+              key={v}
+              className={`btn sm${view === v ? " primary" : " ghost"}`}
+              style={{ borderRadius: 7, textTransform: "capitalize", border: "none", boxShadow: "none" }}
+              onClick={() => setView(v)}
+            >
+              {v.charAt(0).toUpperCase() + v.slice(1)}
+            </button>
+          ))}
+        </div>
+
         <button className="btn ghost sm" onClick={() => setShowNewStory(true)}>
           + Nueva story
         </button>
@@ -146,7 +104,7 @@ export function TicketsView() {
           <div className="ph-ic">☰</div>
           Sin tickets todavía.
         </div>
-      ) : (
+      ) : view === "tabla" ? (
         <div className="ttable">
           <div className="trow">
             <span>ID</span>
@@ -163,12 +121,17 @@ export function TicketsView() {
             />
           ))}
         </div>
-      )}
-
-      {/* Grafo de dependencias */}
-      {list.length > 0 && (
+      ) : view === "kanban" ? (
         <>
-          <div className="sectitle">
+          <div className="sectitle" style={{ marginTop: 4 }}>
+            <h2>Kanban</h2>
+            <span className="c">agrupado por estado</span>
+          </div>
+          <KanbanBoard tickets={list} onOpenRun={setOpenRunId} />
+        </>
+      ) : (
+        <>
+          <div className="sectitle" style={{ marginTop: 4 }}>
             <h2>Grafo DAG</h2>
             <span className="c">dependencias · niveles topológicos</span>
           </div>
@@ -228,191 +191,6 @@ function TicketRow({
           <span style={{ color: "var(--ink4)", fontSize: 12 }}>—</span>
         )}
       </span>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Grafo de dependencias — layout por niveles topológicos con aristas SVG
-// ─────────────────────────────────────────────────────────────────────────────
-
-function DepGraph({
-  tickets,
-  onOpenRun,
-}: {
-  tickets: OrchestratorTicket[];
-  onOpenRun: (runId: string) => void;
-}) {
-  const nodes = computeDagLevels(tickets);
-  const cycles = nodes.filter((n) => n.isCycle);
-
-  // Agrupar por nivel.
-  const maxLevel = nodes.reduce((mx, n) => Math.max(mx, n.level), 0);
-  const cols: DagNode[][] = Array.from({ length: maxLevel + 1 }, (_, i) =>
-    nodes.filter((n) => !n.isCycle && n.level === i)
-  );
-
-  // Referencias a los nodos del DOM para dibujar las aristas SVG.
-  const containerRef = useRef<HTMLDivElement>(null);
-  const nodeRefs = useRef<Map<string, HTMLSpanElement>>(new Map());
-
-  // Dimensiones del contenedor para el SVG.
-  const [svgSize, setSvgSize] = useState({ w: 0, h: 0 });
-  // Lista de aristas: { from, to } en coordenadas relativas al contenedor.
-  const [edges, setEdges] = useState<{ x1: number; y1: number; x2: number; y2: number }[]>([]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    function measure() {
-      if (!container) return;
-      const cr = container.getBoundingClientRect();
-      setSvgSize({ w: cr.width, h: cr.height });
-
-      const newEdges: typeof edges = [];
-      for (const node of nodes) {
-        if (node.isCycle) continue;
-        const toEl = nodeRefs.current.get(node.ticket.id);
-        if (!toEl) continue;
-        const toR = toEl.getBoundingClientRect();
-        const toX = toR.left - cr.left + toR.width / 2;
-        const toY = toR.top - cr.top + toR.height / 2;
-
-        for (const depId of node.ticket.deps) {
-          const fromEl = nodeRefs.current.get(depId);
-          if (!fromEl) continue;
-          const fromR = fromEl.getBoundingClientRect();
-          newEdges.push({
-            x1: fromR.left - cr.left + fromR.width / 2,
-            y1: fromR.top - cr.top + fromR.height / 2,
-            x2: toX,
-            y2: toY,
-          });
-        }
-      }
-      setEdges(newEdges);
-    }
-
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(container);
-    return () => ro.disconnect();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickets]);
-
-  return (
-    <div className="dag" ref={containerRef} style={{ position: "relative", minHeight: 80 }}>
-      {/* SVG de aristas — se dibuja por encima del layout de nodos */}
-      {svgSize.w > 0 && (
-        <svg
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: svgSize.w,
-            height: svgSize.h,
-            pointerEvents: "none",
-            zIndex: 0,
-          }}
-        >
-          {edges.map((e, i) => (
-            <line
-              key={i}
-              x1={e.x1}
-              y1={e.y1}
-              x2={e.x2}
-              y2={e.y2}
-              stroke="var(--stroke-strong)"
-              strokeWidth={1.5}
-              markerEnd="url(#arr)"
-            />
-          ))}
-          <defs>
-            <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-              <path d="M0,0 L0,6 L8,3 z" fill="var(--ink4)" />
-            </marker>
-          </defs>
-        </svg>
-      )}
-
-      {/* Columnas de niveles */}
-      <div
-        style={{
-          display: "flex",
-          gap: 32,
-          alignItems: "flex-start",
-          position: "relative",
-          zIndex: 1,
-        }}
-      >
-        {cols.map((col, colIdx) => (
-          <div
-            key={colIdx}
-            style={{ display: "flex", flexDirection: "column", gap: 10 }}
-          >
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "var(--ink4)",
-                marginBottom: 4,
-              }}
-            >
-              L{colIdx}
-            </div>
-            {col.map(({ ticket }) => (
-              <span
-                key={ticket.id}
-                ref={(el) => {
-                  if (el) nodeRefs.current.set(ticket.id, el);
-                  else nodeRefs.current.delete(ticket.id);
-                }}
-                className={`node ${NODE_CLASS[ticket.status]}`}
-                style={ticket.run_id ? { cursor: "pointer" } : undefined}
-                onClick={ticket.run_id ? () => onOpenRun(ticket.run_id as string) : undefined}
-                title={ticket.run_id ? `Ver run ${ticket.run_id}` : ticket.title}
-              >
-                {ticket.id}{NODE_ICON[ticket.status]}
-              </span>
-            ))}
-          </div>
-        ))}
-
-        {/* Nodos en ciclo: se muestran aparte con aviso */}
-        {cycles.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "var(--accent)",
-                marginBottom: 4,
-              }}
-            >
-              ciclo ⚠
-            </div>
-            {cycles.map(({ ticket }) => (
-              <span
-                key={ticket.id}
-                ref={(el) => {
-                  if (el) nodeRefs.current.set(ticket.id, el);
-                  else nodeRefs.current.delete(ticket.id);
-                }}
-                className="node"
-                style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
-                title={`Ciclo detectado: ${ticket.id}`}
-              >
-                {ticket.id} ↺
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
