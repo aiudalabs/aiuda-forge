@@ -42,8 +42,9 @@ func (f *fakeGitHub) setIssue(issue Issue) {
 
 // fakeControlPlane records fired runs. Thread-safe.
 type fakeControlPlane struct {
-	mu   sync.Mutex
-	runs []firedRun
+	mu       sync.Mutex
+	runs     []firedRun
+	statuses map[string]string // runID → status; absent → "RUNNING"
 }
 
 type firedRun struct {
@@ -56,6 +57,26 @@ func (f *fakeControlPlane) FireRun(_ context.Context, workflow string, payload a
 	defer f.mu.Unlock()
 	f.runs = append(f.runs, firedRun{workflow: workflow, payload: payload})
 	return fakeRunID(len(f.runs)), nil
+}
+
+// RunStatus returns the simulated status for runID ("RUNNING" by default).
+func (f *fakeControlPlane) RunStatus(_ context.Context, runID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if s, ok := f.statuses[runID]; ok {
+		return s, nil
+	}
+	return "RUNNING", nil
+}
+
+// setStatus simulates a run reaching a terminal state.
+func (f *fakeControlPlane) setStatus(runID, status string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.statuses == nil {
+		f.statuses = map[string]string{}
+	}
+	f.statuses[runID] = status
 }
 
 func (f *fakeControlPlane) firedCount() int {
@@ -524,5 +545,59 @@ func TestParseGhIssuesNormalizesState(t *testing.T) {
 	}
 	if deps := parseDeps(&issues[1]); len(deps) != 1 || deps[0] != 1 {
 		t.Fatalf("label dep not parsed: %v", deps)
+	}
+}
+
+// TestCompletionUnblocksViaRunStatus: the orchestrator advances a ticket from
+// "firing" to "done" when its run reaches DONE (without the GitHub issue being
+// closed), and that completion unblocks a dependent — all via RunStatus polling.
+func TestCompletionUnblocksViaRunStatus(t *testing.T) {
+	gh := &fakeGitHub{issues: []Issue{
+		{Number: 1, Title: "dep", State: "open"},
+		{Number: 2, Title: "consumer", State: "open", Labels: []string{"depends:#1"}},
+	}}
+	cp := &fakeControlPlane{}
+	orch := newTestOrchestrator(t, gh, cp)
+	ctx := context.Background()
+
+	// Cycle 1: #1 ready → fires run-1; #2 blocked (dep not done).
+	if err := orch.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("cycle 1: want 1 fired (only #1), got %d", cp.firedCount())
+	}
+
+	// #1's run is still RUNNING → ticket "firing", #2 still blocked, no new fire.
+	if err := orch.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("while dep RUNNING, #2 should stay blocked; fired=%d", cp.firedCount())
+	}
+
+	// Simulate #1's run finishing.
+	cp.setStatus(fakeRunID(1), "DONE")
+
+	// Cycle 3: reconcile marks #1 completed → #2 unblocks and fires.
+	if err := orch.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !orch.state.IsCompleted(1) {
+		t.Fatalf("#1 should be marked completed after its run is DONE")
+	}
+	if cp.firedCount() != 2 {
+		t.Fatalf("after dep DONE, #2 should fire; fired=%d", cp.firedCount())
+	}
+
+	// Ticket #1 now reports "done".
+	tickets, err := orch.Tickets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range tickets {
+		if tk.ID == 1 && tk.Status != StatusDone {
+			t.Fatalf("ticket #1 status: want done, got %s", tk.Status)
+		}
 	}
 }

@@ -52,10 +52,14 @@ type GitHub interface {
 	ListIssues(ctx context.Context) ([]Issue, error)
 }
 
-// ControlPlane is the interface through which the orchestrator fires runs.
-// The real implementation POSTs to the control-plane; tests use a fake.
+// ControlPlane is the interface through which the orchestrator fires runs and
+// checks their progress. The real implementation talks HTTP to the
+// control-plane; tests use a fake.
 type ControlPlane interface {
 	FireRun(ctx context.Context, workflow string, payload any) (runID string, err error)
+	// RunStatus returns the current status of a run ("RUNNING", "DONE",
+	// "FAILED", …) so the orchestrator can advance a ticket once its run finishes.
+	RunStatus(ctx context.Context, runID string) (status string, err error)
 }
 
 // Config holds tunables for the orchestrator loop.
@@ -107,6 +111,10 @@ func (o *Orchestrator) RunOnce(ctx context.Context) error {
 		byNumber[issues[i].Number] = &issues[i]
 	}
 
+	// Reconcile finished runs FIRST so a dependent can unblock in the same cycle
+	// its dependency completes.
+	o.reconcileCompletions(ctx, issues)
+
 	for i := range issues {
 		issue := &issues[i]
 		if err := o.processIssue(ctx, issue, byNumber); err != nil {
@@ -114,6 +122,35 @@ func (o *Orchestrator) RunOnce(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// reconcileCompletions checks every fired-but-not-completed issue's run and,
+// when that run has finished successfully (DONE), marks the issue completed.
+// This is what advances a ticket from "firing" to "done" and unblocks its
+// dependents — without needing the GitHub issue to be closed by hand.
+func (o *Orchestrator) reconcileCompletions(ctx context.Context, issues []Issue) {
+	for i := range issues {
+		n := issues[i].Number
+		if !o.state.IsFired(n) || o.state.IsCompleted(n) {
+			continue
+		}
+		runID := o.state.RunID(n)
+		if runID == "" {
+			continue
+		}
+		status, err := o.cp.RunStatus(ctx, runID)
+		if err != nil {
+			log.Printf("orchestrator: run status #%d (%s): %v", n, runID, err)
+			continue
+		}
+		if status == "DONE" {
+			if err := o.state.MarkCompleted(n); err != nil {
+				log.Printf("orchestrator: mark completed #%d: %v", n, err)
+				continue
+			}
+			log.Printf("orchestrator: issue #%d run %s DONE — ticket completed", n, runID)
+		}
+	}
 }
 
 // Run loops forever, calling RunOnce at the configured interval until ctx is

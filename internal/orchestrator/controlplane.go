@@ -66,3 +66,28 @@ func (c *cpClient) FireRun(ctx context.Context, workflow string, payload any) (s
 	}
 	return result.ID, nil
 }
+
+// RunStatus GETs /runs/{id} and returns its status field.
+func (c *cpClient) RunStatus(ctx context.Context, runID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/runs/"+runID, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get /runs/%s: %w", runID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get /runs/%s: status %d", runID, resp.StatusCode)
+	}
+
+	var run struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+	return run.Status, nil
+}
