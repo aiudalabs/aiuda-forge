@@ -4,9 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
+
+// agentIDRe rejects any id that is not a plain slug. This prevents an agent
+// step carrying agent: "../../etc/passwd" from escaping the registry root via
+// filepath.Join(d.Root, id+".yaml").
+var agentIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // Manifest is an agent definition: DATA (registry/agents/<id>.yaml) + a persona
 // markdown file (registry/agents/<id>.md). The kernel never hardcodes an agent;
@@ -34,6 +40,9 @@ type DirLoader struct{ Root string }
 func NewDirLoader(dir string) *DirLoader { return &DirLoader{Root: dir} }
 
 func (d *DirLoader) Load(id string) (*Manifest, error) {
+	if !agentIDRe.MatchString(id) {
+		return nil, fmt.Errorf("load agent: invalid id %q (must match ^[A-Za-z0-9_-]+$)", id)
+	}
 	b, err := os.ReadFile(filepath.Join(d.Root, id+".yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("load agent %s: %w", id, err)
