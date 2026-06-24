@@ -6,6 +6,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -28,14 +29,16 @@ type Config struct {
 	Backend        agent.Backend  // optional override (tests inject a fake)
 	AgentAuth      agent.Auth     // auth for the real backend
 	AgentTimeout   time.Duration  // per-agent wall clock
+	Workers        int            // in-process worker pool size (<=0 → 1)
 }
 
 // App is the assembled kernel.
 type App struct {
-	Store  *store.Store
-	Engine *workflow.Engine
-	Bus    *api.Bus
-	Server *api.Server
+	Store   *store.Store
+	Engine  *workflow.Engine
+	Bus     *api.Bus
+	Server  *api.Server
+	workers int
 }
 
 // Build assembles a kernel per cfg.
@@ -109,7 +112,11 @@ func Build(cfg Config) (*App, error) {
 	reg := api.NewRegistry(cfg.RegistryRoot)
 	srv := api.NewServer(st, eng, bus, reg)
 
-	return &App{Store: st, Engine: eng, Bus: bus, Server: srv}, nil
+	workers := cfg.Workers
+	if workers <= 0 {
+		workers = 1
+	}
+	return &App{Store: st, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
 }
 
 // ClaudeBackend builds the real claude -p backend.
@@ -122,9 +129,15 @@ func envOr(key, def string) string {
 	return def
 }
 
-// StartBackground launches the in-process worker, reaper and event bus.
+// StartBackground launches the in-process worker POOL, reaper and event bus.
+// The pool gives parallel execution across independent runs/tasks: the atomic
+// claim (BEGIN IMMEDIATE + fence) guarantees no two workers ever claim the same
+// task, so N workers drain the ready queue concurrently. Steps within one run
+// stay serial (step N+1 is enqueued only after N completes).
 func (a *App) StartBackground(ctx context.Context) {
-	go a.Engine.WorkerLoop(ctx, "inproc-worker")
+	for i := 0; i < a.workers; i++ {
+		go a.Engine.WorkerLoop(ctx, fmt.Sprintf("inproc-worker-%d", i))
+	}
 	go a.Engine.ReaperLoop(ctx, 60_000, 10*time.Second)
 	go a.Bus.Run(ctx)
 }
