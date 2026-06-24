@@ -135,7 +135,7 @@ func TestNativeReadyStoriesGetFired(t *testing.T) {
 	cp := &fakeControlPlane{}
 	sched := NewNativeScheduler(provider, cp, "dev")
 
-	if err := sched.RunOnce(context.Background()); err != nil {
+	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +161,7 @@ func TestNativeRunningStoryMarkedDoneWhenRunDone(t *testing.T) {
 
 	sched := NewNativeScheduler(provider, cp, "dev")
 
-	if err := sched.RunOnce(context.Background()); err != nil {
+	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +180,7 @@ func TestNativeRunningStoryUntouchedWhileRunning(t *testing.T) {
 
 	sched := NewNativeScheduler(provider, cp, "dev")
 
-	if err := sched.RunOnce(context.Background()); err != nil {
+	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -200,10 +200,10 @@ func TestNativeNoDoubleFire(t *testing.T) {
 	sched := NewNativeScheduler(provider, cp, "dev")
 
 	ctx := context.Background()
-	if err := sched.RunOnce(ctx); err != nil {
+	if _, err := sched.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := sched.RunOnce(ctx); err != nil {
+	if _, err := sched.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,7 +225,7 @@ func TestNativeDepUnblockEndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	// Cycle 1: S1 has no deps → fires; S2 is blocked (dep not done).
-	if err := sched.RunOnce(ctx); err != nil {
+	if _, err := sched.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if cp.firedCount() != 1 {
@@ -239,7 +239,7 @@ func TestNativeDepUnblockEndToEnd(t *testing.T) {
 	}
 
 	// S2 still blocked while S1 is RUNNING.
-	if err := sched.RunOnce(ctx); err != nil {
+	if _, err := sched.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if cp.firedCount() != 1 {
@@ -251,7 +251,7 @@ func TestNativeDepUnblockEndToEnd(t *testing.T) {
 	cp.setStatus(s1RunID, "DONE")
 
 	// Cycle 3: S1 gets marked done → S2 becomes ready and fires.
-	if err := sched.RunOnce(ctx); err != nil {
+	if _, err := sched.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if provider.statusOf("S1") != "done" {

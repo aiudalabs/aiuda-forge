@@ -154,12 +154,15 @@ func NewNativeScheduler(provider StoryProvider, cp ControlPlane, workflow string
 //
 // Completing a story advances its status to "done", which unblocks any
 // dependent stories — they will appear in Ready() on the next cycle.
-func (s *NativeScheduler) RunOnce(ctx context.Context) error {
+// RunOnce returns the number of actions taken (stories marked done + stories
+// fired) so the loop can reset its backoff when there was activity.
+func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
+	actions := 0
 	// Step (a) — advance completions before firing so a dep can unblock in the
 	// same cycle that its run finishes (matches the GitHub orchestrator's order).
 	running, err := s.provider.Running(ctx)
 	if err != nil {
-		return fmt.Errorf("list running stories: %w", err)
+		return actions, fmt.Errorf("list running stories: %w", err)
 	}
 	for _, t := range running {
 		if t.RunID == "" {
@@ -177,13 +180,14 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) error {
 			log.Printf("native-scheduler: mark done story=%s: %v", t.ID, err)
 			continue
 		}
+		actions++
 		log.Printf("native-scheduler: story %s run %s DONE — marked done", t.ID, t.RunID)
 	}
 
 	// Step (b) — fire ready stories.
 	ready, err := s.provider.Ready(ctx)
 	if err != nil {
-		return fmt.Errorf("list ready stories: %w", err)
+		return actions, fmt.Errorf("list ready stories: %w", err)
 	}
 	for _, t := range ready {
 		payload := map[string]any{
@@ -200,33 +204,36 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) error {
 			log.Printf("native-scheduler: mark running story=%s run=%s: %v", t.ID, runID, err)
 			continue
 		}
+		actions++
 		log.Printf("native-scheduler: story %s fired — run %s", t.ID, runID)
 	}
-	return nil
+	return actions, nil
 }
 
 // Run loops forever, calling RunOnce at interval until ctx is cancelled.
 // It backs off (doubles the sleep, up to 5× base) when an idle cycle fires
 // nothing new, matching the Orchestrator.Run backoff pattern.
-func (s *NativeScheduler) Run(ctx context.Context, interval time.Duration) {
-	maxInterval := interval * 5
+func (s *NativeScheduler) Run(ctx context.Context, base time.Duration) {
+	maxInterval := base * 5
+	interval := base
 	for {
-		if err := s.RunOnce(ctx); err != nil {
+		actions, err := s.RunOnce(ctx)
+		if err != nil {
 			log.Printf("native-scheduler: poll error: %v", err)
+		}
+		// Reset to the base interval whenever there was activity (a story fired or
+		// completed) so follow-up work — completions, unblocked dependents — is
+		// picked up promptly; back off only when idle.
+		if actions > 0 {
+			interval = base
+		} else if interval < maxInterval {
+			interval *= 2
 		}
 
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(interval):
-		}
-
-		// Simple backoff: next sleep doubles up to max; reset when context is
-		// still live (we don't have a fired-count here, so we just let it grow
-		// to max and stay there — steady-state is one poll per maxInterval when
-		// the board is quiet).
-		if interval < maxInterval {
-			interval *= 2
 		}
 	}
 }

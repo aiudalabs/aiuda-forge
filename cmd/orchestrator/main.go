@@ -77,7 +77,7 @@ func runNative(cp orchestrator.ControlPlane, cpURL, workflow string, interval ti
 	sched := orchestrator.NewNativeScheduler(provider, cp, workflow)
 
 	if once {
-		if err := sched.RunOnce(context.Background()); err != nil {
+		if _, err := sched.RunOnce(context.Background()); err != nil {
 			log.Fatalf("native-scheduler: %v", err)
 		}
 		return
