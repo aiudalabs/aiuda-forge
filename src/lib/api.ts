@@ -313,7 +313,7 @@ export async function createRun(input: { workflow: string; payload: Record<strin
     mockRuns.unshift(run);
     return run;
   }
-  return http<Run>(`/runs`, { method: "POST", body: JSON.stringify(input) });
+  return mapRun(await http<KernelRun>(`/runs`, { method: "POST", body: JSON.stringify(input) }));
 }
 
 export async function cancelRun(id: string): Promise<void> {
@@ -514,6 +514,7 @@ export async function listTickets(): Promise<OrchestratorTicket[]> {
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, `GET /tickets → ${res.status} ${body}`);
   }
-  const data = (await res.json()) as { tickets: OrchestratorTicket[] };
-  return data.tickets;
+  // Toleramos array pelado además de { tickets: [...] }, espejando el patrón de listRuns.
+  const json = await res.json();
+  return Array.isArray(json) ? json : (json as { tickets?: OrchestratorTicket[] })?.tickets ?? [];
 }

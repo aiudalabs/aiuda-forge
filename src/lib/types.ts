@@ -187,7 +187,7 @@ export interface MetricsPayload {
 // ── Tickets (from orchestrator) ───────────────────────────────────────────────
 // GET /tickets → { tickets: Ticket[] }
 
-export type TicketStatus = "open" | "blocked" | "ready" | "firing" | "done";
+export type TicketStatus = "open" | "blocked" | "ready" | "firing" | "done" | "failed";
 
 export interface OrchestratorTicket {
   id: string;

@@ -6,12 +6,6 @@ export const API_URL =
   process.env.NEXT_PUBLIC_VIBEFORGE_API_URL?.replace(/\/$/, "") ||
   "http://localhost:8080";
 
-// URL del orquestador — servicio aparte que expone GET /tickets y GET /healthz.
-// Default http://localhost:9090; sobreescribible por env var.
-export const ORCHESTRATOR_URL =
-  process.env.NEXT_PUBLIC_ORCHESTRATOR_URL?.replace(/\/$/, "") ||
-  "http://localhost:9090";
-
 // Forzar modo mock aunque la API responda (demo / desarrollo de UI sin backend).
 export const FORCE_MOCK = process.env.NEXT_PUBLIC_FORCE_MOCK === "1";
 

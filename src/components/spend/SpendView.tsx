@@ -48,11 +48,13 @@ export function SpendView() {
   }
 
   // Derivar el costo por flujo más alto para la barra de referencia (100%).
-  const wfEntries = Object.entries(data.cost_by_workflow).sort((a, b) => b[1] - a[1]);
-  const maxWf = wfEntries[0]?.[1] ?? 1;
+  // Guardamos ?? {} para tolerar campos ausentes en respuestas sparse del backend.
+  const wfEntries = Object.entries(data.cost_by_workflow ?? {}).sort((a, b) => b[1] - a[1]);
+  // Mínimo 0.001 para evitar división por cero cuando el único entry tiene coste 0.
+  const maxWf = Math.max(wfEntries[0]?.[1] ?? 0, 0.001);
 
-  const stepEntries = Object.entries(data.cost_by_step).sort((a, b) => b[1] - a[1]);
-  const maxStep = stepEntries[0]?.[1] ?? 1;
+  const stepEntries = Object.entries(data.cost_by_step ?? {}).sort((a, b) => b[1] - a[1]);
+  const maxStep = Math.max(stepEntries[0]?.[1] ?? 0, 0.001);
 
   // cost-per-accepted-change: total / runs aceptados (done).
   const doneCount = data.by_status?.DONE ?? 0;
@@ -79,13 +81,13 @@ export function SpendView() {
         </div>
         <div className="stat">
           <div className="eyebrow">Aceptación</div>
-          <div className="n em serif">{fmtPct(data.acceptance_rate)}</div>
+          <div className="n em serif">{fmtPct(data.acceptance_rate ?? 0)}</div>
           <div className="sub">runs → PR mergeable</div>
         </div>
         <div className="stat">
           <div className="eyebrow">Runs DONE</div>
           <div className="n serif">{doneCount}</div>
-          <div className="sub">de {Object.values(data.by_status).reduce((a, b) => a + b, 0)} totales</div>
+          <div className="sub">de {Object.values(data.by_status ?? {}).reduce((a, b) => a + b, 0)} totales</div>
         </div>
       </div>
 
@@ -130,13 +132,13 @@ export function SpendView() {
       )}
 
       {/* Por estado */}
-      {Object.keys(data.by_status).length > 0 && (
+      {Object.keys(data.by_status ?? {}).length > 0 && (
         <>
           <div className="sectitle">
             <h2>Runs por estado</h2>
           </div>
           <div className="kv" style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "8px 0" }}>
-            {Object.entries(data.by_status).map(([status, count]) => (
+            {Object.entries(data.by_status ?? {}).map(([status, count]) => (
               <span key={status}>
                 {status}: <b>{count}</b>
               </span>

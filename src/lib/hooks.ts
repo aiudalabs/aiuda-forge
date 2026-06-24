@@ -76,6 +76,11 @@ function useRunAction<Args extends unknown[]>(fn: (...args: Args) => Promise<unk
       qc.invalidateQueries({ queryKey: qk.stats });
       qc.invalidateQueries({ queryKey: qk.notifications });
     },
+    onError: (err: unknown) => {
+      // Surfaceamos el error en consola; el objeto de error queda en mutation.error
+      // para que los call sites (RunCard, RunDrawer) puedan renderizarlo si lo desean.
+      console.error("[useRunAction] acción falló:", err);
+    },
   });
 }
 

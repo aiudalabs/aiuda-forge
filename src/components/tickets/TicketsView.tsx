@@ -20,6 +20,7 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   ready: "listo",
   firing: "running",
   done: "done",
+  failed: "FALLIDO",
 };
 
 // Clase CSS para la pill de estado — reutiliza los mismos tokens del mockup.
@@ -29,6 +30,7 @@ const STATUS_CLASS: Record<TicketStatus, string> = {
   ready: "run_",
   firing: "run_",
   done: "done",
+  failed: "failed",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -203,6 +205,7 @@ function DepNode({
     ready: "ready",
     firing: "ready",
     done: "done",
+    failed: "failed",
   };
 
   const icon: Record<TicketStatus, string> = {
@@ -211,6 +214,7 @@ function DepNode({
     ready: " ⟳",
     firing: " ⟳",
     done: " ✓",
+    failed: " ✗",
   };
 
   return (
