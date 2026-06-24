@@ -1,8 +1,8 @@
 "use client";
 
 // TICKETS — espejo de JIRA/GitHub por MCP (doc 16 §2.3).
-// Cableado contra GET /tickets del orquestador (ORCHESTRATOR_URL, default :9090).
-// Si el orquestador no está disponible, cae al mock igual que el control-plane.
+// Cableado contra GET /tickets del STORE NATIVO (control-plane, API_URL): la UI
+// es self-contained. Si el control-plane no está, cae al mock.
 // Los run_id se enlazan al drawer del Board.
 
 import { useState } from "react";
@@ -45,9 +45,9 @@ export function TicketsView() {
     <div className="wrap">
       <div className="sectitle">
         <h2>Tickets</h2>
-        <span className="c">espejo de GitHub · MCP</span>
+        <span className="c">store nativo · backlog</span>
         <span className="sp" />
-        <span className="tag">orquestador · {list.length} tickets</span>
+        <span className="tag">{list.length} stories</span>
       </div>
 
       {isLoading ? (
@@ -58,7 +58,7 @@ export function TicketsView() {
       ) : isError ? (
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
-          No se pudo conectar al orquestador.{" "}
+          No se pudo conectar al store de tickets.{" "}
           <button className="btn ghost sm" onClick={() => refetch()}>
             Reintentar
           </button>

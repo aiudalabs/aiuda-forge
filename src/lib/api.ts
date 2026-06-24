@@ -6,7 +6,7 @@
 // (lib/mock) para que la UI se construya/vea sin el backend arriba. `getApiMode()` expone el
 // modo activo para que la UI lo muestre y para que el WS sepa si conectarse.
 
-import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS, ORCHESTRATOR_URL } from "./config";
+import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS } from "./config";
 import {
   MOCK_PROJECT,
   mockControl,
@@ -500,43 +500,20 @@ export async function getMetrics(): Promise<MetricsPayload> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tickets — GET /tickets (orquestador, ORCHESTRATOR_URL)
-// Sondeo propio: si el orquestador no está, caemos al mock igual que con el control-plane.
+// Tickets — GET /tickets del STORE NATIVO (control-plane, API_URL). El orquestador
+// y GitHub pasan a ser sync opcional (B2); la UI lee del store propio.
 // ─────────────────────────────────────────────────────────────────────────────
 
-let orchModePromise: Promise<"real" | "mock"> | null = null;
-
-async function probeOrchestrator(): Promise<"real" | "mock"> {
-  if (FORCE_MOCK) return "mock";
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), HEALTH_TIMEOUT_MS);
-    const res = await fetch(`${ORCHESTRATOR_URL}/healthz`, { signal: ctrl.signal });
-    clearTimeout(t);
-    return res.ok ? "real" : "mock";
-  } catch {
-    return "mock";
-  }
-}
-
-export function getOrchestratorMode(): Promise<"real" | "mock"> {
-  if (!orchModePromise) orchModePromise = probeOrchestrator();
-  return orchModePromise;
-}
-
-export function resetOrchestratorMode() {
-  orchModePromise = null;
-}
-
 export async function listTickets(): Promise<OrchestratorTicket[]> {
-  if ((await getOrchestratorMode()) === "mock") return [...mockOrchestratorTickets];
-  const data = await (async () => {
-    const res = await fetch(`${ORCHESTRATOR_URL}/tickets`);
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new ApiError(res.status, `GET /tickets → ${res.status} ${body}`);
-    }
-    return res.json() as Promise<{ tickets: OrchestratorTicket[] }>;
-  })();
+  // Fuente de verdad = el store NATIVO del control-plane (GET /tickets en :8080),
+  // no el orquestador. Así la UI es self-contained: lee epics/stories/deps del
+  // store propio. El orquestador/GitHub pasan a ser sync opcional (B2).
+  if (await isMock()) return [...mockOrchestratorTickets];
+  const res = await fetch(`${API_URL}/tickets`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(res.status, `GET /tickets → ${res.status} ${body}`);
+  }
+  const data = (await res.json()) as { tickets: OrchestratorTicket[] };
   return data.tickets;
 }
