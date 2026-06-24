@@ -6,3 +6,7 @@
 /tmp/
 .DS_Store
 vibeforge.db
+
+# run workdirs (e2e/local)
+.vibeforge-runs/
+vibeforge.db
