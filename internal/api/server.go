@@ -48,6 +48,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /runs/{id}/cancel", s.cancelRun)
 	m.HandleFunc("DELETE /runs/{id}", s.deleteRun)
 	m.HandleFunc("POST /runs/{id}/retry", s.retryRun)
+	m.HandleFunc("GET /control/status", s.controlStatus)
 	m.HandleFunc("POST /control/pause", s.pause)
 	m.HandleFunc("POST /control/resume", s.resume)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/approve", s.approveStep)
@@ -166,6 +167,10 @@ func (s *Server) retryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run, _ := s.Store.GetRun(id)
 	writeJSON(w, http.StatusOK, run)
+}
+
+func (s *Server) controlStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"paused": s.Engine.IsPaused()})
 }
 
 func (s *Server) pause(w http.ResponseWriter, r *http.Request) {
