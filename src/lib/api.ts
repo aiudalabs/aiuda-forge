@@ -10,6 +10,7 @@ import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS } from "./config";
 import {
   MOCK_PROJECT,
   mockControl,
+  mockEpics,
   mockEvents,
   mockMetrics,
   mockNotifications,
@@ -40,6 +41,7 @@ import type {
   RunStep,
   SettingsPayload,
   StepStatus,
+  Epic,
 } from "./types";
 
 export type ApiMode = "real" | "mock";
@@ -517,4 +519,48 @@ export async function listTickets(): Promise<OrchestratorTicket[]> {
   // Toleramos array pelado además de { tickets: [...] }, espejando el patrón de listRuns.
   const json = await res.json();
   return Array.isArray(json) ? json : (json as { tickets?: OrchestratorTicket[] })?.tickets ?? [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Epics — GET /epics (opcional; selector en el formulario de nueva story)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function listEpics(): Promise<Epic[]> {
+  if (await isMock()) return [...mockEpics];
+  const res = await fetch(`${API_URL}/epics`);
+  if (!res.ok) return []; // el endpoint es opcional; fallamos silenciosamente
+  const json = await res.json();
+  return Array.isArray(json) ? json : (json as { epics?: Epic[] })?.epics ?? [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stories — POST /stories (crea una story nueva en el store nativo)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CreateStoryInput {
+  id: string;
+  title: string;
+  deps?: string[];
+  epic_id?: string;
+  sprint_id?: string;
+}
+
+export async function createStory(input: CreateStoryInput): Promise<OrchestratorTicket> {
+  if (await isMock()) {
+    // Verificar id duplicado en el mock
+    const exists = mockOrchestratorTickets.find((t) => t.id === input.id);
+    if (exists) throw new ApiError(400, `Story con id "${input.id}" ya existe.`);
+    const story: OrchestratorTicket = {
+      id: input.id,
+      title: input.title,
+      status: "open",
+      deps: input.deps ?? [],
+    };
+    mockOrchestratorTickets.push(story);
+    return story;
+  }
+  return http<OrchestratorTicket>(`/stories`, {
+    method: "POST",
+    body: JSON.stringify({ ...input, status: "backlog" }),
+  });
 }

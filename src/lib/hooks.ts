@@ -10,7 +10,7 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import * as api from "./api";
-import type { ApiMode } from "./api";
+import type { ApiMode, CreateStoryInput } from "./api";
 import { subscribe } from "./ws";
 import type { RegistryKind, RunEvent } from "./types";
 
@@ -27,6 +27,7 @@ export const qk = {
   settings: ["settings"] as const,
   metrics: ["metrics"] as const,
   tickets: ["tickets"] as const,
+  epics: ["epics"] as const,
 };
 
 export function useApiMode() {
@@ -221,6 +222,25 @@ export function useTickets() {
     queryKey: qk.tickets,
     queryFn: () => api.listTickets(),
     refetchInterval: 10000,
+  });
+}
+
+export function useEpics() {
+  return useQuery({
+    queryKey: qk.epics,
+    queryFn: () => api.listEpics(),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateStory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateStoryInput) => api.createStory(input),
+    onSuccess: () => {
+      // Invalida tickets para que la nueva story aparezca en tabla y DAG.
+      qc.invalidateQueries({ queryKey: qk.tickets });
+    },
   });
 }
 

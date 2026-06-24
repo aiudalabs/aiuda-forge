@@ -186,8 +186,15 @@ export interface MetricsPayload {
 
 // ── Tickets (from orchestrator) ───────────────────────────────────────────────
 // GET /tickets → { tickets: Ticket[] }
+// GET /epics   → { epics: Epic[] }
+// POST /stories → OrchestratorTicket
 
 export type TicketStatus = "open" | "blocked" | "ready" | "firing" | "done" | "failed";
+
+export interface Epic {
+  id: string;
+  title: string;
+}
 
 export interface OrchestratorTicket {
   id: string;

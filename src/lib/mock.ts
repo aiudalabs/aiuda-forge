@@ -5,6 +5,7 @@
 import type {
   BoardStats,
   ControlStatus,
+  Epic,
   MetricsPayload,
   Notification,
   OrchestratorTicket,
@@ -294,6 +295,13 @@ export const mockMetrics: MetricsPayload = {
     CANCELLED: 0,
   },
 };
+
+// ── Epics mock ────────────────────────────────────────────────────────────────
+
+export const mockEpics: Epic[] = [
+  { id: "EPIC-1", title: "Utilidades de string" },
+  { id: "EPIC-2", title: "Validadores panameños" },
+];
 
 // ── Orchestrator tickets mock ─────────────────────────────────────────────────
 
