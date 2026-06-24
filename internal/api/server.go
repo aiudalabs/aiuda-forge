@@ -13,17 +13,19 @@ import (
 
 	"vibeforge-kernel/internal/settings"
 	"vibeforge-kernel/internal/store"
+	"vibeforge-kernel/internal/tickets"
 	"vibeforge-kernel/internal/workflow"
 )
 
-// Server wires the store, the executor engine, the event bus, the registry, and
-// the settings store into one HTTP handler.
+// Server wires the store, the executor engine, the event bus, the registry,
+// the settings store, and the native ticket store into one HTTP handler.
 type Server struct {
 	Store    *store.Store
 	Engine   *workflow.Engine
 	Bus      *Bus
 	Registry *Registry
 	Settings *settings.Store
+	Tickets  *tickets.Store
 	mux      *http.ServeMux
 }
 
@@ -80,6 +82,23 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /steps/{id}/report", s.report)
 	m.HandleFunc("POST /steps/{id}/heartbeat", s.heartbeat)
 	m.HandleFunc("POST /steps/{id}/usage", s.usage)
+
+	// Native ticket store — only registered when a Tickets store is wired in.
+	if s.Tickets != nil {
+		m.HandleFunc("POST /epics", s.createEpic)
+		m.HandleFunc("GET /epics", s.listEpics)
+		m.HandleFunc("GET /epics/{id}", s.getEpic)
+		m.HandleFunc("POST /sprints", s.createSprint)
+		m.HandleFunc("GET /sprints", s.listSprints)
+		m.HandleFunc("POST /stories", s.createStory)
+		m.HandleFunc("GET /stories", s.listStoriesHandler)
+		m.HandleFunc("GET /stories/{id}", s.getStory)
+		m.HandleFunc("PUT /stories/{id}/status", s.updateStoryStatus)
+		m.HandleFunc("POST /stories/{id}/deps", s.addStoryDeps)
+		// GET /tickets — compat endpoint matching the orchestrator's shape so the
+		// existing UI can read the native store unchanged.
+		m.HandleFunc("GET /tickets", s.ticketsCompat)
+	}
 }
 
 // ---- §A handlers ------------------------------------------------------------
