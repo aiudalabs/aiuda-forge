@@ -231,3 +231,69 @@ func TestDirLoaderLoadsPersona(t *testing.T) {
 		t.Fatalf("reviewer should use a different model than dev (cross-model), both %q", rev.Model)
 	}
 }
+
+// TestDesignWorkflowParses: the design.yaml workflow loads and parses with the kernel parser.
+func TestDesignWorkflowParses(t *testing.T) {
+	wf, err := workflow.ParseFile(filepath.Join("..", "..", "registry", "workflows", "design.yaml"))
+	if err != nil {
+		t.Fatalf("design.yaml failed to parse: %v", err)
+	}
+	if wf.ID != "design" {
+		t.Fatalf("expected workflow id 'design', got %q", wf.ID)
+	}
+	// Verify all five design phases and their gates are present.
+	phases := []string{"discovery", "discovery_gate", "prd", "prd_gate", "architecture", "arch_gate", "ui", "ui_gate", "backlog", "backlog_gate"}
+	for _, id := range phases {
+		if _, ok := wf.StepByID(id); !ok {
+			t.Errorf("design.yaml missing step %q", id)
+		}
+	}
+}
+
+// TestDesignStepOutputWritesDoc: a design step with inputs["output"] set writes the
+// agent's result text to the declared path under the workdir.
+func TestDesignStepOutputWritesDoc(t *testing.T) {
+	workdir := t.TempDir()
+	resultText := "# Project Brief\n\nThis is the brief.\n"
+
+	agents := MapLoader{
+		"analyst": &Manifest{ID: "analyst", Model: "claude-sonnet-4-6", Tools: []string{"read", "write"}, Role: "analyst"},
+	}
+	backend := FakeBackend{Reply: resultText}
+
+	runner := NewStepRunnerWith(backend, agents)
+	runner.Sandboxed = false
+
+	step := workflow.Step{ID: "discovery", Type: "design", Agent: "analyst"}
+	inputs := map[string]any{
+		"instructions": "Build a task manager for developers.",
+		"output":       "docs/BRIEF.md",
+	}
+
+	res, err := runner.Run(context.Background(), step, inputs, workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got detail: %s", res.Detail)
+	}
+
+	// Verify the doc was written to disk at the declared relative path.
+	docPath := filepath.Join(workdir, "docs", "BRIEF.md")
+	got, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatalf("output doc not written to %s: %v", docPath, err)
+	}
+	if string(got) != resultText {
+		t.Fatalf("output doc content mismatch\nwant: %q\ngot:  %q", resultText, string(got))
+	}
+
+	// Verify the output path is included in the step result.
+	outVal, ok := res.Output["output"]
+	if !ok {
+		t.Fatal("step result output map missing 'output' key")
+	}
+	if outVal != docPath {
+		t.Fatalf("expected output path %q, got %q", docPath, outVal)
+	}
+}

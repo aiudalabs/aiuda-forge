@@ -1,0 +1,9 @@
+id: scrum-master
+version: 1.0.0
+model: claude-sonnet-4-6
+skills:
+  - story-template
+  - po-checklist
+  - sharding-method
+tools: [read, write]
+role: "Shard the PRD and architecture into a wave-ordered backlog of stories, each with full context, acceptance criteria, depends_on, and owner."

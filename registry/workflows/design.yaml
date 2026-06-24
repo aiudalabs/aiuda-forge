@@ -1,0 +1,92 @@
+# Design workflow — the product design process as a registry-defined YAML workflow.
+# Each phase is a `design` step (no sandbox, produces a doc) followed by a human_gate
+# that parks execution until a human approves. On rejection the gate loops back to the
+# phase step with the reviewer's feedback injected as $<gate>.detail.
+#
+# Phase order: discovery → PRD → architecture → UI → backlog
+# Phase 2 (ticket-store handoff) is NOT included here — see design-v2.yaml when ready.
+id: design
+version: 1.0.0
+steps:
+  # ── Phase 1: Discovery ────────────────────────────────────────────────────
+  - id: discovery
+    type: design
+    agent: analyst
+    inputs:
+      instructions: $trigger.instructions
+      output: docs/BRIEF.md
+
+  - id: discovery_gate
+    type: human_gate
+    inputs:
+      reason: "Review the project brief (docs/BRIEF.md). Approve to proceed to PRD, or reject with feedback."
+    on_fail:
+      goto: discovery
+      feedback: $discovery_gate.detail
+
+  # ── Phase 2: PRD ──────────────────────────────────────────────────────────
+  - id: prd
+    type: design
+    agent: pm
+    inputs:
+      brief: $discovery.text
+      instructions: $trigger.instructions
+      output: docs/PRD.md
+
+  - id: prd_gate
+    type: human_gate
+    inputs:
+      reason: "Review the PRD (docs/PRD.md). Approve to proceed to architecture, or reject with feedback."
+    on_fail:
+      goto: prd
+      feedback: $prd_gate.detail
+
+  # ── Phase 3: Architecture ─────────────────────────────────────────────────
+  - id: architecture
+    type: design
+    agent: architect
+    inputs:
+      prd: $prd.text
+      output: docs/ARCHITECTURE.md
+
+  - id: arch_gate
+    type: human_gate
+    inputs:
+      reason: "Review the architecture (docs/ARCHITECTURE.md). Approve to proceed to UI, or reject with feedback."
+    on_fail:
+      goto: architecture
+      feedback: $arch_gate.detail
+
+  # ── Phase 4: UI / Screens ─────────────────────────────────────────────────
+  - id: ui
+    type: design
+    agent: ux
+    inputs:
+      prd: $prd.text
+      architecture: $architecture.text
+      output: docs/UI_SCREENS.md
+
+  - id: ui_gate
+    type: human_gate
+    inputs:
+      reason: "Review the UI spec (docs/UI_SCREENS.md). Approve to proceed to backlog, or reject with feedback."
+    on_fail:
+      goto: ui
+      feedback: $ui_gate.detail
+
+  # ── Phase 5: Backlog ──────────────────────────────────────────────────────
+  - id: backlog
+    type: design
+    agent: scrum-master
+    inputs:
+      prd: $prd.text
+      architecture: $architecture.text
+      output: docs/BACKLOG.md
+
+  - id: backlog_gate
+    type: human_gate
+    inputs:
+      reason: "Review the backlog (docs/BACKLOG.md). Approve to complete design phase, or reject with feedback."
+    on_fail:
+      goto: backlog
+      feedback: $backlog_gate.detail

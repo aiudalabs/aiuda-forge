@@ -98,6 +98,17 @@ func Build(cfg Config) (*App, error) {
 	}
 	eng.Register("agent", agentRunner)
 
+	// Design step — same agent runner wiring but Sandboxed=false: design turns
+	// produce documents, not code, so there is no need for a container worktree.
+	// Inputs may carry `output: <relpath>` to persist the doc to disk.
+	designRunner := agent.NewStepRunner(backend, agentLoader)
+	designRunner.Auth = cfg.AgentAuth
+	if cfg.AgentTimeout > 0 {
+		designRunner.Timeout = cfg.AgentTimeout
+	}
+	designRunner.Sandboxed = false // design phases run on the host; no sandbox needed
+	eng.Register("design", designRunner)
+
 	verifyRunner := agent.NewVerifyRunner(backend, agentLoader)
 	verifyRunner.Auth = cfg.AgentAuth
 	if cfg.AgentTimeout > 0 {

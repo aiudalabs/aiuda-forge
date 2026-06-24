@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -95,16 +96,30 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 	if err != nil {
 		return workflow.StepResult{Success: false, Detail: "agent error: " + err.Error()}, nil
 	}
+
+	out := map[string]any{
+		"text":      res.Text,
+		"cost_usd":  res.CostUSD,
+		"num_turns": res.NumTurns,
+		"agent":     manifest.ID,
+		"model":     model,
+	}
+
+	// If the step declares an output path (e.g. "docs/PRD.md"), write the agent's
+	// result text to that path under the workdir. Design steps use this to produce
+	// real artifact files; sandboxed code-agent steps never set it.
+	if outRel := asString(inputs["output"]); outRel != "" {
+		outAbs := filepath.Join(workdir, outRel)
+		if mkErr := os.MkdirAll(filepath.Dir(outAbs), 0o755); mkErr == nil {
+			_ = os.WriteFile(outAbs, []byte(res.Text), 0o644)
+		}
+		out["output"] = outAbs
+	}
+
 	return workflow.StepResult{
 		Success: res.Success,
-		Output: map[string]any{
-			"text":      res.Text,
-			"cost_usd":  res.CostUSD,
-			"num_turns": res.NumTurns,
-			"agent":     manifest.ID,
-			"model":     model,
-		},
-		Detail: res.Text,
+		Output:  out,
+		Detail:  res.Text,
 	}, nil
 }
 
