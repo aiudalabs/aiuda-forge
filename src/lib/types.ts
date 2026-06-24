@@ -184,6 +184,28 @@ export interface MetricsPayload {
   by_status: Record<string, number>;
 }
 
+// ── Studio / Design runs ──────────────────────────────────────────────────────
+// Un DesignRun es un run del workflow "design" en el kernel. La UI del Studio
+// lo presenta como un proyecto de diseño guiado por fases.
+
+export type DesignStepStatus = "QUEUED" | "RUNNING" | "DONE" | "AWAITING" | "FAILED";
+
+export interface DesignPhase {
+  stepId: string; // "discovery" | "prd" | "architecture" | "ui" | "backlog" | "handoff"
+  name: string;   // "Descubrimiento", "PRD", etc.
+  designStatus: DesignStepStatus; // estado del paso de diseño (el agente)
+  gateStatus: DesignStepStatus;   // estado del gate (human_gate)
+}
+
+export interface DesignRun {
+  id: string;
+  workflow_id: string; // siempre "design"
+  status: RunStatus;
+  idea: string;        // .payload.instructions — la descripción del proyecto
+  created_at: number;  // epoch ms
+  phases: DesignPhase[];
+}
+
 // ── Tickets (from orchestrator) ───────────────────────────────────────────────
 // GET /tickets → { tickets: Ticket[] }
 // GET /epics   → { epics: Epic[] }

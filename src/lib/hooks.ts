@@ -244,6 +244,45 @@ export function useCreateStory() {
   });
 }
 
+// ── Studio / Design runs hooks ────────────────────────────────────────────────
+
+export function useDesignRuns() {
+  return useQuery({
+    queryKey: ["designRuns"],
+    queryFn: () => api.listDesignRuns(),
+    refetchInterval: 8000,
+  });
+}
+
+export function useDesignRun(id: string | null) {
+  return useQuery({
+    queryKey: id ? ["designRun", id] : ["designRun", "none"],
+    queryFn: () => api.getDesignRun(id as string),
+    enabled: !!id,
+    refetchInterval: 3000, // live: las fases avanzan solas
+  });
+}
+
+export function useCreateDesignRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (instructions: string) => api.createDesignRun(instructions),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["designRuns"] });
+    },
+  });
+}
+
+/** Artefacto (markdown) producido por un paso del design run. */
+export function useArtifact(runId: string | null, stepId: string | null) {
+  return useQuery({
+    queryKey: ["artifact", runId, stepId],
+    queryFn: () => api.getArtifact(runId as string, stepId as string),
+    enabled: !!runId && !!stepId,
+    staleTime: 30_000, // los artefactos no cambian frecuentemente
+  });
+}
+
 /**
  * Stream de eventos de un run para el live-log. En modo real: replay (GET events) + push WS.
  * En modo mock: replay del mock y, si el run está corriendo, un "tick" simulado que va

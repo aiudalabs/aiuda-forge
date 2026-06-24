@@ -5,6 +5,7 @@
 import type {
   BoardStats,
   ControlStatus,
+  DesignRun,
   Epic,
   MetricsPayload,
   Notification,
@@ -302,6 +303,204 @@ export const mockEpics: Epic[] = [
   { id: "EPIC-1", title: "Utilidades de string" },
   { id: "EPIC-2", title: "Validadores panameños" },
 ];
+
+// ── Design runs mock (Studio) ─────────────────────────────────────────────────
+// Cada DesignRun es un run del workflow "design" en el kernel. Las fases se
+// derivan de los pasos: discovery/prd/architecture/ui/backlog + sus gates.
+
+export const mockDesignRuns: DesignRun[] = [
+  {
+    id: "run_design_001",
+    workflow_id: "design",
+    status: "AWAITING",
+    idea: "Plataforma de gestión de turnos para clínicas — reserva online, alertas SMS, panel admin",
+    created_at: Date.now() - 3600_000,
+    phases: [
+      { stepId: "discovery", name: "Descubrimiento", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "prd", name: "PRD", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "architecture", name: "Arquitectura", designStatus: "DONE", gateStatus: "AWAITING" },
+      { stepId: "ui", name: "UI / Pantallas", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "backlog", name: "Backlog", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "handoff", name: "Handoff → stories", designStatus: "QUEUED", gateStatus: "QUEUED" },
+    ],
+  },
+  {
+    id: "run_design_002",
+    workflow_id: "design",
+    status: "DONE",
+    idea: "App de registro de asistencia escolar con QR y notificaciones a padres",
+    created_at: Date.now() - 86400_000,
+    phases: [
+      { stepId: "discovery", name: "Descubrimiento", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "prd", name: "PRD", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "architecture", name: "Arquitectura", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "ui", name: "UI / Pantallas", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "backlog", name: "Backlog", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "handoff", name: "Handoff → stories", designStatus: "DONE", gateStatus: "DONE" },
+    ],
+  },
+  {
+    id: "run_design_003",
+    workflow_id: "design",
+    status: "RUNNING",
+    idea: "Marketplace de servicios de limpieza residencial",
+    created_at: Date.now() - 1800_000,
+    phases: [
+      { stepId: "discovery", name: "Descubrimiento", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "prd", name: "PRD", designStatus: "RUNNING", gateStatus: "QUEUED" },
+      { stepId: "architecture", name: "Arquitectura", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "ui", name: "UI / Pantallas", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "backlog", name: "Backlog", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "handoff", name: "Handoff → stories", designStatus: "QUEUED", gateStatus: "QUEUED" },
+    ],
+  },
+];
+
+// Artefactos por run + paso en modo mock. result.text es el doc markdown.
+export const mockArtifacts: Record<string, Record<string, string>> = {
+  run_design_001: {
+    discovery: `# Descubrimiento — Plataforma de turnos para clínicas
+
+## Problema
+Las clínicas pequeñas gestionan turnos por teléfono y WhatsApp. Alta tasa de no-shows (~28 %), sin historial centralizado.
+
+## Usuarios objetivo
+- **Pacientes** (móvil): reserva, confirmación, recordatorio.
+- **Recepcionistas**: panel web para ver/mover citas.
+- **Médicos**: vista diaria de agenda.
+
+## Restricciones descubiertas
+- Integrarse con WhatsApp Business API (opcional v2).
+- HIPAA-lite: sin diagnósticos almacenados en v1.
+- Multilingüe: español + inglés desde el lanzamiento.
+
+## Hipótesis validadas
+1. El canal SMS/WhatsApp reduce no-shows un 40 %.
+2. El panel admin reemplaza hojas de cálculo en 2 semanas.
+
+## Decisiones bloqueadas hasta PRD
+- Stack de notificaciones (Twilio vs. AWS SNS).
+- Modelo de precio (SaaS mensual vs. por-cita).
+`,
+    prd: `# PRD — Plataforma de turnos v1
+
+## Objetivo de negocio
+Reducir no-shows ≥35 % y eliminar la gestión manual de agenda en clínicas con 1-5 médicos.
+
+## Alcance v1
+| Feature | In | Out |
+|---|---|---|
+| Reserva online | ✓ | |
+| Recordatorio SMS | ✓ | |
+| Panel admin (web) | ✓ | |
+| App móvil | | ✓ (v2) |
+| WhatsApp Business | | ✓ (v2) |
+
+## Métricas de éxito
+- No-show rate < 15 % al mes 3.
+- Tiempo medio de reserva < 90 s.
+- Adopción de panel admin > 80 % de recepcionistas en semana 2.
+
+## Requisitos funcionales
+1. El paciente elige médico, fecha y hora desde el link de la clínica.
+2. Confirmación por email y SMS inmediata.
+3. Recordatorio SMS 24 h antes.
+4. La recepcionista puede mover/cancelar desde el panel.
+5. Vista diaria del médico (solo lectura en v1).
+`,
+    architecture: `# Arquitectura — Plataforma de turnos v1
+
+## Stack
+- **Frontend**: Next.js 15 (App Router) + Tailwind + shadcn/ui
+- **Backend**: FastAPI (Python 3.12) · PostgreSQL 16 · Redis (jobs)
+- **Notificaciones**: Twilio SMS (simplicity over SNS en v1)
+- **Infra**: Railway (monorepo, zero-ops)
+
+## Módulos
+\`\`\`
+┌─────────────────────────────────────────────┐
+│ Next.js UI (app/)                           │
+│  /book      — reserva pública               │
+│  /admin     — panel recepcionista / médico  │
+└──────────────────┬──────────────────────────┘
+                   │ REST + WS
+┌──────────────────▼──────────────────────────┐
+│ FastAPI                                      │
+│  /appointments  CRUD                         │
+│  /notify        Twilio wrapper               │
+│  /slots         disponibilidad               │
+└──────────────────┬──────────────────────────┘
+                   │
+        ┌──────────┴──────────┐
+        │ PostgreSQL           │ Redis (queue)
+        │ appointments         │ notify_jobs
+        │ doctors              │
+        │ patients             │
+        └──────────────────────┘
+\`\`\`
+
+## Decisiones ADR
+- **ADR-01**: Railway sobre Fly.io → deploy sin config de infraestructura, suficiente para v1.
+- **ADR-02**: Twilio sobre AWS SNS → SDK simple, precios por uso, sin setup de SES.
+- **ADR-03**: Redis para jobs → evita Celery; bull-queue sería v2.
+`,
+  },
+  run_design_002: {
+    discovery: `# Descubrimiento — Registro de asistencia escolar
+
+## Problema
+Los colegios registran asistencia en papel o en sistemas legacy. Padres no reciben notificación de ausencias hasta el final del día.
+
+## Solución propuesta
+App QR: el docente escanea el código del alumno al inicio de clase. El sistema detecta ausencias y notifica al padre/tutor en tiempo real.
+`,
+    prd: `# PRD — Asistencia escolar QR v1
+
+Alcance mínimo: app docente (iOS/Android), portal de padres (web), notificaciones push.
+`,
+    architecture: `# Arquitectura — Asistencia escolar QR
+
+Stack: Flutter (app docente + padre) · Firebase (Firestore, Cloud Functions, FCM).
+`,
+    ui: `# UI / Pantallas — Asistencia escolar QR
+
+## Pantallas principales
+1. **App docente**: escáner QR → lista de asistencia → confirmar.
+2. **Portal padres**: dashboard de asistencia del hijo · historial mensual.
+3. **Admin colegio**: gestión de cursos, docentes, alumnos.
+`,
+    backlog: `# Backlog — Asistencia escolar QR
+
+## Wave 1 (MVP — 3 semanas)
+- S1-01: Auth docente (Firebase Auth)
+- S1-02: Escáner QR (Flutter camera)
+- S1-03: Registro en Firestore
+- S1-04: Notificación FCM al padre
+- S1-05: Portal web padres (Next.js)
+
+## Wave 2
+- S2-01: Reportes mensuales PDF
+- S2-02: Integración con sistema de notas
+`,
+    handoff: `# Handoff → stories
+
+23 tickets creados en el store nativo. Asignados a Wave 1 (MVP) y Wave 2.
+`,
+  },
+  run_design_003: {
+    discovery: `# Descubrimiento — Marketplace de limpieza residencial
+
+## Problema
+Encontrar servicio de limpieza confiable requiere recomendaciones boca a boca; no hay plataforma local de confianza en LATAM.
+
+## Hipótesis
+- El proveedor individual tiene mayor flexibilidad de horario que las empresas.
+- El cliente prioriza reputación (ratings) sobre precio.
+
+*(PRD en progreso…)*
+`,
+  },
+};
 
 // ── Orchestrator tickets mock ─────────────────────────────────────────────────
 

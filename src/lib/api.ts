@@ -9,7 +9,9 @@
 import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS } from "./config";
 import {
   MOCK_PROJECT,
+  mockArtifacts,
   mockControl,
+  mockDesignRuns,
   mockEpics,
   mockEvents,
   mockMetrics,
@@ -26,6 +28,9 @@ import {
 import type {
   BoardStats,
   ControlStatus,
+  DesignPhase,
+  DesignRun,
+  DesignStepStatus,
   McpConnection,
   MetricsPayload,
   Notification,
@@ -563,4 +568,118 @@ export async function createStory(input: CreateStoryInput): Promise<Orchestrator
     method: "POST",
     body: JSON.stringify({ ...input, status: "backlog" }),
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Studio — Design runs
+// Mapea runs del workflow "design" al modelo DesignRun. Las fases se derivan
+// de los steps con el mapa hardcodeado de la especificación.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Mapa de fases del workflow "design": stepId del agente → nombre display.
+// El gate de cada fase tiene id "<stepId>_gate" (excepto handoff, que no tiene gate).
+const DESIGN_PHASE_MAP: { stepId: string; name: string; hasGate: boolean }[] = [
+  { stepId: "discovery", name: "Descubrimiento", hasGate: true },
+  { stepId: "prd", name: "PRD", hasGate: true },
+  { stepId: "architecture", name: "Arquitectura", hasGate: true },
+  { stepId: "ui", name: "UI / Pantallas", hasGate: true },
+  { stepId: "backlog", name: "Backlog", hasGate: true },
+  { stepId: "handoff", name: "Handoff → stories", hasGate: false },
+];
+
+interface KernelRunWithSteps extends KernelRun {
+  steps?: KernelStep[];
+}
+
+function mapDesignRun(r: KernelRunWithSteps): DesignRun {
+  let idea = "";
+  try {
+    const p = JSON.parse(r.payload ?? "{}");
+    idea = typeof p.instructions === "string" ? p.instructions : "";
+  } catch {
+    /* payload no-JSON */
+  }
+
+  // Construir fases derivando el estado de los steps cuando están disponibles.
+  const steps = r.steps ?? [];
+  const statusOf = (sid: string): DesignStepStatus => {
+    const s = steps.find((st) => st.step_id === sid);
+    return (s?.status ?? "QUEUED") as DesignStepStatus;
+  };
+
+  const phases: DesignPhase[] = DESIGN_PHASE_MAP.map(({ stepId, name, hasGate }) => ({
+    stepId,
+    name,
+    designStatus: statusOf(stepId),
+    gateStatus: hasGate ? statusOf(`${stepId}_gate`) : "QUEUED",
+  }));
+
+  return {
+    id: r.id,
+    workflow_id: r.workflow_id ?? "design",
+    status: r.status,
+    idea,
+    created_at: r.created_at ? r.created_at * 1000 : Date.now(),
+    phases,
+  };
+}
+
+/** Lista los runs del workflow "design" (filtrando client-side). */
+export async function listDesignRuns(): Promise<DesignRun[]> {
+  if (await isMock()) return [...mockDesignRuns];
+  const res = await http<KernelRun[] | { runs: KernelRun[] }>(`/runs`);
+  const raw = Array.isArray(res) ? res : res?.runs ?? [];
+  return raw
+    .filter((r) => r.workflow_id === "design")
+    .map((r) => mapDesignRun(r));
+}
+
+/** Crea un proyecto de diseño (run del workflow "design"). */
+export async function createDesignRun(instructions: string): Promise<DesignRun> {
+  if (await isMock()) {
+    const newRun: DesignRun = {
+      id: `run_design_${String(mockDesignRuns.length + 1).padStart(3, "0")}`,
+      workflow_id: "design",
+      status: "QUEUED",
+      idea: instructions,
+      created_at: Date.now(),
+      phases: DESIGN_PHASE_MAP.map(({ stepId, name }) => ({
+        stepId,
+        name,
+        designStatus: "QUEUED",
+        gateStatus: "QUEUED",
+      })),
+    };
+    mockDesignRuns.unshift(newRun);
+    return newRun;
+  }
+  const r = await http<KernelRun>(`/runs`, {
+    method: "POST",
+    body: JSON.stringify({ workflow: "design", payload: { instructions } }),
+  });
+  return mapDesignRun(r);
+}
+
+/** Detalle de un design run con fases actualizadas desde los steps. */
+export async function getDesignRun(id: string): Promise<DesignRun> {
+  if (await isMock()) {
+    const run = mockDesignRuns.find((r) => r.id === id);
+    if (!run) throw new ApiError(404, `design run ${id} no encontrado (mock)`);
+    return { ...run };
+  }
+  const r = await http<KernelRunWithSteps>(`/runs/${id}`);
+  return mapDesignRun(r);
+}
+
+/** Trae el artefacto (documento markdown) producido por un paso de diseño. */
+export async function getArtifact(runId: string, stepId: string): Promise<string> {
+  if (await isMock()) {
+    const text = mockArtifacts[runId]?.[stepId];
+    if (!text) throw new ApiError(404, `artifact ${runId}/${stepId} no encontrado (mock)`);
+    return text;
+  }
+  const res = await http<{ run?: unknown; kind?: string; result?: { text?: string } }>(
+    `/runs/${runId}/artifacts/${stepId}`
+  );
+  return res?.result?.text ?? "";
 }
