@@ -10,6 +10,8 @@ import {
   Background,
   Controls,
   MiniMap,
+  Handle,
+  Position,
   type Node,
   type Edge,
   type NodeProps,
@@ -78,6 +80,9 @@ function StoryNode({ data }: NodeProps) {
       onClick={d.runId ? () => d.onOpenRun(d.runId as string) : undefined}
       title={d.runId ? `Ver run ${d.runId}` : d.title}
     >
+      {/* Connection points: without these, React Flow can't draw edges (error #008). */}
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
       <div style={{ fontFamily: "var(--mono)", fontSize: 11, opacity: 0.7, marginBottom: 2 }}>
         {d.id}
       </div>
