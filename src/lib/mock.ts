@@ -5,10 +5,13 @@
 import type {
   BoardStats,
   ControlStatus,
+  MetricsPayload,
   Notification,
+  OrchestratorTicket,
   Run,
   RunDetail,
   RunEvent,
+  SettingsPayload,
 } from "./types";
 
 export const MOCK_PROJECT = "manitaspty";
@@ -217,3 +220,88 @@ export const mockNotifications: Notification[] = [
 
 // Costo total del día y tokens (topbar).
 export const mockSpendToday = { cost: 3.42, tokens: "312k" };
+
+// ── Registry mock ─────────────────────────────────────────────────────────────
+
+export const mockRegistryIds: Record<string, string[]> = {
+  agents: ["dev", "reviewer", "verifier"],
+  skills: ["coding-conventions", "security-checklist", "adversarial-review"],
+  workflows: ["factory", "factory-plus", "gated"],
+};
+
+// Raw YAML / markdown content per item. Serves as fallback in mock mode.
+export const mockRegistryContent: Record<string, Record<string, string>> = {
+  agents: {
+    dev: `id: dev\nversion: 1.0.0\nmodel: claude-opus-4-8\neffort: high\nrole: |\n  Implementa el ticket dejando el árbol modificado, sin commit.\nskills:\n  - coding-conventions\ntools:\n  - read\n  - edit\n  - write\n  - bash\ninputs:\n  - ticket\noutputs:\n  - diff\n`,
+    reviewer: `id: reviewer\nversion: 1.0.0\nmodel: claude-sonnet-4-6\neffort: high\nrole: |\n  Revisa adversarialmente — busca el bug que el dev no vio.\nskills:\n  - security-checklist\ntools:\n  - read\n  - bash\ninputs:\n  - ticket\n  - diff_hint\noutputs:\n  - verdict\n  - notes\n`,
+    verifier: `id: verifier\nversion: 1.0.0\nmodel: claude-sonnet-4-6\neffort: medium\nrole: |\n  Verificador fresco: maneja la app/tests y juzga works|broken con evidencia.\nskills: []\ntools:\n  - read\n  - bash\non_fail: implement\ninputs:\n  - ticket\noutputs:\n  - verdict\n`,
+  },
+  skills: {
+    "coding-conventions": `# coding-conventions\n\nEsta skill define las convenciones de código del proyecto.\n\n## Reglas\n- Nombres en snake_case para Python, camelCase para JS.\n- Máximo 2 niveles de anidamiento.\n- Early returns preferidos.\n`,
+    "security-checklist": `# security-checklist\n\nChecklist de seguridad aplicado en cada revisión.\n\n## Items\n- No secrets en el código.\n- Validar entradas de usuario.\n- SQL parametrizado.\n`,
+    "adversarial-review": `# adversarial-review\n\nGuía de revisión adversarial para encontrar bugs no obvios.\n`,
+  },
+  workflows: {
+    factory: `id: factory\nsteps:\n  - id: implement\n    kind: agent\n    agent: dev\n  - id: gate\n    kind: gate\n    on_fail: implement\n  - id: review\n    kind: agent\n    agent: reviewer\n  - id: pr\n    kind: pr\n`,
+    "factory-plus": `id: factory-plus\nsteps:\n  - id: implement\n    kind: agent\n    agent: dev\n  - id: gate\n    kind: gate\n    on_fail: implement\n  - id: review\n    kind: agent\n    agent: reviewer\n  - id: verify\n    kind: agentic_verify\n    agent: verifier\n    on_fail: implement\n  - id: human_gate\n    kind: human_gate\n  - id: pr\n    kind: pr\n`,
+    gated: `id: gated\nsteps:\n  - id: implement\n    kind: agent\n    agent: dev\n  - id: gate\n    kind: gate\n    on_fail: implement\n  - id: human_gate\n    kind: human_gate\n  - id: pr\n    kind: pr\n`,
+  },
+};
+
+// ── Settings mock ─────────────────────────────────────────────────────────────
+
+export const mockSettings: SettingsPayload = {
+  mcp: [
+    { name: "GitHub", url: "https://api.github.com", token: "••••••••" },
+  ],
+  agent_auth: {
+    mode: "oauth_token",
+    secret: "••••••••",
+  },
+  sandbox: {
+    runtime: "docker · gVisor (runsc)",
+    image: "vibeforge-agent",
+  },
+  merge_policy: {
+    low_risk: "automerge",
+    high_risk: "human_gate",
+  },
+};
+
+// ── Metrics mock ──────────────────────────────────────────────────────────────
+
+export const mockMetrics: MetricsPayload = {
+  total_cost_usd: 3.42,
+  cost_by_workflow: {
+    "factory-plus": 2.1,
+    factory: 0.9,
+    gated: 0.42,
+  },
+  cost_by_step: {
+    implement: 2.4,
+    review: 0.6,
+    gate: 0.0,
+    verify: 0.42,
+    pr: 0.0,
+  },
+  acceptance_rate: 0.86,
+  by_status: {
+    DONE: 3,
+    AWAITING: 1,
+    RUNNING: 1,
+    QUEUED: 0,
+    FAILED: 0,
+    CANCELLED: 0,
+  },
+};
+
+// ── Orchestrator tickets mock ─────────────────────────────────────────────────
+
+export const mockOrchestratorTickets: OrchestratorTicket[] = [
+  { id: "ENG-1", title: "is_valid_email(s) + tests", status: "done", deps: [], run_id: "run_f7932443" },
+  { id: "ENG-2", title: "to_roman(n) 1..3999 + tests", status: "done", deps: [], run_id: "run_69c573fc" },
+  { id: "ENG-3", title: "fib(n) + tests", status: "done", deps: ["ENG-1"], run_id: "run_e6bca38f" },
+  { id: "ENG-12", title: "reverse_words(s) — reordena palabras, colapsa espacios", status: "firing", deps: [], run_id: "run_76af79df" },
+  { id: "ENG-14", title: "Validador de cédula panameña + tests", status: "firing", deps: ["ENG-1"], run_id: "run_a91c20e1" },
+  { id: "ENG-15", title: "Formato de fecha panameño + tests", status: "blocked", deps: ["ENG-14"] },
+];

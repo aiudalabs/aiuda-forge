@@ -124,3 +124,75 @@ export interface Notification {
   title: string;
   ts: string;
 }
+
+// ── Registry ──────────────────────────────────────────────────────────────────
+// GET /registry/{kind} → { ids: string[] }
+// GET /registry/{kind}/{id} → raw YAML or markdown string
+// PUT /registry/{kind}/{id} → { saved: string }
+// DELETE /registry/{kind}/{id} → { deleted: string }
+
+export type RegistryKind = "agents" | "skills" | "workflows";
+
+export interface RegistryListResponse {
+  ids: string[];
+}
+
+export interface RegistrySaveResponse {
+  saved: string;
+}
+
+export interface RegistryDeleteResponse {
+  deleted: string;
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+// GET /settings → SettingsPayload (secrets masked as "••••••••")
+// PUT /settings → same shape; send masked value back when user didn't change it
+
+export interface McpConnection {
+  name: string;
+  url: string;
+  token: string; // may be "••••••••" when masked
+}
+
+export interface AgentAuth {
+  mode: string; // "oauth_token" | "api_key"
+  secret: string; // may be "••••••••" when masked
+}
+
+export interface SettingsPayload {
+  mcp: McpConnection[];
+  agent_auth: AgentAuth;
+  sandbox: {
+    runtime: string;
+    image: string;
+  };
+  merge_policy: {
+    low_risk: string;   // "automerge"
+    high_risk: string;  // "human_gate"
+  };
+}
+
+// ── Metrics / Spend ───────────────────────────────────────────────────────────
+// GET /metrics → MetricsPayload
+
+export interface MetricsPayload {
+  total_cost_usd: number;
+  cost_by_workflow: Record<string, number>;
+  cost_by_step: Record<string, number>;
+  acceptance_rate: number; // 0..1
+  by_status: Record<string, number>;
+}
+
+// ── Tickets (from orchestrator) ───────────────────────────────────────────────
+// GET /tickets → { tickets: Ticket[] }
+
+export type TicketStatus = "open" | "blocked" | "ready" | "firing" | "done";
+
+export interface OrchestratorTicket {
+  id: string;
+  title: string;
+  status: TicketStatus;
+  deps: string[];
+  run_id?: string;
+}

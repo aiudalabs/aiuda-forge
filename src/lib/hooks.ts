@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import * as api from "./api";
 import type { ApiMode } from "./api";
 import { subscribe } from "./ws";
-import type { RunEvent } from "./types";
+import type { RegistryKind, RunEvent } from "./types";
 
 export const qk = {
   mode: ["mode"] as const,
@@ -22,6 +22,11 @@ export const qk = {
   stats: ["stats"] as const,
   control: ["control"] as const,
   notifications: ["notifications"] as const,
+  registryList: (kind: RegistryKind) => ["registry", kind] as const,
+  registryItem: (kind: RegistryKind, id: string) => ["registry", kind, id] as const,
+  settings: ["settings"] as const,
+  metrics: ["metrics"] as const,
+  tickets: ["tickets"] as const,
 };
 
 export function useApiMode() {
@@ -137,6 +142,81 @@ export function useRealtime() {
     });
     return off;
   }, [mode, qc]);
+}
+
+// ── Registry hooks ────────────────────────────────────────────────────────────
+
+export function useRegistryList(kind: RegistryKind) {
+  return useQuery({
+    queryKey: qk.registryList(kind),
+    queryFn: () => api.listRegistry(kind),
+  });
+}
+
+export function useRegistryItem(kind: RegistryKind, id: string | null) {
+  return useQuery({
+    queryKey: id ? qk.registryItem(kind, id) : ["registry", kind, "none"],
+    queryFn: () => api.getRegistryItem(kind, id as string),
+    enabled: !!id,
+  });
+}
+
+export function useSaveRegistryItem(kind: RegistryKind) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: string }) =>
+      api.saveRegistryItem(kind, id, body),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: qk.registryList(kind) });
+      qc.invalidateQueries({ queryKey: qk.registryItem(kind, id) });
+    },
+  });
+}
+
+export function useDeleteRegistryItem(kind: RegistryKind) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteRegistryItem(kind, id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.registryList(kind) });
+    },
+  });
+}
+
+// ── Settings hooks ────────────────────────────────────────────────────────────
+
+export function useSettings() {
+  return useQuery({ queryKey: qk.settings, queryFn: () => api.getSettings() });
+}
+
+export function useSaveSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.saveSettings,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.settings });
+    },
+  });
+}
+
+// ── Metrics hook ──────────────────────────────────────────────────────────────
+
+export function useMetrics() {
+  return useQuery({
+    queryKey: qk.metrics,
+    queryFn: () => api.getMetrics(),
+    refetchInterval: 15000,
+  });
+}
+
+// ── Tickets hook (orquestador) ────────────────────────────────────────────────
+
+export function useTickets() {
+  return useQuery({
+    queryKey: qk.tickets,
+    queryFn: () => api.listTickets(),
+    refetchInterval: 10000,
+  });
 }
 
 /**

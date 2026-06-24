@@ -6,25 +6,37 @@
 // (lib/mock) para que la UI se construya/vea sin el backend arriba. `getApiMode()` expone el
 // modo activo para que la UI lo muestre y para que el WS sepa si conectarse.
 
-import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS } from "./config";
+import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS, ORCHESTRATOR_URL } from "./config";
 import {
   MOCK_PROJECT,
   mockControl,
   mockEvents,
+  mockMetrics,
   mockNotifications,
+  mockOrchestratorTickets,
+  mockRegistryContent,
+  mockRegistryIds,
   mockRunDetails,
   mockRuns,
+  mockSettings,
   mockSpendToday,
   mockStats,
 } from "./mock";
 import type {
   BoardStats,
   ControlStatus,
+  MetricsPayload,
   Notification,
+  OrchestratorTicket,
+  RegistryDeleteResponse,
+  RegistryKind,
+  RegistryListResponse,
+  RegistrySaveResponse,
   Run,
   RunDetail,
   RunEvent,
   RunStatus,
+  SettingsPayload,
 } from "./types";
 
 export type ApiMode = "real" | "mock";
@@ -125,8 +137,11 @@ export interface SpendToday {
 
 export async function getSpendToday(): Promise<SpendToday> {
   if (await isMock()) return mockSpendToday;
-  // TODO(endpoint): mapear GET /metrics → gasto del día + tokens (doc 16 §2.6).
-  return http<SpendToday>(`/metrics`);
+  // GET /metrics → extraemos total_cost_usd y lo mapeamos a SpendToday.
+  // Los tokens no están en el contrato actual, así que estimamos de by_step si llegan,
+  // o mostramos "—" para no inventar un valor.
+  const m = await http<MetricsPayload>(`/metrics`);
+  return { cost: m.total_cost_usd, tokens: "—" };
 }
 
 export async function getControlStatus(): Promise<ControlStatus> {
@@ -239,4 +254,130 @@ function mutateMockStatus(id: string, status: RunStatus) {
   }
   const d = mockRunDetails[id];
   if (d) d.status = status;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Registry — GET/PUT/DELETE /registry/{kind}/{id}, GET /registry/{kind}
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function listRegistry(kind: RegistryKind): Promise<RegistryListResponse> {
+  if (await isMock()) return { ids: mockRegistryIds[kind] ?? [] };
+  return http<RegistryListResponse>(`/registry/${kind}`);
+}
+
+/** Devuelve el contenido crudo (YAML para agents/workflows, markdown para skills). */
+export async function getRegistryItem(kind: RegistryKind, id: string): Promise<string> {
+  if (await isMock()) {
+    const content = mockRegistryContent[kind]?.[id];
+    if (!content) throw new ApiError(404, `${kind}/${id} no encontrado (mock)`);
+    return content;
+  }
+  // La API devuelve texto crudo (application/yaml o text/markdown); no parseamos JSON.
+  const res = await fetch(`${API_URL}/registry/${kind}/${id}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(res.status, `GET /registry/${kind}/${id} → ${res.status} ${body}`);
+  }
+  return res.text();
+}
+
+export async function saveRegistryItem(kind: RegistryKind, id: string, body: string): Promise<RegistrySaveResponse> {
+  if (await isMock()) {
+    // Actualizar el mock en memoria para que la UI refleje el cambio.
+    if (!mockRegistryContent[kind]) mockRegistryContent[kind] = {};
+    mockRegistryContent[kind][id] = body;
+    if (!mockRegistryIds[kind].includes(id)) mockRegistryIds[kind].push(id);
+    return { saved: id };
+  }
+  const res = await fetch(`${API_URL}/registry/${kind}/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/yaml" },
+    body,
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    throw new ApiError(res.status, errBody || `PUT /registry/${kind}/${id} → ${res.status}`);
+  }
+  return (await res.json()) as RegistrySaveResponse;
+}
+
+export async function deleteRegistryItem(kind: RegistryKind, id: string): Promise<RegistryDeleteResponse> {
+  if (await isMock()) {
+    const idx = mockRegistryIds[kind]?.indexOf(id) ?? -1;
+    if (idx >= 0) mockRegistryIds[kind].splice(idx, 1);
+    if (mockRegistryContent[kind]) delete mockRegistryContent[kind][id];
+    return { deleted: id };
+  }
+  return http<RegistryDeleteResponse>(`/registry/${kind}/${id}`, { method: "DELETE" });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings — GET/PUT /settings
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getSettings(): Promise<SettingsPayload> {
+  if (await isMock()) return { ...mockSettings };
+  return http<SettingsPayload>(`/settings`);
+}
+
+export async function saveSettings(payload: SettingsPayload): Promise<SettingsPayload> {
+  if (await isMock()) {
+    Object.assign(mockSettings, payload);
+    return { ...mockSettings };
+  }
+  return http<SettingsPayload>(`/settings`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metrics — GET /metrics (control-plane)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getMetrics(): Promise<MetricsPayload> {
+  if (await isMock()) return { ...mockMetrics };
+  return http<MetricsPayload>(`/metrics`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tickets — GET /tickets (orquestador, ORCHESTRATOR_URL)
+// Sondeo propio: si el orquestador no está, caemos al mock igual que con el control-plane.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let orchModePromise: Promise<"real" | "mock"> | null = null;
+
+async function probeOrchestrator(): Promise<"real" | "mock"> {
+  if (FORCE_MOCK) return "mock";
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), HEALTH_TIMEOUT_MS);
+    const res = await fetch(`${ORCHESTRATOR_URL}/healthz`, { signal: ctrl.signal });
+    clearTimeout(t);
+    return res.ok ? "real" : "mock";
+  } catch {
+    return "mock";
+  }
+}
+
+export function getOrchestratorMode(): Promise<"real" | "mock"> {
+  if (!orchModePromise) orchModePromise = probeOrchestrator();
+  return orchModePromise;
+}
+
+export function resetOrchestratorMode() {
+  orchModePromise = null;
+}
+
+export async function listTickets(): Promise<OrchestratorTicket[]> {
+  if ((await getOrchestratorMode()) === "mock") return [...mockOrchestratorTickets];
+  const data = await (async () => {
+    const res = await fetch(`${ORCHESTRATOR_URL}/tickets`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new ApiError(res.status, `GET /tickets → ${res.status} ${body}`);
+    }
+    return res.json() as Promise<{ tickets: OrchestratorTicket[] }>;
+  })();
+  return data.tickets;
 }
