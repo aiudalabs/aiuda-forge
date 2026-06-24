@@ -1,63 +1,149 @@
-// GASTO / Analytics (doc 16 §2.6). SHELL fiel al mockup con fixtures.
-// TODO(endpoint): GET /metrics + /analytics con desglose por proyecto/agente/modelo/workflow,
-// cost-per-accepted-change, techo Max y % consumido, alertas que disparan /control/pause.
+"use client";
 
-const PROJECTS = [
-  { name: "manitaspty", pct: 72, value: "$2.71" },
-  { name: "comandaya", pct: 41, value: "$1.55" },
-  { name: "recepia", pct: 23, value: "$0.86" },
-];
+// GASTO / Analytics (doc 16 §2.6).
+// Cableado contra GET /metrics del control-plane.
+// Muestra total_cost_usd, cost_by_workflow, cost_by_step, acceptance_rate.
+
+import { useMetrics } from "@/lib/hooks";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers de formato
+// ─────────────────────────────────────────────────────────────────────────────
+
+function fmt$(n: number) {
+  return `$${n.toFixed(2)}`;
+}
+
+function fmtPct(r: number) {
+  return `${Math.round(r * 100)}%`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Componente raíz
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function SpendView() {
+  const { data, isLoading, isError } = useMetrics();
+
+  if (isLoading) {
+    return (
+      <div className="wrap">
+        <div className="placeholder">
+          <div className="ph-ic"><span className="spin" /></div>
+          Cargando métricas…
+        </div>
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="wrap">
+        <div className="placeholder err">
+          <div className="ph-ic">⚠</div>
+          No se pudo cargar las métricas.
+        </div>
+      </div>
+    );
+  }
+
+  // Derivar el costo por flujo más alto para la barra de referencia (100%).
+  const wfEntries = Object.entries(data.cost_by_workflow).sort((a, b) => b[1] - a[1]);
+  const maxWf = wfEntries[0]?.[1] ?? 1;
+
+  const stepEntries = Object.entries(data.cost_by_step).sort((a, b) => b[1] - a[1]);
+  const maxStep = stepEntries[0]?.[1] ?? 1;
+
+  // cost-per-accepted-change: total / runs aceptados (done).
+  const doneCount = data.by_status?.DONE ?? 0;
+  const costPerAccepted = doneCount > 0 ? data.total_cost_usd / doneCount : 0;
+
   return (
     <div className="wrap">
-      <div className="shellnote">
-        🔌 Shell — KPIs con fixtures. <span className="mono">TODO: GET /metrics · /analytics</span>{" "}
-        (desglose por proyecto/agente/modelo).
-      </div>
-
       <div className="sectitle">
         <h2>Gasto</h2>
-        <span className="c">tokens y $ · crédito Max</span>
+        <span className="c">tokens y $ · métricas en vivo</span>
       </div>
 
+      {/* KPIs principales */}
       <div className="stats">
         <div className="stat">
-          <div className="eyebrow">Hoy</div>
-          <div className="n serif">$3.42</div>
-          <div className="sub">312k tokens</div>
+          <div className="eyebrow">Total acumulado</div>
+          <div className="n serif">{fmt$(data.total_cost_usd)}</div>
+          <div className="sub">todos los runs</div>
         </div>
         <div className="stat">
           <div className="eyebrow">Costo / PR aceptado</div>
-          <div className="n acc serif">$0.31</div>
+          <div className="n acc serif">{doneCount > 0 ? fmt$(costPerAccepted) : "—"}</div>
           <div className="sub">cost-per-accepted-change</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Mes</div>
-          <div className="n serif">$41.80</div>
-          <div className="sub">de techo $100 (Max 5×)</div>
+          <div className="eyebrow">Aceptación</div>
+          <div className="n em serif">{fmtPct(data.acceptance_rate)}</div>
+          <div className="sub">runs → PR mergeable</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Aceptación</div>
-          <div className="n em serif">86%</div>
-          <div className="sub">runs → PR mergeable</div>
+          <div className="eyebrow">Runs DONE</div>
+          <div className="n serif">{doneCount}</div>
+          <div className="sub">de {Object.values(data.by_status).reduce((a, b) => a + b, 0)} totales</div>
         </div>
       </div>
 
-      <div className="sectitle">
-        <h2>Por proyecto</h2>
-      </div>
-      <div className="bars">
-        {PROJECTS.map((p) => (
-          <div className="bar" key={p.name}>
-            <span>{p.name}</span>
-            <div className="track">
-              <div className="fill" style={{ width: `${p.pct}%` }} />
-            </div>
-            <span className="v">{p.value}</span>
+      {/* Por workflow */}
+      {wfEntries.length > 0 && (
+        <>
+          <div className="sectitle">
+            <h2>Por workflow</h2>
           </div>
-        ))}
-      </div>
+          <div className="bars">
+            {wfEntries.map(([name, cost]) => (
+              <div className="bar" key={name}>
+                <span>{name}</span>
+                <div className="track">
+                  <div className="fill" style={{ width: `${(cost / maxWf) * 100}%` }} />
+                </div>
+                <span className="v">{fmt$(cost)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Por paso */}
+      {stepEntries.length > 0 && (
+        <>
+          <div className="sectitle">
+            <h2>Por paso</h2>
+          </div>
+          <div className="bars">
+            {stepEntries.map(([name, cost]) => (
+              <div className="bar" key={name}>
+                <span>{name}</span>
+                <div className="track">
+                  <div className="fill" style={{ width: `${(cost / maxStep) * 100}%` }} />
+                </div>
+                <span className="v">{fmt$(cost)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Por estado */}
+      {Object.keys(data.by_status).length > 0 && (
+        <>
+          <div className="sectitle">
+            <h2>Runs por estado</h2>
+          </div>
+          <div className="kv" style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "8px 0" }}>
+            {Object.entries(data.by_status).map(([status, count]) => (
+              <span key={status}>
+                {status}: <b>{count}</b>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
