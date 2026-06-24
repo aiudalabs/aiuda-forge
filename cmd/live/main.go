@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"time"
 
+	"vibeforge-kernel/internal/agent"
 	"vibeforge-kernel/internal/app"
 	"vibeforge-kernel/internal/gate"
 	"vibeforge-kernel/internal/store"
@@ -28,12 +29,23 @@ func main() {
 	ticket := envOr("TICKET", "Implement add(a, b) in calc.py and unit tests in test_calc.py (unittest).")
 	sandboxRuntime := envOr("VIBEFORGE_SANDBOX", "local")
 
+	// Wire the agent auth from env so the credential reaches the agent — required
+	// in docker mode, where the container env is an allowlist (it does NOT inherit
+	// the host's CLAUDE_CODE_OAUTH_TOKEN). oauth_token uses your Max subscription.
+	agentAuth := agent.Auth{Mode: agent.AuthSubscription}
+	if t := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); t != "" {
+		agentAuth = agent.Auth{Mode: agent.AuthOAuthToken, Token: t}
+	} else if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
+		agentAuth = agent.Auth{Mode: agent.AuthAPIKey, Token: k}
+	}
+
 	a, err := app.Build(app.Config{
 		DBPath:         envOr("VIBEFORGE_DB", "live.db"),
 		RegistryRoot:   envOr("VIBEFORGE_REGISTRY", "registry"),
 		WorkdirRoot:    envOr("VIBEFORGE_WORKDIR", ".vibeforge-live"),
 		EngineMode:     "claude",
 		SandboxRuntime: sandboxRuntime,
+		AgentAuth:      agentAuth,
 		AgentTimeout:   12 * time.Minute,
 	})
 	if err != nil {

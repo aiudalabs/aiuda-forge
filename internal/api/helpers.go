@@ -6,8 +6,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
+	"vibeforge-kernel/internal/agent"
 	"vibeforge-kernel/internal/store"
+	"vibeforge-kernel/internal/workflow"
+
+	"gopkg.in/yaml.v3"
 )
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -61,6 +67,73 @@ func (r *Registry) AgentPath(id string) string {
 	return filepath.Join(r.Root, "agents", id+".yaml")
 }
 
+// SkillPath returns the on-disk path for a skill (markdown: the "how").
+func (r *Registry) SkillPath(id string) string {
+	return filepath.Join(r.Root, "skills", id+".md")
+}
+
+// pathFor returns the manifest path for a kind+id, or false for unknown kinds.
+func (r *Registry) pathFor(kind, id string) (string, bool) {
+	switch kind {
+	case "workflows":
+		return r.WorkflowPath(id), true
+	case "agents":
+		return r.AgentPath(id), true
+	case "skills":
+		return r.SkillPath(id), true
+	}
+	return "", false
+}
+
+// list returns the ids in a kind directory (filename without extension), sorted.
+func (r *Registry) list(kind string) ([]string, error) {
+	dir := filepath.Join(r.Root, kind)
+	ents, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if i := strings.LastIndex(n, "."); i > 0 {
+			ids = append(ids, n[:i])
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// validateRegistry validates a manifest body for a kind. The schema check is the
+// SAME parser the kernel uses to run it — so "saved" means "the kernel can run it".
+func validateRegistry(kind string, body []byte) error {
+	switch kind {
+	case "workflows":
+		_, err := workflow.Parse(body)
+		return err
+	case "agents":
+		var m agent.Manifest
+		if err := yaml.Unmarshal(body, &m); err != nil {
+			return errors.New("invalid agent manifest: " + err.Error())
+		}
+		if m.Model == "" {
+			return errors.New("agent manifest: model is required")
+		}
+		return nil
+	case "skills":
+		if len(strings.TrimSpace(string(body))) == 0 {
+			return errors.New("skill content is empty")
+		}
+		return nil
+	}
+	return errors.New("unknown registry kind: " + kind)
+}
+
 func (s *Server) getRegistryFile(w http.ResponseWriter, path string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -72,7 +145,7 @@ func (s *Server) getRegistryFile(w http.ResponseWriter, path string) {
 	_, _ = w.Write(b)
 }
 
-func (s *Server) putRegistryFile(w http.ResponseWriter, r *http.Request, path string) {
+func (s *Server) putRegistryFile(w http.ResponseWriter, r *http.Request, path string, validate func([]byte) error) {
 	buf := make([]byte, 0, 4096)
 	tmp := make([]byte, 4096)
 	for {
@@ -80,6 +153,13 @@ func (s *Server) putRegistryFile(w http.ResponseWriter, r *http.Request, path st
 		buf = append(buf, tmp[:n]...)
 		if err != nil {
 			break
+		}
+	}
+	// Validate against the SAME parser the kernel uses → no invalid manifest lands.
+	if validate != nil {
+		if err := validate(buf); err != nil {
+			httpErr(w, http.StatusBadRequest, "invalid manifest: "+err.Error())
+			return
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -91,4 +171,20 @@ func (s *Server) putRegistryFile(w http.ResponseWriter, r *http.Request, path st
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"saved": filepath.Base(path)})
+}
+
+func (s *Server) deleteRegistryFile(w http.ResponseWriter, path string) {
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			httpErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Best-effort: drop the agent's persona sidecar too.
+	if strings.HasSuffix(path, ".yaml") {
+		_ = os.Remove(strings.TrimSuffix(path, ".yaml") + ".md")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": filepath.Base(path)})
 }

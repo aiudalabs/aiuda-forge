@@ -8,25 +8,30 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strconv"
 
+	"vibeforge-kernel/internal/settings"
 	"vibeforge-kernel/internal/store"
 	"vibeforge-kernel/internal/workflow"
 )
 
-// Server wires the store, the executor engine, the event bus, and the registry
-// into one HTTP handler.
+// Server wires the store, the executor engine, the event bus, the registry, and
+// the settings store into one HTTP handler.
 type Server struct {
 	Store    *store.Store
 	Engine   *workflow.Engine
 	Bus      *Bus
 	Registry *Registry
+	Settings *settings.Store
 	mux      *http.ServeMux
 }
 
-// NewServer builds and routes a Server.
+// NewServer builds and routes a Server. The settings store lives next to the
+// registry (registry/../settings.json) — config in the control plane, not the kernel.
 func NewServer(st *store.Store, eng *workflow.Engine, bus *Bus, reg *Registry) *Server {
-	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, mux: http.NewServeMux()}
+	set, _ := settings.Open(filepath.Join(filepath.Dir(reg.Root), "settings.json"))
+	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -52,11 +57,17 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /analytics", s.metrics)
 	m.HandleFunc("GET /healthz", s.health)
 	m.HandleFunc("GET /readyz", s.health)
-	// registry CRUD (compose/edit agents, skills, workflows)
-	m.HandleFunc("GET /registry/workflows/{id}", s.getWorkflow)
-	m.HandleFunc("PUT /registry/workflows/{id}", s.putWorkflow)
-	m.HandleFunc("GET /registry/agents/{id}", s.getAgent)
-	m.HandleFunc("PUT /registry/agents/{id}", s.putAgent)
+	// registry CRUD (compose/edit/list/delete agents, skills, workflows — no-code).
+	// Generic by {kind}: workflows|agents|skills. PUT/POST validate against the
+	// SAME parser the kernel uses, so a saved manifest is always runnable.
+	m.HandleFunc("GET /registry/{kind}", s.listRegistry)
+	m.HandleFunc("GET /registry/{kind}/{id}", s.getRegistry)
+	m.HandleFunc("PUT /registry/{kind}/{id}", s.putRegistry)
+	m.HandleFunc("POST /registry/{kind}/{id}", s.putRegistry)
+	m.HandleFunc("DELETE /registry/{kind}/{id}", s.delRegistry)
+	// settings (MCP connections, agent auth, sandbox, merge policy) — secrets masked.
+	m.HandleFunc("GET /settings", s.getSettings)
+	m.HandleFunc("PUT /settings", s.putSettings)
 
 	// §B — events.
 	m.HandleFunc("GET /runs/{id}/events", s.events)
@@ -219,17 +230,65 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 
 // ---- registry CRUD ----------------------------------------------------------
 
-func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request) {
-	s.getRegistryFile(w, s.Registry.WorkflowPath(r.PathValue("id")))
+func (s *Server) listRegistry(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if _, ok := s.Registry.pathFor(kind, "_"); !ok {
+		httpErr(w, http.StatusNotFound, "unknown registry kind: "+kind)
+		return
+	}
+	ids, err := s.Registry.list(kind)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"kind": kind, "ids": ids})
 }
-func (s *Server) putWorkflow(w http.ResponseWriter, r *http.Request) {
-	s.putRegistryFile(w, r, s.Registry.WorkflowPath(r.PathValue("id")))
+
+func (s *Server) getRegistry(w http.ResponseWriter, r *http.Request) {
+	path, ok := s.Registry.pathFor(r.PathValue("kind"), r.PathValue("id"))
+	if !ok {
+		httpErr(w, http.StatusNotFound, "unknown registry kind")
+		return
+	}
+	s.getRegistryFile(w, path)
 }
-func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
-	s.getRegistryFile(w, s.Registry.AgentPath(r.PathValue("id")))
+
+func (s *Server) putRegistry(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	path, ok := s.Registry.pathFor(kind, r.PathValue("id"))
+	if !ok {
+		httpErr(w, http.StatusNotFound, "unknown registry kind")
+		return
+	}
+	s.putRegistryFile(w, r, path, func(b []byte) error { return validateRegistry(kind, b) })
 }
-func (s *Server) putAgent(w http.ResponseWriter, r *http.Request) {
-	s.putRegistryFile(w, r, s.Registry.AgentPath(r.PathValue("id")))
+
+func (s *Server) delRegistry(w http.ResponseWriter, r *http.Request) {
+	path, ok := s.Registry.pathFor(r.PathValue("kind"), r.PathValue("id"))
+	if !ok {
+		httpErr(w, http.StatusNotFound, "unknown registry kind")
+		return
+	}
+	s.deleteRegistryFile(w, path)
+}
+
+// ---- settings ---------------------------------------------------------------
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.Settings.Get()) // secrets masked
+}
+
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	var in settings.Settings
+	if !readJSON(w, r, &in) {
+		return
+	}
+	out, err := s.Settings.Put(in)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ---- §B events --------------------------------------------------------------

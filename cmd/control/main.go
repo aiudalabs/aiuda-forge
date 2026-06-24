@@ -5,30 +5,55 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"vibeforge-kernel/internal/agent"
 	"vibeforge-kernel/internal/app"
+	"vibeforge-kernel/internal/gate"
 )
 
 func main() {
 	addr := envOr("VIBEFORGE_ADDR", ":8080")
+	// Wire agent auth from env (required in docker mode: the container env is an
+	// allowlist and does NOT inherit the host's token). oauth_token = Max sub.
+	agentAuth := agent.Auth{Mode: agent.AuthSubscription}
+	if t := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); t != "" {
+		agentAuth = agent.Auth{Mode: agent.AuthOAuthToken, Token: t}
+	} else if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
+		agentAuth = agent.Auth{Mode: agent.AuthAPIKey, Token: k}
+	}
 	a, err := app.Build(app.Config{
 		DBPath:         envOr("VIBEFORGE_DB", "vibeforge.db"),
 		RegistryRoot:   envOr("VIBEFORGE_REGISTRY", "registry"),
 		WorkdirRoot:    envOr("VIBEFORGE_WORKDIR", ".vibeforge-runs"),
 		EngineMode:     envOr("VIBEFORGE_ENGINE", "echo"),
 		SandboxRuntime: os.Getenv("VIBEFORGE_SANDBOX"),
+		AgentAuth:      agentAuth,
 		AgentTimeout:   20 * time.Minute,
 	})
 	if err != nil {
 		log.Fatalf("build kernel: %v", err)
 	}
 	defer a.Close()
+
+	// Per-run target seeding: clone TARGET_REMOTE into each run's workdir and seal
+	// the gate BEFORE any agent runs. (A real deployment would take the repo from
+	// the trigger payload; a fixed remote is enough for single-project / demo.)
+	if remote := os.Getenv("TARGET_REMOTE"); remote != "" {
+		a.Engine.OnSeed = func(runID, workdir string) error {
+			if out, err := exec.Command("git", "clone", "--quiet", remote, workdir).CombinedOutput(); err != nil {
+				return fmt.Errorf("clone target: %v: %s", err, out)
+			}
+			return gate.SealWorkdir(workdir)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
