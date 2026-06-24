@@ -128,6 +128,10 @@ func (s *Server) getStory(w http.ResponseWriter, r *http.Request) {
 
 type updateStatusReq struct {
 	Status tickets.Status `json:"status"`
+	// RunID is optional: when present the story's run_id column is updated in
+	// addition to the status. Used by the native scheduler to record which
+	// control-plane run is executing a story (MarkRunning path).
+	RunID string `json:"run_id,omitempty"`
 }
 
 func (s *Server) updateStoryStatus(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +147,12 @@ func (s *Server) updateStoryStatus(w http.ResponseWriter, r *http.Request) {
 	if err := s.Tickets.UpdateStoryStatus(id, req.Status); err != nil {
 		ticketNotFound(w, err)
 		return
+	}
+	if req.RunID != "" {
+		if err := s.Tickets.SetStoryRun(id, req.RunID); err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	st, err := s.Tickets.GetStory(id)
 	if err != nil {
