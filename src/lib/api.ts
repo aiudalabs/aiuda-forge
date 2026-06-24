@@ -37,7 +37,9 @@ import type {
   RunDetail,
   RunEvent,
   RunStatus,
+  RunStep,
   SettingsPayload,
+  StepStatus,
 } from "./types";
 
 export type ApiMode = "real" | "mock";
@@ -146,20 +148,95 @@ function mapRun(r: KernelRun): Run {
   };
 }
 
+// KernelStep es el shape de cada paso en GET /runs/{id} (step_id, type, status,
+// result JSON-string). mapStep lo traduce al RunStep de la UI.
+interface KernelStep {
+  step_id: string;
+  type: string;
+  status: StepStatus;
+  result?: string;
+  error?: string;
+}
+
+function mapStep(s: KernelStep): RunStep {
+  let detail = "";
+  try {
+    detail = String(JSON.parse(s.result ?? "{}")?.detail ?? "");
+  } catch {
+    /* result no-JSON */
+  }
+  return {
+    id: s.step_id,
+    kind: s.type,
+    status: s.status,
+    detail: s.error || detail || undefined,
+  };
+}
+
+// KernelEvent es el shape del bus (REST y WS): seq, type, data JSON-string,
+// created_at. mapEvent lo traduce al RunEvent renderizable de la UI. Exportado
+// para que el cliente WS reuse exactamente la misma traducción.
+export interface KernelEvent {
+  seq: number;
+  run_id?: string;
+  task_id?: string;
+  type: string;
+  data?: string;
+  created_at?: number;
+}
+
+export function mapEvent(e: KernelEvent): RunEvent {
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(e.data ?? "{}") as Record<string, unknown>;
+  } catch {
+    /* data no-JSON */
+  }
+  const step = typeof data.step === "string" ? data.step : undefined;
+  return {
+    id: e.seq,
+    runId: e.run_id ?? "",
+    ts: e.created_at ? new Date(e.created_at).toLocaleTimeString() : "",
+    type: e.type as RunEvent["type"],
+    step,
+    message: eventMessage(e.type, data, step),
+    data,
+  };
+}
+
+function eventMessage(type: string, data: Record<string, unknown>, step?: string): string {
+  if (typeof data.detail === "string" && data.detail) return data.detail;
+  const from = data.from;
+  const to = data.to;
+  if (from && to) return `${step ? step + ": " : ""}${from} → ${to}`;
+  if (typeof data.workflow === "string") return `workflow: ${data.workflow}`;
+  return type;
+}
+
+function mapRunDetail(r: KernelRun & { steps?: KernelStep[] }): RunDetail {
+  // diff/costBreakdown/pr no vienen del kernel todavía → undefined (el drawer
+  // los renderiza condicionalmente).
+  return { ...mapRun(r), steps: (r.steps ?? []).map(mapStep) };
+}
+
 export async function getRun(id: string): Promise<RunDetail> {
   if (await isMock()) {
     const d = mockRunDetails[id];
     if (!d) throw new ApiError(404, `run ${id} no encontrado (mock)`);
     return d;
   }
-  return http<RunDetail>(`/runs/${id}`);
+  return mapRunDetail(await http<KernelRun & { steps?: KernelStep[] }>(`/runs/${id}`));
 }
 
 export async function getEvents(id: string, after = 0): Promise<RunEvent[]> {
   if (await isMock()) {
     return (mockEvents[id] || []).filter((e) => e.id > after);
   }
-  return http<RunEvent[]>(`/runs/${id}/events?after=${after}`);
+  const res = await http<KernelEvent[] | { events: KernelEvent[] }>(
+    `/runs/${id}/events?after=${after}`
+  );
+  const raw = Array.isArray(res) ? res : res?.events ?? [];
+  return raw.map(mapEvent);
 }
 
 export async function getStats(): Promise<BoardStats> {

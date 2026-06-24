@@ -5,6 +5,7 @@
 
 "use client";
 
+import { mapEvent, type KernelEvent } from "./api";
 import { wsUrl } from "./config";
 import type { RunEvent } from "./types";
 
@@ -27,7 +28,9 @@ function connect() {
     };
     ws.onmessage = (msg) => {
       try {
-        const ev = JSON.parse(msg.data) as RunEvent;
+        // El bus emite el shape del kernel (seq/type/data/created_at); lo
+        // traducimos al RunEvent de la UI con el mismo mapper que el REST.
+        const ev = mapEvent(JSON.parse(msg.data) as KernelEvent);
         listeners.forEach((l) => l(ev));
       } catch {
         // ignorar frames no-JSON (heartbeats, etc.)
