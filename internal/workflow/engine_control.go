@@ -76,6 +76,34 @@ func (e *Engine) ApproveStep(runID, stepID string) error {
 	return nil
 }
 
+// RejectStep rejects a human_gate that is awaiting approval: it completes the
+// parked gate as a FAILURE carrying the reason, so advance() applies the step's
+// on_fail (e.g. goto implement with feedback=$<gate>.detail → a fix round) or, if
+// the workflow declares none, the run fails. Behavior is in DATA (the workflow),
+// not here. The reason is recorded for audit. No-op if nothing is awaiting.
+func (e *Engine) RejectStep(runID, stepID, reason string) error {
+	tasks, err := e.Store.TasksForRun(runID)
+	if err != nil {
+		return err
+	}
+	for _, t := range tasks {
+		if t.StepID != stepID || t.Status != store.StatusAwaiting {
+			continue
+		}
+		wf, err := e.Loader.Load(t.WorkflowID)
+		if err != nil {
+			return err
+		}
+		t.Fence = -1 // control action, unfenced
+		return e.reportAndAdvance(wf, t, StepResult{
+			Success: false,
+			Output:  map[string]any{"rejected": true, "reason": reason},
+			Detail:  reason,
+		})
+	}
+	return nil
+}
+
 // ---- pause / resume ----------------------------------------------------------
 
 // Pause halts new claims (the factory pause from POST /control/pause).

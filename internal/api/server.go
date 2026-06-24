@@ -51,6 +51,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /control/pause", s.pause)
 	m.HandleFunc("POST /control/resume", s.resume)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/approve", s.approveStep)
+	m.HandleFunc("POST /runs/{id}/steps/{step}/reject", s.rejectStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/merge", s.mergeStep)
 	m.HandleFunc("GET /runs/{id}/artifacts/{kind}", s.artifacts)
 	m.HandleFunc("GET /metrics", s.metrics)
@@ -186,6 +187,23 @@ func (s *Server) approveStep(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"approved": step, "run": id})
 }
 
+type rejectReq struct {
+	Reason string `json:"reason"`
+}
+
+func (s *Server) rejectStep(w http.ResponseWriter, r *http.Request) {
+	id, step := r.PathValue("id"), r.PathValue("step")
+	var req rejectReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := s.Engine.RejectStep(id, step, req.Reason); err != nil {
+		httpErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rejected": step, "run": id, "reason": req.Reason})
+}
+
 func (s *Server) mergeStep(w http.ResponseWriter, r *http.Request) {
 	id, step := r.PathValue("id"), r.PathValue("step")
 	// In the MVP the pr step already commits/pushes (PR_MODE=local); merge is an
@@ -214,14 +232,56 @@ func (s *Server) artifacts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	runs, _ := s.Store.ListRuns("")
 	byStatus := map[string]int{}
+	costByWorkflow := map[string]float64{}
+	costByStep := map[string]float64{}
+	var totalCost float64
+	done := 0
 	for _, run := range runs {
 		byStatus[string(run.Status)]++
+		if run.Status == store.StatusDone {
+			done++
+		}
+		// Cost lives in each step's Result (agent steps carry cost_usd). Aggregate
+		// by workflow and by step. No kernel change — read what's already stored.
+		tasks, _ := s.Store.TasksForRun(run.ID)
+		for _, t := range tasks {
+			c := costOf(t.Result)
+			if c == 0 {
+				continue
+			}
+			totalCost += c
+			costByWorkflow[run.WorkflowID] += c
+			costByStep[t.StepID] += c
+		}
+	}
+	acceptance := 0.0
+	if len(runs) > 0 {
+		acceptance = float64(done) / float64(len(runs))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"runs_total": len(runs),
-		"by_status":  byStatus,
-		"paused":     s.Engine.IsPaused(),
+		"runs_total":       len(runs),
+		"by_status":        byStatus,
+		"paused":           s.Engine.IsPaused(),
+		"total_cost_usd":   totalCost,
+		"cost_by_workflow": costByWorkflow,
+		"cost_by_step":     costByStep,
+		"acceptance_rate":  acceptance,
 	})
+}
+
+// costOf extracts cost_usd from a step's Result JSON (0 if absent/unparseable).
+func costOf(result string) float64 {
+	if result == "" {
+		return 0
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(result), &m) != nil {
+		return 0
+	}
+	if c, ok := m["cost_usd"].(float64); ok {
+		return c
+	}
+	return 0
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
