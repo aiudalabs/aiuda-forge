@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"vibeforge-kernel/internal/httpx"
 	"vibeforge-kernel/internal/orchestrator"
 )
 
@@ -72,7 +73,7 @@ func main() {
 	// Start the tickets HTTP server.
 	srv := &http.Server{
 		Addr:    *addr,
-		Handler: orchestrator.NewHTTPServer(orch),
+		Handler: httpx.CORS(os.Getenv("VIBEFORGE_CORS_ORIGIN"), orchestrator.NewHTTPServer(orch)),
 	}
 	go func() {
 		log.Printf("orchestrator: serving /tickets on %s", *addr)

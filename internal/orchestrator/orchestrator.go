@@ -157,6 +157,9 @@ func (o *Orchestrator) Tickets(ctx context.Context) ([]Ticket, error) {
 	for i := range issues {
 		issue := &issues[i]
 		deps := parseDeps(issue)
+		if deps == nil {
+			deps = []int{} // emit [] not null — arrays stay arrays in the API
+		}
 		status := o.computeStatus(issue, deps, byNumber)
 		t := Ticket{
 			ID:     issue.Number,

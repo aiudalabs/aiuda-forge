@@ -17,6 +17,7 @@ import (
 	"vibeforge-kernel/internal/agent"
 	"vibeforge-kernel/internal/app"
 	"vibeforge-kernel/internal/gate"
+	"vibeforge-kernel/internal/httpx"
 )
 
 func main() {
@@ -59,7 +60,7 @@ func main() {
 	defer stop()
 	a.StartBackground(ctx)
 
-	srv := &http.Server{Addr: addr, Handler: a.Server}
+	srv := &http.Server{Addr: addr, Handler: httpx.CORS(os.Getenv("VIBEFORGE_CORS_ORIGIN"), a.Server)}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)

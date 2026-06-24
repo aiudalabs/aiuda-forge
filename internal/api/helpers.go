@@ -95,15 +95,25 @@ func (r *Registry) list(kind string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An agent is two files (foo.yaml manifest + foo.md persona) sharing one id,
+	// so dedup by base name to avoid listing it twice.
+	seen := map[string]bool{}
 	ids := []string{}
 	for _, e := range ents {
 		if e.IsDir() {
 			continue
 		}
 		n := e.Name()
-		if i := strings.LastIndex(n, "."); i > 0 {
-			ids = append(ids, n[:i])
+		i := strings.LastIndex(n, ".")
+		if i <= 0 {
+			continue
 		}
+		base := n[:i]
+		if seen[base] {
+			continue
+		}
+		seen[base] = true
+		ids = append(ids, base)
 	}
 	sort.Strings(ids)
 	return ids, nil

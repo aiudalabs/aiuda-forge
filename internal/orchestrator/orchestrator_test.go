@@ -503,3 +503,26 @@ func TestStateFileInvalid(t *testing.T) {
 		t.Error("expected error for corrupt state file")
 	}
 }
+
+// TestParseGhIssuesNormalizesState guards the bug found in e2e: `gh` returns
+// state in UPPERCASE ("OPEN"/"CLOSED") but the engine's checks are lowercase,
+// so without normalization no run would ever fire. parseGhIssues must lowercase.
+func TestParseGhIssuesNormalizesState(t *testing.T) {
+	out := []byte(`[
+		{"number":1,"title":"A","body":"","state":"OPEN","labels":[]},
+		{"number":2,"title":"B","body":"","state":"CLOSED","labels":[{"name":"depends:#1"}]}
+	]`)
+	issues, err := parseGhIssues(out)
+	if err != nil {
+		t.Fatalf("parseGhIssues: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("want 2 issues, got %d", len(issues))
+	}
+	if issues[0].State != "open" || issues[1].State != "closed" {
+		t.Fatalf("state not normalized to lowercase: %q, %q", issues[0].State, issues[1].State)
+	}
+	if deps := parseDeps(&issues[1]); len(deps) != 1 || deps[0] != 1 {
+		t.Fatalf("label dep not parsed: %v", deps)
+	}
+}

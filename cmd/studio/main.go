@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"vibeforge-kernel/internal/httpx"
 	"vibeforge-kernel/internal/studio"
 )
 
@@ -52,7 +53,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         *addr,
-		Handler:      studio.NewHTTPServer(s),
+		Handler:      httpx.CORS(os.Getenv("VIBEFORGE_CORS_ORIGIN"), studio.NewHTTPServer(s)),
 		ReadTimeout:  5 * time.Minute, // phases can be long-running
 		WriteTimeout: 5 * time.Minute,
 	}

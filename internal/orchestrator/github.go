@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // ghClient implements GitHub by shelling out to the `gh` CLI.
@@ -43,7 +44,13 @@ func (g *ghClient) ListIssues(ctx context.Context) ([]Issue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gh issue list: %w", err)
 	}
+	return parseGhIssues(out)
+}
 
+// parseGhIssues decodes `gh issue list --json` output into Issues. Split out
+// from ListIssues so the JSON shape + state normalization are unit-testable
+// without shelling out to gh.
+func parseGhIssues(out []byte) ([]Issue, error) {
 	var raw []ghIssueJSON
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("parse gh output: %w", err)
@@ -59,7 +66,9 @@ func (g *ghClient) ListIssues(ctx context.Context) ([]Issue, error) {
 			Number: r.Number,
 			Title:  r.Title,
 			Body:   r.Body,
-			State:  r.State,
+			// gh returns "OPEN"/"CLOSED"; the engine's state checks are
+			// lowercase ("open"/"closed"). Normalize at the I/O boundary.
+			State:  strings.ToLower(r.State),
 			Labels: labels,
 		})
 	}
