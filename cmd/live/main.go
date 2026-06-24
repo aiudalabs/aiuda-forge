@@ -20,11 +20,17 @@ import (
 	"vibeforge-kernel/internal/agent"
 	"vibeforge-kernel/internal/app"
 	"vibeforge-kernel/internal/gate"
+	"vibeforge-kernel/internal/httpx"
 	"vibeforge-kernel/internal/store"
 )
 
 func main() {
 	remote := mustEnv("TARGET_REMOTE")
+	// Validate the remote URL before accepting it — git accepts ext:: and file://
+	// URLs that can execute arbitrary commands; reject those schemes up-front.
+	if err := httpx.ValidateRemote(remote); err != nil {
+		log.Fatalf("TARGET_REMOTE rejected: %v", err)
+	}
 	workflowID := envOr("WORKFLOW", "factory")
 	ticket := envOr("TICKET", "Implement add(a, b) in calc.py and unit tests in test_calc.py (unittest).")
 	sandboxRuntime := envOr("VIBEFORGE_SANDBOX", "local")
