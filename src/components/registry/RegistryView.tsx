@@ -1,288 +1,284 @@
 "use client";
 
-// REGISTRY — agentes / skills / workflows, no-code (doc 16 §2.5). SHELL fiel al mockup: las
-// tarjetas abren los editores (modal de agente, compositor de workflow) con datos de ejemplo.
-// TODO(endpoint): GET/POST/PUT/DELETE /registry/{agents,skills,workflows} + validación de schema
-// + "probar agente" (doc 17 §1: LIST/create/delete/skills/validar aún faltan).
+// REGISTRY — agentes / skills / workflows, no-code (doc 16 §2.5).
+// Cableado contra GET/PUT/DELETE /registry/{agents,skills,workflows}.
+// Modo mock: cae a datos de ejemplo de lib/mock cuando la API no responde.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  useDeleteRegistryItem,
+  useRegistryItem,
+  useRegistryList,
+  useSaveRegistryItem,
+} from "@/lib/hooks";
+import type { RegistryKind } from "@/lib/types";
 
-type Modal = { kind: "agent" | "wf"; name: string } | null;
+// ─────────────────────────────────────────────────────────────────────────────
+// Tipos locales
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ActiveTab = RegistryKind;
+type ItemModal =
+  | { kind: RegistryKind; id: string; isNew: false }
+  | { kind: RegistryKind; id: string; isNew: true }
+  | null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Componente raíz
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function RegistryView() {
-  const [modal, setModal] = useState<Modal>(null);
+  const [tab, setTab] = useState<ActiveTab>("agents");
+  const [modal, setModal] = useState<ItemModal>(null);
+
+  const { data: listData, isLoading, isError } = useRegistryList(tab);
+  const ids = listData?.ids ?? [];
+
+  function openNew() {
+    setModal({ kind: tab, id: "", isNew: true });
+  }
+
+  function openItem(id: string) {
+    setModal({ kind: tab, id, isNew: false });
+  }
+
+  const TAB_LABELS: Record<ActiveTab, string> = {
+    agents: "Agentes",
+    skills: "Skills",
+    workflows: "Workflows",
+  };
 
   return (
     <div className="wrap">
-      <div className="shellnote">
-        🔌 Shell — edición/validación real pendiente.{" "}
-        <span className="mono">
-          TODO: GET/POST/DELETE /registry/{"{agents,skills,workflows}"} + validar schema + probar
-        </span>
-      </div>
-
+      {/* Pestañas */}
       <div className="sectitle">
-        <h2>Registry — agentes</h2>
-        <span className="c">editable · sin código</span>
+        <h2>Registry</h2>
+        <span className="c">agentes · skills · workflows</span>
         <span className="sp" />
-        <button className="btn ghost sm" onClick={() => setModal({ kind: "agent", name: "Nuevo agente" })}>
-          + Nuevo
-        </button>
-        <button className="btn ghost sm">⤓ Importar (BMAD / aiuda-stack)</button>
-      </div>
-
-      <div className="grid3">
-        <div className="card click" onClick={() => setModal({ kind: "agent", name: "dev" })}>
-          <h3>
-            dev <span className="badge opus">opus 4.8</span>
-          </h3>
-          <div className="role">Implementa el ticket dejando el árbol modificado, sin commit.</div>
-          <div className="kv">
-            <span>
-              skills: <b>coding-conventions</b>
-            </span>
-            <span>
-              tools: <b>read · edit · write · bash</b>
-            </span>
-          </div>
-        </div>
-        <div className="card click" onClick={() => setModal({ kind: "agent", name: "reviewer" })}>
-          <h3>
-            reviewer <span className="badge sonnet">sonnet 4.6</span>
-          </h3>
-          <div className="role">
-            Revisa adversarialmente — busca el bug que el dev no vio. Modelo distinto = cross-model.
-          </div>
-          <div className="kv">
-            <span>
-              tools: <b>read · bash</b>
-            </span>
-            <span>
-              prompt: <b>adversarial</b>
-            </span>
-          </div>
-        </div>
-        <div className="card click" onClick={() => setModal({ kind: "agent", name: "verifier" })}>
-          <h3>
-            verifier <span className="badge sonnet">sonnet 4.6</span>
-          </h3>
-          <div className="role">
-            Verificador fresco: maneja la app/tests y juzga works|broken con evidencia.
-          </div>
-          <div className="kv">
-            <span>
-              tools: <b>read · bash</b>
-            </span>
-            <span>
-              on_fail → <b>implement</b>
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div className="sectitle">
-        <h2>Workflows</h2>
-        <span className="c">grafos en datos (YAML)</span>
-        <span className="sp" />
-        <button className="btn ghost sm" onClick={() => setModal({ kind: "wf", name: "Nuevo workflow" })}>
+        {(["agents", "skills", "workflows"] as ActiveTab[]).map((k) => (
+          <button
+            key={k}
+            className={`btn ghost sm${tab === k ? " on" : ""}`}
+            onClick={() => setTab(k)}
+          >
+            {TAB_LABELS[k]}
+          </button>
+        ))}
+        <button className="btn ghost sm" onClick={openNew}>
           + Nuevo
         </button>
       </div>
 
-      <div className="grid3">
-        <div className="card click" onClick={() => setModal({ kind: "wf", name: "factory" })}>
-          <h3>factory</h3>
-          <div className="role mono" style={{ fontSize: 11.5 }}>
-            implement → gate → review → pr
+      {/* Lista */}
+      {isLoading ? (
+        <div className="placeholder">
+          <div className="ph-ic">
+            <span className="spin" />
           </div>
-          <div className="kv">
-            <span>
-              <b>+ paso = editar YAML</b>, cero código
-            </span>
-          </div>
+          Cargando {TAB_LABELS[tab].toLowerCase()}…
         </div>
-        <div className="card click" onClick={() => setModal({ kind: "wf", name: "factory-plus" })}>
-          <h3>factory-plus</h3>
-          <div className="role mono" style={{ fontSize: 11.5 }}>
-            implement → gate → review → verify → human_gate → pr
-          </div>
-          <div className="kv">
-            <span>verify agéntica + gate humano</span>
-          </div>
+      ) : isError ? (
+        <div className="placeholder err">
+          <div className="ph-ic">⚠</div>
+          No se pudo conectar al registry.
         </div>
-        <div className="card click" onClick={() => setModal({ kind: "wf", name: "gated" })}>
-          <h3>gated</h3>
-          <div className="role mono" style={{ fontSize: 11.5 }}>
-            implement → gate → human_gate → pr
-          </div>
-          <div className="kv">
-            <span>gobernanza simple</span>
-          </div>
+      ) : ids.length === 0 ? (
+        <div className="placeholder">
+          <div className="ph-ic">◆</div>
+          Sin {TAB_LABELS[tab].toLowerCase()} todavía.
         </div>
-      </div>
+      ) : (
+        <div className="grid3">
+          {ids.map((id) => (
+            <ItemCard key={id} kind={tab} id={id} onOpen={openItem} />
+          ))}
+        </div>
+      )}
 
+      {/* Modal de edición */}
       <div className={`overlay ${modal ? "on" : ""}`} onClick={() => setModal(null)} />
-      {modal?.kind === "agent" && <AgentModal name={modal.name} onClose={() => setModal(null)} />}
-      {modal?.kind === "wf" && <WorkflowModal name={modal.name} onClose={() => setModal(null)} />}
+      {modal && (
+        <ItemEditorModal
+          kind={modal.kind}
+          id={modal.id}
+          isNew={modal.isNew}
+          onClose={() => setModal(null)}
+        />
+      )}
     </div>
   );
 }
 
-function AgentModal({ name, onClose }: { name: string; onClose: () => void }) {
-  const isNew = name === "Nuevo agente";
+// ─────────────────────────────────────────────────────────────────────────────
+// Tarjeta de ítem (título + primeras líneas del contenido)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ItemCard({
+  kind,
+  id,
+  onOpen,
+}: {
+  kind: RegistryKind;
+  id: string;
+  onOpen: (id: string) => void;
+}) {
+  const { data: content } = useRegistryItem(kind, id);
+  const deleteItem = useDeleteRegistryItem(kind);
+
+  // Extrae la primera línea no vacía del YAML/markdown como subtítulo.
+  const preview = content
+    ? content
+        .split("\n")
+        .filter((l) => l.trim() && !l.startsWith("id:") && !l.startsWith("#"))
+        .slice(0, 2)
+        .join(" · ")
+    : "";
+
+  function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (confirm(`¿Borrar ${kind}/${id}?`)) {
+      deleteItem.mutate(id);
+    }
+  }
+
+  return (
+    <div className="card click" onClick={() => onOpen(id)}>
+      <h3 style={{ display: "flex", justifyContent: "space-between" }}>
+        <span>{id}</span>
+        <button
+          className="btn ghost sm"
+          style={{ fontSize: 11, padding: "0 6px" }}
+          onClick={handleDelete}
+          disabled={deleteItem.isPending}
+        >
+          ✕
+        </button>
+      </h3>
+      {preview && (
+        <div className="role mono" style={{ fontSize: 11.5, wordBreak: "break-all" }}>
+          {preview}
+        </div>
+      )}
+      {!content && <div className="role" style={{ color: "var(--ink4)", fontSize: 12 }}>Cargando…</div>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modal editor de ítem (YAML / markdown crudo)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ItemEditorModal({
+  kind,
+  id: initialId,
+  isNew,
+  onClose,
+}: {
+  kind: RegistryKind;
+  id: string;
+  isNew: boolean;
+  onClose: () => void;
+}) {
+  const { data: remoteContent, isLoading } = useRegistryItem(kind, isNew ? null : initialId);
+  const save = useSaveRegistryItem(kind);
+
+  const [idInput, setIdInput] = useState(initialId);
+  const [body, setBody] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Cuando llega el contenido del servidor, lo ponemos en el editor.
+  useEffect(() => {
+    if (remoteContent !== undefined) setBody(remoteContent);
+  }, [remoteContent]);
+
+  async function handleSave() {
+    setSaveError(null);
+    const targetId = idInput.trim();
+    if (!targetId) {
+      setSaveError("El ID no puede estar vacío.");
+      return;
+    }
+    try {
+      await save.mutateAsync({ id: targetId, body });
+      onClose();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(msg);
+    }
+  }
+
+  const kindLabel = kind === "agents" ? "agente" : kind === "skills" ? "skill" : "workflow";
+
   return (
     <div className="modal on">
       <div className="mh">
-        <h3>{isNew ? "Nuevo agente" : `Editar agente · ${name}`}</h3>
+        <h3>{isNew ? `Nuevo ${kindLabel}` : `Editar ${kindLabel} · ${initialId}`}</h3>
         <button className="x" onClick={onClose}>
           ✕
         </button>
       </div>
       <div className="mb">
-        <div className="row2">
-          <div className="field">
+        {isNew && (
+          <div className="field" style={{ marginBottom: 10 }}>
             <label>ID</label>
-            <input className="inp mono" defaultValue={isNew ? "" : "reviewer"} />
+            <input
+              className="inp mono"
+              value={idInput}
+              onChange={(e) => setIdInput(e.target.value)}
+              placeholder={`nombre-del-${kindLabel}`}
+            />
           </div>
-          <div className="field">
-            <label>Versión</label>
-            <input className="inp mono" defaultValue="1.0.0" />
-          </div>
-        </div>
-        <div className="row2">
-          <div className="field">
-            <label>
-              Modelo <span style={{ color: "var(--accent)" }}>(cross-model)</span>
-            </label>
-            <input className="inp" defaultValue="claude-sonnet-4-6" />
-          </div>
-          <div className="field">
-            <label>Effort</label>
-            <input className="inp" defaultValue="high" />
-          </div>
-        </div>
+        )}
+
         <div className="field">
-          <label>Rol / persona</label>
-          <input
-            className="inp"
-            defaultValue="Revisa adversarialmente el árbol — encuentra el bug que el implementer no vio."
-          />
+          <label>
+            {kind === "skills" ? "Contenido (markdown)" : "Definición (YAML)"}
+          </label>
+          {isLoading ? (
+            <div style={{ padding: 12, color: "var(--ink4)" }}>Cargando…</div>
+          ) : (
+            <textarea
+              className="inp mono"
+              style={{ minHeight: 280, resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+            />
+          )}
         </div>
-        <div className="field">
-          <label>Tools (allowlist)</label>
-          <div className="chips">
-            <span className="chip on">read</span>
-            <span className="chip on">bash</span>
-            <span className="chip">edit</span>
-            <span className="chip">write</span>
+
+        {saveError && (
+          <div
+            style={{
+              padding: "8px 12px",
+              background: "var(--err-soft, #fff0f0)",
+              border: "1px solid var(--err-line, #f5c5c5)",
+              borderRadius: 4,
+              fontSize: 12,
+              color: "var(--err, #c00)",
+              marginBottom: 10,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {saveError}
           </div>
-        </div>
-        <div className="field">
-          <label>Skills</label>
-          <div className="chips">
-            <span className="chip on">security-checklist</span>
-            <span className="chip">coding-conventions</span>
-            <span className="chip">+ añadir</span>
-          </div>
-        </div>
-        <div className="row2">
-          <div className="field">
-            <label>Entradas (tipadas)</label>
-            <input className="inp mono" defaultValue="ticket, diff_hint" />
-          </div>
-          <div className="field">
-            <label>Salidas (tipadas)</label>
-            <input className="inp mono" defaultValue="verdict, notes[]" />
-          </div>
-        </div>
-        <div className="row2">
-          <div className="field">
-            <label>Review</label>
-            <input className="inp" defaultValue="cross-model (adversarial)" />
-          </div>
-          <div className="field">
-            <label>Approval</label>
-            <input className="inp" defaultValue="risk-policy" />
-          </div>
-        </div>
+        )}
+
         <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
           <button className="btn ghost" style={{ flex: 1 }} onClick={onClose}>
             Cancelar
           </button>
-          <button className="btn ghost" style={{ flex: 1 }}>
-            ▶ Probar agente
-          </button>
-          <button className="btn primary" style={{ flex: 1 }} onClick={onClose}>
-            Guardar (valida schema)
-          </button>
-        </div>
-        <p style={{ fontSize: 12, color: "var(--ink4)", marginTop: 12 }}>
-          El I/O tipado deja que la UI conecte este agente solo a pasos compatibles. &quot;Probar&quot; lo
-          corre sobre un input de ejemplo antes de cablearlo. Se guarda como manifest YAML; cero
-          código.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function WorkflowModal({ name, onClose }: { name: string; onClose: () => void }) {
-  const nodes = [
-    { pt: "agent", pn: "implement", pm: "dev · opus", conn: "fail" },
-    { pt: "gate", pn: "gate", pm: "on_fail → implement (×2)", conn: "" },
-    { pt: "agent", pn: "review", pm: "reviewer · sonnet (cross-model)", conn: "fail" },
-    { pt: "agentic_verify", pn: "verify", pm: "verifier · on_fail → implement", conn: "" },
-    { pt: "human_gate", pn: "approve", pm: "pausa + notifica", conn: "", accent: true },
-    { pt: "pr", pn: "pr", pm: "approval: risk-policy", conn: "" },
-  ];
-  return (
-    <div className="modal on">
-      <div className="mh">
-        <h3>Workflow · {name}</h3>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn ghost sm">YAML ⇄</button>
-          <button className="x" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-      </div>
-      <div className="mb">
-        <div className="eyebrow acc" style={{ marginBottom: 12 }}>
-          Pasos (arrastra para reordenar · cada uno es dato)
-        </div>
-        <div className="pipe">
-          {nodes.map((n, i) => (
-            <div key={n.pn}>
-              <div
-                className="pnode"
-                style={n.accent ? { borderColor: "var(--accent)", background: "var(--accent-soft)" } : undefined}
-              >
-                <span
-                  className="pt"
-                  style={n.accent ? { background: "var(--accent)", color: "#fff" } : undefined}
-                >
-                  {n.pt}
-                </span>
-                <span className="pn">{n.pn}</span>
-                <span className="pm">{n.pm}</span>
-              </div>
-              {i < nodes.length - 1 && <div className={`pconn ${n.conn}`} />}
-            </div>
-          ))}
-        </div>
-        <div className="pconn" />
-        <div className="addstep">+ Agregar paso (agent · gate · verify · human_gate · pr)</div>
-        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-          <button className="btn ghost" style={{ flex: 1 }} onClick={onClose}>
-            Cancelar
-          </button>
-          <button className="btn primary" style={{ flex: 1 }} onClick={onClose}>
-            Validar y guardar
+          <button
+            className="btn primary"
+            style={{ flex: 1 }}
+            onClick={handleSave}
+            disabled={save.isPending || isLoading}
+          >
+            {save.isPending ? "Guardando…" : "Validar y guardar"}
           </button>
         </div>
         <p style={{ fontSize: 12, color: "var(--ink4)", marginTop: 12 }}>
-          Valida ciclos, tipos de I/O y pasos huérfanos antes de guardar. El próximo run usa el grafo
-          nuevo — sin recompilar.
+          El servidor valida el schema; si el cuerpo es inválido verás el error arriba.
+          Los cambios son efectivos en el próximo run.
         </p>
       </div>
     </div>
