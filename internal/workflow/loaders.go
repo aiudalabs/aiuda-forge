@@ -44,3 +44,11 @@ func (d *DirLoader) Load(id string) (*Workflow, error) {
 	d.cache[id] = wf
 	return wf, nil
 }
+
+// Invalidate drops id from the cache so the next Load re-reads the file from
+// disk. Called by the registry PUT path after a workflow manifest is saved.
+func (d *DirLoader) Invalidate(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.cache, id)
+}

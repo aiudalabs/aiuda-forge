@@ -55,6 +55,15 @@ func NewEngine(st *store.Store, loader Loader, workdirRoot string) *Engine {
 // waves register agent, agentic_verify, pr, human_gate the same way.
 func (e *Engine) Register(stepType string, r Runner) { e.runners[stepType] = r }
 
+// InvalidateWorkflow drops id from the loader cache (if the loader supports it)
+// so the next run re-reads the manifest from disk. Called after a PUT /registry/workflows/{id}.
+func (e *Engine) InvalidateWorkflow(id string) {
+	type invalidator interface{ Invalidate(string) }
+	if inv, ok := e.Loader.(invalidator); ok {
+		inv.Invalidate(id)
+	}
+}
+
 // Workdir returns the stable working directory for a run.
 func (e *Engine) Workdir(runID string) string { return filepath.Join(e.WorkdirRoot, runID) }
 

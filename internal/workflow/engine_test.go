@@ -307,3 +307,86 @@ func containsStr(s, sub string) bool {
 	}
 	return false
 }
+
+// ---- Bug 3: DirLoader cache invalidation on registry PUT --------------------
+
+// TestDirLoaderInvalidate: saving a changed manifest then calling Invalidate
+// makes the next Load return the updated workflow (not the stale cached parse).
+func TestDirLoaderInvalidate(t *testing.T) {
+	dir := t.TempDir()
+
+	v1 := []byte("id: myflow\nversion: 1.0.0\nsteps:\n  - id: alpha\n    type: echo\n")
+	path := filepath.Join(dir, "myflow.yaml")
+	if err := os.WriteFile(path, v1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := NewDirLoader(dir)
+
+	// First Load: caches v1.
+	wf1, err := loader.Load("myflow")
+	if err != nil {
+		t.Fatalf("load v1: %v", err)
+	}
+	if len(wf1.Steps) != 1 || wf1.Steps[0].ID != "alpha" {
+		t.Fatalf("v1 first step: want alpha, got %+v", wf1.Steps)
+	}
+
+	// Save a new version with a different first step.
+	v2 := []byte("id: myflow\nversion: 2.0.0\nsteps:\n  - id: beta\n    type: echo\n")
+	if err := os.WriteFile(path, v2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without Invalidate, Load returns the stale cached parse.
+	wfStale, _ := loader.Load("myflow")
+	if wfStale.Steps[0].ID != "alpha" {
+		t.Error("expected stale cache to return alpha (pre-invalidation)")
+	}
+
+	// Invalidate and load again: must return the new version.
+	loader.Invalidate("myflow")
+	wf2, err := loader.Load("myflow")
+	if err != nil {
+		t.Fatalf("load v2: %v", err)
+	}
+	if len(wf2.Steps) != 1 || wf2.Steps[0].ID != "beta" {
+		t.Fatalf("v2 first step after invalidate: want beta, got %+v", wf2.Steps)
+	}
+}
+
+// TestEngineInvalidateWorkflow: Engine.InvalidateWorkflow delegates to the
+// loader if it supports invalidation, and is a no-op for loaders that don't.
+func TestEngineInvalidateWorkflow(t *testing.T) {
+	dir := t.TempDir()
+
+	v1 := []byte("id: wf\nversion: 1.0.0\nsteps:\n  - id: step1\n    type: echo\n")
+	if err := os.WriteFile(filepath.Join(dir, "wf.yaml"), v1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := NewDirLoader(dir)
+	eng := newEngine(t, loader)
+
+	// Prime the cache.
+	if _, err := loader.Load("wf"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Overwrite on disk.
+	v2 := []byte("id: wf\nversion: 2.0.0\nsteps:\n  - id: step2\n    type: echo\n")
+	if err := os.WriteFile(filepath.Join(dir, "wf.yaml"), v2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Engine.InvalidateWorkflow must bust the cache.
+	eng.InvalidateWorkflow("wf")
+
+	wf, err := loader.Load("wf")
+	if err != nil {
+		t.Fatalf("load after engine invalidate: %v", err)
+	}
+	if len(wf.Steps) == 0 || wf.Steps[0].ID != "step2" {
+		t.Fatalf("after engine invalidate: want step2, got %+v", wf.Steps)
+	}
+}
