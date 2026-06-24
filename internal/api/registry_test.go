@@ -112,6 +112,41 @@ func TestRegistryUnknownKind(t *testing.T) {
 	}
 }
 
+// TestRegistryPathTraversal: traversal ids must never escape the registry root.
+//
+// The Go net/http mux path-cleans raw ../ sequences and issues a 301 redirect
+// before the handler is invoked (raw "../../settings" → redirect → /settings),
+// so those forms never reach pathFor at all.
+//
+// The dangerous form is the URL-encoded variant (%2f) which the mux passes through
+// as-is, causing PathValue("id") to return "../../etc/passwd". pathFor must reject
+// that before doing any file I/O.
+func TestRegistryPathTraversal(t *testing.T) {
+	base, _, _ := testKernel(t)
+
+	// URL-encoded dot-dot — the mux delivers the decoded path to PathValue so
+	// pathFor sees id = "../../etc/passwd" and must reject it.
+	traversals := []string{
+		base + "/registry/workflows/..%2f..%2f..%2fetc%2fpasswd",
+		base + "/registry/agents/..%2f..%2fetc%2fpasswd",
+		base + "/registry/skills/..%2f..%2fsettings.json",
+	}
+	for _, url := range traversals {
+		resp, _ := putRaw(t, "GET", url, "")
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("traversal GET %s: expected 404/400, got %d", url, resp.StatusCode)
+		}
+		resp, _ = putRaw(t, "PUT", url, "id: x\nversion: 1.0.0\nmodel: claude-sonnet-4-6\nrole: t\n")
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("traversal PUT %s: expected 404/400, got %d", url, resp.StatusCode)
+		}
+		resp, _ = putRaw(t, "DELETE", url, "")
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("traversal DELETE %s: expected 404/400, got %d", url, resp.StatusCode)
+		}
+	}
+}
+
 // TestSettings: GET defaults, PUT a secret, secret comes back MASKED, and a
 // masked round-trip never wipes the stored secret.
 func TestSettings(t *testing.T) {

@@ -72,17 +72,28 @@ func (r *Registry) SkillPath(id string) string {
 	return filepath.Join(r.Root, "skills", id+".md")
 }
 
-// pathFor returns the manifest path for a kind+id, or false for unknown kinds.
+// pathFor returns the manifest path for a kind+id, or false for unknown kinds or
+// if id would escape the registry root (path traversal). Callers that receive
+// (_, false) must respond 404 and stop — they must not attempt any file operation.
 func (r *Registry) pathFor(kind, id string) (string, bool) {
+	var raw string
 	switch kind {
 	case "workflows":
-		return r.WorkflowPath(id), true
+		raw = r.WorkflowPath(id)
 	case "agents":
-		return r.AgentPath(id), true
+		raw = r.AgentPath(id)
 	case "skills":
-		return r.SkillPath(id), true
+		raw = r.SkillPath(id)
+	default:
+		return "", false
 	}
-	return "", false
+	// Reject any id that walks above the registry root (e.g. "../../etc/passwd").
+	clean := filepath.Clean(raw)
+	root := filepath.Clean(r.Root) + string(filepath.Separator)
+	if !strings.HasPrefix(clean, root) {
+		return "", false
+	}
+	return clean, true
 }
 
 // list returns the ids in a kind directory (filename without extension), sorted.
