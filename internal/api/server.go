@@ -83,21 +83,33 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /steps/{id}/heartbeat", s.heartbeat)
 	m.HandleFunc("POST /steps/{id}/usage", s.usage)
 
-	// Native ticket store — only registered when a Tickets store is wired in.
-	if s.Tickets != nil {
-		m.HandleFunc("POST /epics", s.createEpic)
-		m.HandleFunc("GET /epics", s.listEpics)
-		m.HandleFunc("GET /epics/{id}", s.getEpic)
-		m.HandleFunc("POST /sprints", s.createSprint)
-		m.HandleFunc("GET /sprints", s.listSprints)
-		m.HandleFunc("POST /stories", s.createStory)
-		m.HandleFunc("GET /stories", s.listStoriesHandler)
-		m.HandleFunc("GET /stories/{id}", s.getStory)
-		m.HandleFunc("PUT /stories/{id}/status", s.updateStoryStatus)
-		m.HandleFunc("POST /stories/{id}/deps", s.addStoryDeps)
-		// GET /tickets — compat endpoint matching the orchestrator's shape so the
-		// existing UI can read the native store unchanged.
-		m.HandleFunc("GET /tickets", s.ticketsCompat)
+	// Native ticket store. Registered unconditionally and guarded per-request:
+	// the Tickets store is wired AFTER NewServer (main.go), so routes() can't see
+	// it yet — needTickets returns 503 until it's set.
+	m.HandleFunc("POST /epics", s.needTickets(s.createEpic))
+	m.HandleFunc("GET /epics", s.needTickets(s.listEpics))
+	m.HandleFunc("GET /epics/{id}", s.needTickets(s.getEpic))
+	m.HandleFunc("POST /sprints", s.needTickets(s.createSprint))
+	m.HandleFunc("GET /sprints", s.needTickets(s.listSprints))
+	m.HandleFunc("POST /stories", s.needTickets(s.createStory))
+	m.HandleFunc("GET /stories", s.needTickets(s.listStoriesHandler))
+	m.HandleFunc("GET /stories/{id}", s.needTickets(s.getStory))
+	m.HandleFunc("PUT /stories/{id}/status", s.needTickets(s.updateStoryStatus))
+	m.HandleFunc("POST /stories/{id}/deps", s.needTickets(s.addStoryDeps))
+	// GET /tickets — compat endpoint matching the orchestrator's shape so the
+	// existing UI can read the native store unchanged.
+	m.HandleFunc("GET /tickets", s.needTickets(s.ticketsCompat))
+}
+
+// needTickets guards a handler that requires the native ticket store, returning
+// 503 if it has not been wired in.
+func (s *Server) needTickets(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Tickets == nil {
+			httpErr(w, http.StatusServiceUnavailable, "ticket store not configured")
+			return
+		}
+		h(w, r)
 	}
 }
 
