@@ -51,7 +51,9 @@ func (EchoRunner) Run(_ context.Context, step Step, inputs map[string]any, workd
 	if name, ok := inputs["write_file"].(string); ok && name != "" {
 		content := asString(inputs["write_content"])
 		if workdir != "" {
-			_ = os.WriteFile(filepath.Join(workdir, name), []byte(content), 0o644)
+			dst := filepath.Join(workdir, name)
+			_ = os.MkdirAll(filepath.Dir(dst), 0o755) // create parent dirs (e.g. docs/)
+			_ = os.WriteFile(dst, []byte(content), 0o644)
 		}
 	}
 	return StepResult{
