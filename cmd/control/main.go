@@ -19,7 +19,6 @@ import (
 	"vibeforge-kernel/internal/app"
 	"vibeforge-kernel/internal/gate"
 	"vibeforge-kernel/internal/httpx"
-	"vibeforge-kernel/internal/tickets"
 )
 
 func main() {
@@ -34,6 +33,7 @@ func main() {
 	}
 	a, err := app.Build(app.Config{
 		DBPath:         envOr("VIBEFORGE_DB", "vibeforge.db"),
+		TicketsDB:      envOr("VIBEFORGE_TICKETS_DB", "tickets.db"),
 		RegistryRoot:   envOr("VIBEFORGE_REGISTRY", "registry"),
 		WorkdirRoot:    envOr("VIBEFORGE_WORKDIR", ".vibeforge-runs"),
 		EngineMode:     envOr("VIBEFORGE_ENGINE", "echo"),
@@ -46,14 +46,6 @@ func main() {
 		log.Fatalf("build kernel: %v", err)
 	}
 	defer a.Close()
-
-	// Native ticket store — separate DB so it never touches the kernel's runs DB.
-	tix, err := tickets.Open(envOr("VIBEFORGE_TICKETS_DB", "tickets.db"))
-	if err != nil {
-		log.Fatalf("open tickets db: %v", err)
-	}
-	defer tix.Close()
-	a.Server.Tickets = tix
 
 	// Per-run target seeding: clone TARGET_REMOTE into each run's workdir and seal
 	// the gate BEFORE any agent runs. (A real deployment would take the repo from

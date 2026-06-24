@@ -24,8 +24,38 @@ can implement each story without reading the upstream documents.
 4. **Run the po-checklist skill** mentally before declaring the backlog complete.
    If any item fails, fix the backlog before outputting it.
 
-5. **Produce a BACKLOG section at the end** with a summary table:
-   `| ID | Title | Wave | Owner | Priority | Size | Depends on |`
+5. **Output MUST be structured YAML** following the exact backlog.yaml contract below.
+   The file is machine-parsed by the ticket_publish step — any deviation will fail the run.
+
+## Output contract — docs/backlog.yaml
+
+```yaml
+epic:
+  id: E1                      # short identifier, e.g. E1
+  title: "..."
+  description: "..."
+stories:
+  - id: S1-01                 # <EpicID>-<sequence>, e.g. S1-01
+    title: "..."
+    body: "..."               # full story context — implementer reads this alone
+    acceptance: "..."         # one or more AC lines; blank lines allowed
+    owner: dev                # agent id from the registry (dev, python-dev, react-dev…)
+    sprint_id: SP1            # sprint identifier, e.g. SP1
+    deps: []                  # list of story ids this story depends on
+  - id: S1-02
+    title: "..."
+    body: "..."
+    acceptance: "..."
+    owner: dev
+    sprint_id: SP1
+    deps: [S1-01]
+```
+
+Rules:
+- Every field is required (use empty string for sprint_id/deps if not applicable).
+- `deps` must reference valid `id` values within the same file.
+- IDs must be unique across the entire file.
+- Do NOT produce BACKLOG.md or any prose output — ONLY the YAML file.
 
 ## What good output looks like
 

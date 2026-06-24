@@ -81,12 +81,18 @@ steps:
     inputs:
       prd: $prd.text
       architecture: $architecture.text
-      output: docs/BACKLOG.md
+      output: docs/backlog.yaml
 
   - id: backlog_gate
     type: human_gate
     inputs:
-      reason: "Review the backlog (docs/BACKLOG.md). Approve to complete design phase, or reject with feedback."
+      reason: "Review the backlog (docs/backlog.yaml). Approve to publish to the ticket store, or reject with feedback."
     on_fail:
       goto: backlog
       feedback: $backlog_gate.detail
+
+  # ── Phase 6: Handoff — publish backlog into the native ticket store ───────
+  - id: handoff
+    type: ticket_publish
+    inputs:
+      backlog: docs/backlog.yaml

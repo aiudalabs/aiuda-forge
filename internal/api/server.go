@@ -31,9 +31,10 @@ type Server struct {
 
 // NewServer builds and routes a Server. The settings store lives next to the
 // registry (registry/../settings.json) — config in the control plane, not the kernel.
-func NewServer(st *store.Store, eng *workflow.Engine, bus *Bus, reg *Registry) *Server {
+// tix may be nil; ticket routes return 503 until it is set (needTickets guard).
+func NewServer(st *store.Store, eng *workflow.Engine, bus *Bus, reg *Registry, tix *tickets.Store) *Server {
 	set, _ := settings.Open(filepath.Join(filepath.Dir(reg.Root), "settings.json"))
-	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, mux: http.NewServeMux()}
+	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, Tickets: tix, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -84,8 +85,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /steps/{id}/usage", s.usage)
 
 	// Native ticket store. Registered unconditionally and guarded per-request:
-	// the Tickets store is wired AFTER NewServer (main.go), so routes() can't see
-	// it yet — needTickets returns 503 until it's set.
+	// Tickets may be nil (no TicketsDB configured) — needTickets returns 503 in that case.
 	m.HandleFunc("POST /epics", s.needTickets(s.createEpic))
 	m.HandleFunc("GET /epics", s.needTickets(s.listEpics))
 	m.HandleFunc("GET /epics/{id}", s.needTickets(s.getEpic))

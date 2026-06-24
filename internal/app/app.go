@@ -16,12 +16,14 @@ import (
 	"vibeforge-kernel/internal/pr"
 	"vibeforge-kernel/internal/sandbox"
 	"vibeforge-kernel/internal/store"
+	"vibeforge-kernel/internal/tickets"
 	"vibeforge-kernel/internal/workflow"
 )
 
 // Config configures an assembled kernel.
 type Config struct {
 	DBPath         string         // sqlite path
+	TicketsDB      string         // tickets sqlite path; "" disables the ticket store
 	RegistryRoot   string         // registry/
 	WorkdirRoot    string         // where per-run working trees live
 	EngineMode     string         // "echo" (FakeBackend) | "claude" (real)
@@ -35,6 +37,7 @@ type Config struct {
 // App is the assembled kernel.
 type App struct {
 	Store   *store.Store
+	Tickets *tickets.Store // nil when TicketsDB is not configured
 	Engine  *workflow.Engine
 	Bus     *api.Bus
 	Server  *api.Server
@@ -119,15 +122,30 @@ func Build(cfg Config) (*App, error) {
 	eng.Register("human_gate", agent.HumanGateRunner{})
 	eng.Register("pr", pr.NewRunner())
 
+	// Ticket store — optional. When TicketsDB is set, open the store, register
+	// the ticket_publish step runner, and pass the store to the API server so
+	// the HTTP ticket routes become active. When empty, the runner is not
+	// registered and the API routes return 503 (needTickets guard).
+	var tix *tickets.Store
+	if cfg.TicketsDB != "" {
+		var tixErr error
+		tix, tixErr = tickets.Open(cfg.TicketsDB)
+		if tixErr != nil {
+			_ = st.Close()
+			return nil, fmt.Errorf("open tickets db: %w", tixErr)
+		}
+		eng.Register("ticket_publish", &tickets.PublishRunner{Store: tix})
+	}
+
 	bus := api.NewBus(st)
 	reg := api.NewRegistry(cfg.RegistryRoot)
-	srv := api.NewServer(st, eng, bus, reg)
+	srv := api.NewServer(st, eng, bus, reg, tix)
 
 	workers := cfg.Workers
 	if workers <= 0 {
 		workers = 1
 	}
-	return &App{Store: st, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
+	return &App{Store: st, Tickets: tix, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
 }
 
 // ClaudeBackend builds the real claude -p backend.
@@ -154,4 +172,9 @@ func (a *App) StartBackground(ctx context.Context) {
 }
 
 // Close releases resources.
-func (a *App) Close() error { return a.Store.Close() }
+func (a *App) Close() error {
+	if a.Tickets != nil {
+		_ = a.Tickets.Close()
+	}
+	return a.Store.Close()
+}
