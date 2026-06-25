@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -34,6 +35,7 @@ func main() {
 	a, err := app.Build(app.Config{
 		DBPath:         envOr("VIBEFORGE_DB", "vibeforge.db"),
 		TicketsDB:      envOr("VIBEFORGE_TICKETS_DB", "tickets.db"),
+		ProjectsDB:     envOr("VIBEFORGE_PROJECTS_DB", "projects.db"),
 		RegistryRoot:   envOr("VIBEFORGE_REGISTRY", "registry"),
 		WorkdirRoot:    envOr("VIBEFORGE_WORKDIR", ".vibeforge-runs"),
 		EngineMode:     envOr("VIBEFORGE_ENGINE", "echo"),
@@ -47,21 +49,42 @@ func main() {
 	}
 	defer a.Close()
 
-	// Per-run target seeding: clone TARGET_REMOTE into each run's workdir and seal
-	// the gate BEFORE any agent runs. (A real deployment would take the repo from
-	// the trigger payload; a fixed remote is enough for single-project / demo.)
-	if remote := os.Getenv("TARGET_REMOTE"); remote != "" {
-		// Validate the remote URL before accepting it — git accepts ext:: and file://
-		// URLs that can execute arbitrary commands; reject those schemes up-front.
-		if err := httpx.ValidateRemote(remote); err != nil {
+	// Per-run target seeding: clone the project repo (from trigger payload.repo)
+	// into each run's workdir and seal the gate BEFORE any agent runs.
+	// Falls back to TARGET_REMOTE for backwards compat with single-project / demo setups.
+	fallbackRemote := os.Getenv("TARGET_REMOTE")
+	if fallbackRemote != "" {
+		if err := httpx.ValidateRemote(fallbackRemote); err != nil {
 			log.Fatalf("TARGET_REMOTE rejected: %v", err)
 		}
-		a.Engine.OnSeed = func(runID, workdir string) error {
-			if out, err := exec.Command("git", "clone", "--quiet", remote, workdir).CombinedOutput(); err != nil {
-				return fmt.Errorf("clone target: %v: %s", err, out)
+	}
+	// OnSeed is always registered so that payload.repo (set by POST /runs for a
+	// project) takes effect; TARGET_REMOTE is the fallback.
+	a.Engine.OnSeed = func(runID, workdir string) error {
+		remote := fallbackRemote
+
+		// Prefer the repo from the run's trigger payload when present.
+		run, err := a.Store.GetRun(runID)
+		if err == nil && run.Payload != "" {
+			var payload map[string]any
+			if json.Unmarshal([]byte(run.Payload), &payload) == nil {
+				if r, ok := payload["repo"].(string); ok && r != "" {
+					remote = r
+				}
 			}
-			return gate.SealWorkdir(workdir)
 		}
+
+		if remote == "" {
+			// Nothing to seed; gate-less flows (stub/echo) are fine with an empty workdir.
+			return nil
+		}
+		if err := httpx.ValidateRemote(remote); err != nil {
+			return fmt.Errorf("payload.repo rejected: %w", err)
+		}
+		if out, err := exec.Command("git", "clone", "--quiet", remote, workdir).CombinedOutput(); err != nil {
+			return fmt.Errorf("clone target: %v: %s", err, out)
+		}
+		return gate.SealWorkdir(workdir)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
