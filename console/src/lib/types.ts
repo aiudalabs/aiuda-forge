@@ -193,6 +193,7 @@ export type DesignStepStatus = "QUEUED" | "RUNNING" | "DONE" | "AWAITING" | "FAI
 export interface DesignPhase {
   stepId: string; // "discovery" | "prd" | "architecture" | "ui" | "backlog" | "handoff"
   name: string;   // "Descubrimiento", "PRD", etc.
+  gateId?: string; // id del human_gate de la fase ("arch_gate" ≠ "architecture_gate"); "" / undefined si no tiene
   designStatus: DesignStepStatus; // estado del paso de diseño (el agente)
   gateStatus: DesignStepStatus;   // estado del gate (human_gate)
 }

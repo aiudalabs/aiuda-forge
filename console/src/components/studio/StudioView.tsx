@@ -322,7 +322,7 @@ function PhasePanel({
   const [rejectInput, setRejectInput] = useState("");
   const [showRejectForm, setShowRejectForm] = useState(false);
 
-  const gateStepId = `${phase.stepId}_gate`;
+  const gateStepId = phase.gateId || `${phase.stepId}_gate`;
 
   function doApprove() {
     approve.mutate([runId, gateStepId]);

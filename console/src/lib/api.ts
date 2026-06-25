@@ -637,14 +637,15 @@ export async function listProjects(): Promise<Project[]> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Mapa de fases del workflow "design": stepId del agente → nombre display.
-// El gate de cada fase tiene id "<stepId>_gate" (excepto handoff, que no tiene gate).
-const DESIGN_PHASE_MAP: { stepId: string; name: string; hasGate: boolean }[] = [
-  { stepId: "discovery", name: "Descubrimiento", hasGate: true },
-  { stepId: "prd", name: "PRD", hasGate: true },
-  { stepId: "architecture", name: "Arquitectura", hasGate: true },
-  { stepId: "ui", name: "UI / Pantallas", hasGate: true },
-  { stepId: "backlog", name: "Backlog", hasGate: true },
-  { stepId: "handoff", name: "Handoff → stories", hasGate: false },
+// El gate de cada fase NO siempre es "<stepId>_gate" (architecture → arch_gate),
+// así que el id del gate es explícito. handoff no tiene gate.
+const DESIGN_PHASE_MAP: { stepId: string; name: string; gateId: string }[] = [
+  { stepId: "discovery", name: "Descubrimiento", gateId: "discovery_gate" },
+  { stepId: "prd", name: "PRD", gateId: "prd_gate" },
+  { stepId: "architecture", name: "Arquitectura", gateId: "arch_gate" },
+  { stepId: "ui", name: "UI / Pantallas", gateId: "ui_gate" },
+  { stepId: "backlog", name: "Backlog", gateId: "backlog_gate" },
+  { stepId: "handoff", name: "Handoff → stories", gateId: "" },
 ];
 
 interface KernelRunWithSteps extends KernelRun {
@@ -671,11 +672,12 @@ function mapDesignRun(r: KernelRunWithSteps): DesignRun {
     return (s?.status ?? "QUEUED") as DesignStepStatus;
   };
 
-  const phases: DesignPhase[] = DESIGN_PHASE_MAP.map(({ stepId, name, hasGate }) => ({
+  const phases: DesignPhase[] = DESIGN_PHASE_MAP.map(({ stepId, name, gateId }) => ({
     stepId,
     name,
+    gateId,
     designStatus: statusOf(stepId),
-    gateStatus: hasGate ? statusOf(`${stepId}_gate`) : "QUEUED",
+    gateStatus: gateId ? statusOf(gateId) : "QUEUED",
   }));
 
   return {
@@ -717,11 +719,12 @@ export async function createDesignRun(input: CreateDesignRunInput): Promise<Desi
       created_at: Date.now(),
       project_id: input.project_id,
       repo: input.repo,
-      phases: DESIGN_PHASE_MAP.map(({ stepId, name }) => ({
+      phases: DESIGN_PHASE_MAP.map(({ stepId, name, gateId }) => ({
         stepId,
         name,
-        designStatus: "QUEUED",
-        gateStatus: "QUEUED",
+        gateId,
+        designStatus: "QUEUED" as DesignStepStatus,
+        gateStatus: "QUEUED" as DesignStepStatus,
       })),
     };
     mockDesignRuns.unshift(newRun);
