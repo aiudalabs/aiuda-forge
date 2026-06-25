@@ -10,6 +10,7 @@ import type {
   MetricsPayload,
   Notification,
   OrchestratorTicket,
+  Project,
   Run,
   RunDetail,
   RunEvent,
@@ -304,6 +305,30 @@ export const mockEpics: Epic[] = [
   { id: "EPIC-2", title: "Validadores panameños" },
 ];
 
+// ── Projects mock (Studio) ───────────────────────────────────────────────────
+// Cada Project es una entrada en POST /projects. El repo es la URL https de GitHub.
+
+export const mockProjects: Project[] = [
+  {
+    id: "proj_001",
+    name: "turnos-clinica",
+    description: "Plataforma de gestión de turnos para clínicas — reserva online, alertas SMS, panel admin",
+    repo: "https://github.com/vibeforge-demo/turnos-clinica",
+  },
+  {
+    id: "proj_002",
+    name: "asistencia-escolar",
+    description: "App de registro de asistencia escolar con QR y notificaciones a padres",
+    repo: "https://github.com/vibeforge-demo/asistencia-escolar",
+  },
+  {
+    id: "proj_003",
+    name: "marketplace-limpieza",
+    description: "Marketplace de servicios de limpieza residencial",
+    repo: "https://github.com/vibeforge-demo/marketplace-limpieza",
+  },
+];
+
 // ── Design runs mock (Studio) ─────────────────────────────────────────────────
 // Cada DesignRun es un run del workflow "design" en el kernel. Las fases se
 // derivan de los pasos: discovery/prd/architecture/ui/backlog + sus gates.
@@ -315,6 +340,8 @@ export const mockDesignRuns: DesignRun[] = [
     status: "AWAITING",
     idea: "Plataforma de gestión de turnos para clínicas — reserva online, alertas SMS, panel admin",
     created_at: Date.now() - 3600_000,
+    project_id: "proj_001",
+    repo: "https://github.com/vibeforge-demo/turnos-clinica",
     phases: [
       { stepId: "discovery", name: "Descubrimiento", designStatus: "DONE", gateStatus: "DONE" },
       { stepId: "prd", name: "PRD", designStatus: "DONE", gateStatus: "DONE" },
@@ -330,6 +357,8 @@ export const mockDesignRuns: DesignRun[] = [
     status: "DONE",
     idea: "App de registro de asistencia escolar con QR y notificaciones a padres",
     created_at: Date.now() - 86400_000,
+    project_id: "proj_002",
+    repo: "https://github.com/vibeforge-demo/asistencia-escolar",
     phases: [
       { stepId: "discovery", name: "Descubrimiento", designStatus: "DONE", gateStatus: "DONE" },
       { stepId: "prd", name: "PRD", designStatus: "DONE", gateStatus: "DONE" },
@@ -345,6 +374,8 @@ export const mockDesignRuns: DesignRun[] = [
     status: "RUNNING",
     idea: "Marketplace de servicios de limpieza residencial",
     created_at: Date.now() - 1800_000,
+    project_id: "proj_003",
+    repo: "https://github.com/vibeforge-demo/marketplace-limpieza",
     phases: [
       { stepId: "discovery", name: "Descubrimiento", designStatus: "DONE", gateStatus: "DONE" },
       { stepId: "prd", name: "PRD", designStatus: "RUNNING", gateStatus: "QUEUED" },

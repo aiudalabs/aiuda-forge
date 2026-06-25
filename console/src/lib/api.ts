@@ -17,6 +17,7 @@ import {
   mockMetrics,
   mockNotifications,
   mockOrchestratorTickets,
+  mockProjects,
   mockRegistryContent,
   mockRegistryIds,
   mockRunDetails,
@@ -35,6 +36,7 @@ import type {
   MetricsPayload,
   Notification,
   OrchestratorTicket,
+  Project,
   RegistryDeleteResponse,
   RegistryKind,
   RegistryListResponse,
@@ -596,6 +598,39 @@ export async function createStory(input: CreateStoryInput): Promise<Orchestrator
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Projects — POST /projects, GET /projects
+// Un proyecto es un repositorio de GitHub. Crear un proyecto = crear el repo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Crea un proyecto (y su repo en GitHub). Devuelve el proyecto con la URL del repo. */
+export async function createProject(name: string, description: string): Promise<Project> {
+  if (await isMock()) {
+    // Verificar nombre duplicado en el mock.
+    const exists = mockProjects.find((p) => p.name === name);
+    if (exists) throw new ApiError(409, `El repositorio "${name}" ya existe.`);
+    const proj: Project = {
+      id: `proj_${String(mockProjects.length + 1).padStart(3, "0")}`,
+      name,
+      description,
+      repo: `https://github.com/vibeforge-demo/${name}`,
+    };
+    mockProjects.push(proj);
+    return proj;
+  }
+  return http<Project>(`/projects`, {
+    method: "POST",
+    body: JSON.stringify({ name, description }),
+  });
+}
+
+/** Lista todos los proyectos del control-plane. */
+export async function listProjects(): Promise<Project[]> {
+  if (await isMock()) return [...mockProjects];
+  const res = await http<Project[] | { projects: Project[] }>(`/projects`);
+  return Array.isArray(res) ? res : res?.projects ?? [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Studio — Design runs
 // Mapea runs del workflow "design" al modelo DesignRun. Las fases se derivan
 // de los steps con el mapa hardcodeado de la especificación.
@@ -618,9 +653,13 @@ interface KernelRunWithSteps extends KernelRun {
 
 function mapDesignRun(r: KernelRunWithSteps): DesignRun {
   let idea = "";
+  let project_id: string | undefined;
+  let repo: string | undefined;
   try {
     const p = JSON.parse(r.payload ?? "{}");
     idea = typeof p.instructions === "string" ? p.instructions : "";
+    project_id = typeof p.project_id === "string" ? p.project_id : undefined;
+    repo = typeof p.repo === "string" ? p.repo : undefined;
   } catch {
     /* payload no-JSON */
   }
@@ -646,6 +685,8 @@ function mapDesignRun(r: KernelRunWithSteps): DesignRun {
     idea,
     created_at: r.created_at ? r.created_at * 1000 : Date.now(),
     phases,
+    project_id,
+    repo,
   };
 }
 
@@ -659,15 +700,23 @@ export async function listDesignRuns(): Promise<DesignRun[]> {
     .map((r) => mapDesignRun(r));
 }
 
-/** Crea un proyecto de diseño (run del workflow "design"). */
-export async function createDesignRun(instructions: string): Promise<DesignRun> {
+export interface CreateDesignRunInput {
+  project_id: string;
+  repo: string;
+  instructions: string;
+}
+
+/** Crea un run de diseño vinculado a un proyecto/repo de GitHub. */
+export async function createDesignRun(input: CreateDesignRunInput): Promise<DesignRun> {
   if (await isMock()) {
     const newRun: DesignRun = {
       id: `run_design_${String(mockDesignRuns.length + 1).padStart(3, "0")}`,
       workflow_id: "design",
       status: "QUEUED",
-      idea: instructions,
+      idea: input.instructions,
       created_at: Date.now(),
+      project_id: input.project_id,
+      repo: input.repo,
       phases: DESIGN_PHASE_MAP.map(({ stepId, name }) => ({
         stepId,
         name,
@@ -680,7 +729,14 @@ export async function createDesignRun(instructions: string): Promise<DesignRun> 
   }
   const r = await http<KernelRun>(`/runs`, {
     method: "POST",
-    body: JSON.stringify({ workflow: "design", payload: { instructions } }),
+    body: JSON.stringify({
+      workflow: "design",
+      payload: {
+        project_id: input.project_id,
+        repo: input.repo,
+        instructions: input.instructions,
+      },
+    }),
   });
   return mapDesignRun(r);
 }

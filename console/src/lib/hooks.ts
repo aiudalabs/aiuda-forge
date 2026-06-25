@@ -10,7 +10,7 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import * as api from "./api";
-import type { ApiMode, CreateStoryInput } from "./api";
+import type { ApiMode, CreateDesignRunInput, CreateStoryInput } from "./api";
 import { subscribe } from "./ws";
 import type { RegistryKind, RunEvent } from "./types";
 
@@ -28,6 +28,7 @@ export const qk = {
   metrics: ["metrics"] as const,
   tickets: ["tickets"] as const,
   epics: ["epics"] as const,
+  projects: ["projects"] as const,
 };
 
 export function useApiMode() {
@@ -253,6 +254,27 @@ export function useCreateStory() {
   });
 }
 
+// ── Projects hooks ────────────────────────────────────────────────────────────
+
+export function useProjects() {
+  return useQuery({
+    queryKey: qk.projects,
+    queryFn: () => api.listProjects(),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, description }: { name: string; description: string }) =>
+      api.createProject(name, description),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.projects });
+    },
+  });
+}
+
 // ── Studio / Design runs hooks ────────────────────────────────────────────────
 
 export function useDesignRuns() {
@@ -275,7 +297,7 @@ export function useDesignRun(id: string | null) {
 export function useCreateDesignRun() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (instructions: string) => api.createDesignRun(instructions),
+    mutationFn: (input: CreateDesignRunInput) => api.createDesignRun(input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["designRuns"] });
     },

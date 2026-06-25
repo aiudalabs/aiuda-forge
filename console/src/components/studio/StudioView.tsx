@@ -12,11 +12,14 @@ import {
   useArtifact,
   useApprove,
   useCreateDesignRun,
+  useCreateProject,
   useDesignRun,
   useDesignRuns,
+  useProjects,
   useReject,
 } from "@/lib/hooks";
-import type { DesignPhase, DesignRun, DesignStepStatus } from "@/lib/types";
+import { ApiError } from "@/lib/api";
+import type { DesignPhase, DesignRun, DesignStepStatus, Project } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers de fase
@@ -71,12 +74,18 @@ const ARTIFACT_STEPS = new Set(["discovery", "prd", "architecture", "ui", "backl
 
 export function StudioView() {
   const { data: runs, isLoading, isError } = useDesignRuns();
+  const { data: projects } = useProjects();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [showNewProject, setShowNewProject] = useState(false);
 
   // Al recibir la lista, selecciona automáticamente el primer run si ninguno está seleccionado.
   const list = runs ?? [];
   const effectiveSel = selectedRunId ?? list[0]?.id ?? null;
+
+  // Índice de proyectos por id para resolver nombre/repo desde el run.
+  const projectById = new Map<string, Project>(
+    (projects ?? []).map((p) => [p.id, p])
+  );
 
   return (
     <div className="wrap">
@@ -120,6 +129,7 @@ export function StudioView() {
               <ProjectCard
                 key={run.id}
                 run={run}
+                project={run.project_id ? projectById.get(run.project_id) : undefined}
                 active={run.id === effectiveSel}
                 onSelect={() => setSelectedRunId(run.id)}
               />
@@ -161,10 +171,12 @@ export function StudioView() {
 
 function ProjectCard({
   run,
+  project,
   active,
   onSelect,
 }: {
   run: DesignRun;
+  project?: Project;
   active: boolean;
   onSelect: () => void;
 }) {
@@ -174,13 +186,35 @@ function ProjectCard({
   const curPhase = run.phases[activeIdx];
   const state = curPhase ? phaseState(curPhase) : "approved";
 
+  // Nombre del proyecto: del Project si está vinculado, si no la primera palabra del idea.
+  const displayName =
+    project?.name ??
+    (run.idea.split(" ").slice(0, 4).join(" ") + (run.idea.split(" ").length > 4 ? "…" : ""));
+
+  // Etiqueta corta del repo: "owner/repo" extraída de la URL https.
+  const repoLabel = (run.repo ?? project?.repo ?? "")
+    .replace(/^https?:\/\/[^/]+\//, "")
+    .replace(/\.git$/, "");
+  const repoHref = run.repo ?? project?.repo ?? "";
+
   return (
     <button
       className={`proj-card${active ? " active" : ""}`}
       onClick={onSelect}
       aria-pressed={active}
     >
-      <div className="proj-idea">{run.idea}</div>
+      <div className="proj-name">{displayName}</div>
+      {repoLabel && (
+        <a
+          className="proj-repo"
+          href={repoHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          ↗ {repoLabel}
+        </a>
+      )}
       <div className="proj-meta">
         <span className={`proj-dot ${state}`} />
         <span className="proj-progress">
@@ -455,9 +489,12 @@ function NewProjectModal({
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
-  const [idea, setIdea] = useState("");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const create = useCreateDesignRun();
+  const [busy, setBusy] = useState(false);
+  const createProject = useCreateProject();
+  const createDesignRun = useCreateDesignRun();
 
   // Cerrar con Escape.
   useEffect(() => {
@@ -471,16 +508,36 @@ function NewProjectModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const text = idea.trim();
-    if (!text) {
-      setError("Escribe una descripción del producto.");
+    const trimmedName = name.trim();
+    const trimmedDesc = description.trim();
+    if (!trimmedName) {
+      setError("El nombre del proyecto es obligatorio.");
       return;
     }
+    if (!trimmedDesc) {
+      setError("Escribe una descripción / idea del producto.");
+      return;
+    }
+    setBusy(true);
     try {
-      const run = await create.mutateAsync(text);
+      // 1. Crear el proyecto (crea el repo en GitHub).
+      const proj = await createProject.mutateAsync({ name: trimmedName, description: trimmedDesc });
+      // 2. Iniciar el run de diseño vinculado al proyecto.
+      const run = await createDesignRun.mutateAsync({
+        project_id: proj.id,
+        repo: proj.repo,
+        instructions: trimmedDesc,
+      });
       onCreated(run.id);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      // 409 = repo ya existe — lo mostramos inline de forma más amable.
+      if (err instanceof ApiError && err.status === 409) {
+        setError(`El repositorio "${trimmedName}" ya existe. Elige otro nombre.`);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -494,15 +551,27 @@ function NewProjectModal({
       </div>
       <form className="mb" onSubmit={handleSubmit}>
         <div className="field">
-          <label htmlFor="np-idea">Idea del producto</label>
+          <label htmlFor="np-name">Nombre del proyecto</label>
+          <input
+            id="np-name"
+            type="text"
+            className="inp"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="tareas-app"
+            autoFocus
+            required
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="np-desc">Descripción / idea</label>
           <textarea
-            id="np-idea"
+            id="np-desc"
             className="inp"
             style={{ resize: "vertical", minHeight: 96 }}
-            value={idea}
-            onChange={(e) => setIdea(e.target.value)}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
             placeholder="Describe tu producto en 1-3 frases: qué problema resuelve, para quién, qué lo hace diferente."
-            autoFocus
             required
           />
         </div>
@@ -531,9 +600,9 @@ function NewProjectModal({
             type="submit"
             className="btn primary"
             style={{ flex: 1 }}
-            disabled={create.isPending}
+            disabled={busy}
           >
-            {create.isPending ? "Creando…" : "Iniciar diseño"}
+            {busy ? "Creando…" : "Crear y diseñar"}
           </button>
         </div>
       </form>

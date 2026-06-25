@@ -204,6 +204,19 @@ export interface DesignRun {
   idea: string;        // .payload.instructions — la descripción del proyecto
   created_at: number;  // epoch ms
   phases: DesignPhase[];
+  project_id?: string; // .payload.project_id — vincula al proyecto GitHub
+  repo?: string;       // .payload.repo — URL https del repo
+}
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+// POST /projects → { id, name, description, repo }
+// GET  /projects → { projects: Project[] }
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  repo: string; // GitHub https URL
 }
 
 // ── Tickets (from orchestrator) ───────────────────────────────────────────────
