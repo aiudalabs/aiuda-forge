@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"vibeforge-kernel/internal/store"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/store"
+	"forge/internal/workflow"
 )
 
 // VerifyRunner implements the `agentic_verify` step type: it spawns a FRESH

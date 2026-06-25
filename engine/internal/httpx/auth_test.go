@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"vibeforge-kernel/internal/httpx"
+	"forge/internal/httpx"
 )
 
 func okHandler(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }

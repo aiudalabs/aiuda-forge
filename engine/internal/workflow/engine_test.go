@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"vibeforge-kernel/internal/store"
+	"forge/internal/store"
 )
 
 func newEngine(t *testing.T, loader Loader) *Engine {

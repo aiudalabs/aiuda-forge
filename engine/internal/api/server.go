@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"vibeforge-kernel/internal/settings"
-	"vibeforge-kernel/internal/store"
-	"vibeforge-kernel/internal/tickets"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/settings"
+	"forge/internal/store"
+	"forge/internal/tickets"
+	"forge/internal/workflow"
 )
 
 // Server wires the store, the executor engine, the event bus, the registry,

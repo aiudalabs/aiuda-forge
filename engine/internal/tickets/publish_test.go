@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vibeforge-kernel/internal/tickets"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/tickets"
+	"forge/internal/workflow"
 )
 
 // fixture is the canonical backlog.yaml the scrum-master persona produces.

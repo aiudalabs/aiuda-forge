@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"vibeforge-kernel/internal/agent"
-	"vibeforge-kernel/internal/store"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/agent"
+	"forge/internal/store"
+	"forge/internal/workflow"
 
 	"gopkg.in/yaml.v3"
 )

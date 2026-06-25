@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibeforge-kernel/internal/sandbox"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/sandbox"
+	"forge/internal/workflow"
 )
 
 // HardenedRunner implements workflow.Runner for the `gate` step type with the

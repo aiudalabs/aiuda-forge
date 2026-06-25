@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"vibeforge-kernel/internal/sandbox"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/sandbox"
+	"forge/internal/workflow"
 )
 
 // StepRunner implements workflow.Runner for the `agent` step type. It loads the

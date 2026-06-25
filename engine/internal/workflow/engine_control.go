@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"vibeforge-kernel/internal/store"
+	"forge/internal/store"
 )
 
 // ReportStep records a worker's result for a claimed task (enforcing its fence)

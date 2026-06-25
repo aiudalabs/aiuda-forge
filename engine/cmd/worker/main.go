@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"vibeforge-kernel/internal/app"
+	"forge/internal/app"
 )
 
 func main() {

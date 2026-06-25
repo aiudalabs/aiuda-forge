@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"vibeforge-kernel/internal/agent"
-	"vibeforge-kernel/internal/app"
-	"vibeforge-kernel/internal/gate"
+	"forge/internal/agent"
+	"forge/internal/app"
+	"forge/internal/gate"
 )
 
 // testKernel builds an in-process kernel wired to the repo's real registry, with

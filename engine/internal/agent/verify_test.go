@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"vibeforge-kernel/internal/store"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/store"
+	"forge/internal/workflow"
 )
 
 // scriptedBackend returns "broken" for the first N verify calls, then "works".

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vibeforge-kernel/internal/tickets"
+	"forge/internal/tickets"
 )
 
 func openTemp(t *testing.T) *tickets.Store {

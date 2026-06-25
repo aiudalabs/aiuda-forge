@@ -17,11 +17,11 @@ import (
 	"os/exec"
 	"time"
 
-	"vibeforge-kernel/internal/agent"
-	"vibeforge-kernel/internal/app"
-	"vibeforge-kernel/internal/gate"
-	"vibeforge-kernel/internal/httpx"
-	"vibeforge-kernel/internal/store"
+	"forge/internal/agent"
+	"forge/internal/app"
+	"forge/internal/gate"
+	"forge/internal/httpx"
+	"forge/internal/store"
 )
 
 func main() {

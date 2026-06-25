@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/workflow"
 )
 
 func git(t *testing.T, dir string, args ...string) {

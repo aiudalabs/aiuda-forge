@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vibeforge-kernel/internal/sandbox"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/sandbox"
+	"forge/internal/workflow"
 )
 
 // setupRun creates the conventional workdir layout (root/<runID>) with a gate

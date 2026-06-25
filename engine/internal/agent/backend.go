@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"vibeforge-kernel/internal/sandbox"
+	"forge/internal/sandbox"
 )
 
 // AuthMode selects how the child agent process authenticates.

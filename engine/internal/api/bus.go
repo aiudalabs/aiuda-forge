@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"vibeforge-kernel/internal/store"
+	"forge/internal/store"
 )
 
 // Bus fans out persisted events to live subscribers (WebSocket). It is a TAIL of

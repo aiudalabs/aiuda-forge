@@ -23,8 +23,8 @@ import (
 	"syscall"
 	"time"
 
-	"vibeforge-kernel/internal/httpx"
-	"vibeforge-kernel/internal/studio"
+	"forge/internal/httpx"
+	"forge/internal/studio"
 )
 
 func main() {

@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/workflow"
 )
 
 // Runner implements workflow.Runner for `pr` steps.

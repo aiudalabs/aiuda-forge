@@ -3,7 +3,7 @@ package agent
 import (
 	"os"
 
-	"vibeforge-kernel/internal/sandbox"
+	"forge/internal/sandbox"
 )
 
 // SandboxSentinelAPIKey is a NON-SECRET placeholder. The claude CLI requires

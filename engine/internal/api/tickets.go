@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"vibeforge-kernel/internal/tickets"
+	"forge/internal/tickets"
 )
 
 // ---- Epics ------------------------------------------------------------------

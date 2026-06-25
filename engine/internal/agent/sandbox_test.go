@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vibeforge-kernel/internal/sandbox"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/sandbox"
+	"forge/internal/workflow"
 )
 
 // TestEgressEnvSecretsAndCredential (the "3 that matter" #2): the agent container

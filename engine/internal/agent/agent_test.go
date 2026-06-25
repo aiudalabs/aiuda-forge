@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vibeforge-kernel/internal/store"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/store"
+	"forge/internal/workflow"
 )
 
 // recordingBackend captures the last Options it was called with (to assert

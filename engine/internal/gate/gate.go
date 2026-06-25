@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"vibeforge-kernel/internal/sandbox"
+	"forge/internal/sandbox"
 )
 
 var (

@@ -37,8 +37,8 @@ import (
 	"syscall"
 	"time"
 
-	"vibeforge-kernel/internal/httpx"
-	"vibeforge-kernel/internal/orchestrator"
+	"forge/internal/httpx"
+	"forge/internal/orchestrator"
 )
 
 func main() {

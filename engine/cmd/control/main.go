@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"vibeforge-kernel/internal/agent"
-	"vibeforge-kernel/internal/app"
-	"vibeforge-kernel/internal/gate"
-	"vibeforge-kernel/internal/httpx"
+	"forge/internal/agent"
+	"forge/internal/app"
+	"forge/internal/gate"
+	"forge/internal/httpx"
 )
 
 func main() {

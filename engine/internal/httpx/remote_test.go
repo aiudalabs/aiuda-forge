@@ -3,7 +3,7 @@ package httpx_test
 import (
 	"testing"
 
-	"vibeforge-kernel/internal/httpx"
+	"forge/internal/httpx"
 )
 
 func TestValidateRemote(t *testing.T) {

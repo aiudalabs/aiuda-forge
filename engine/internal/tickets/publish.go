@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/workflow"
 )
 
 // BacklogFile is the parsed representation of docs/backlog.yaml produced by the

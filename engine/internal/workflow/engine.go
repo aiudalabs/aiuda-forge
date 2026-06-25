@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"vibeforge-kernel/internal/store"
+	"forge/internal/store"
 )
 
 // Loader resolves a workflow id to its parsed manifest.

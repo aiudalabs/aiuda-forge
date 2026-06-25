@@ -1,4 +1,4 @@
-module vibeforge-kernel
+module forge
 
 go 1.25.0
 

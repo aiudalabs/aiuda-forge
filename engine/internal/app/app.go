@@ -10,14 +10,14 @@ import (
 	"os"
 	"time"
 
-	"vibeforge-kernel/internal/agent"
-	"vibeforge-kernel/internal/api"
-	"vibeforge-kernel/internal/gate"
-	"vibeforge-kernel/internal/pr"
-	"vibeforge-kernel/internal/sandbox"
-	"vibeforge-kernel/internal/store"
-	"vibeforge-kernel/internal/tickets"
-	"vibeforge-kernel/internal/workflow"
+	"forge/internal/agent"
+	"forge/internal/api"
+	"forge/internal/gate"
+	"forge/internal/pr"
+	"forge/internal/sandbox"
+	"forge/internal/store"
+	"forge/internal/tickets"
+	"forge/internal/workflow"
 )
 
 // Config configures an assembled kernel.
