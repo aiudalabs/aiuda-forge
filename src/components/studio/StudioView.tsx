@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useArtifact,
   useApprove,
@@ -339,7 +340,7 @@ function PhasePanel({
 
         {hasArtifact && artifactText && (
           <div className="artifact-md">
-            <ReactMarkdown>{artifactText}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactText}</ReactMarkdown>
           </div>
         )}
       </div>

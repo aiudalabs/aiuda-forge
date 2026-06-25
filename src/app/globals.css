@@ -831,6 +831,30 @@ header.top .sp {
   padding: 0;
 }
 .artifact-md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+}
+.artifact-md th,
+.artifact-md td {
+  border: 1px solid var(--stroke);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.artifact-md th {
+  background: var(--bg2);
+  font-weight: 700;
+  color: var(--ink);
+}
+.artifact-md blockquote {
+  border-left: 3px solid var(--stroke);
+  padding-left: 12px;
+  color: var(--ink3);
+  margin: 0 0 10px;
+}
+.artifact-md table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
