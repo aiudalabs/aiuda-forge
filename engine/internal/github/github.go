@@ -45,7 +45,9 @@ var ErrRepoExists = errors.New("repository already exists")
 // If the repo already exists it returns ErrRepoExists (not a crash).
 func (c *Client) CreateRepo(ctx context.Context, org, name, description string, private bool) (string, error) {
 	slug := org + "/" + name
-	args := []string{"repo", "create", slug, "--description", description}
+	// --add-readme seeds an initial commit so `main` exists — otherwise the repo
+	// is empty and EnsureDevBranch has no base branch to fork `dev` from.
+	args := []string{"repo", "create", slug, "--description", description, "--add-readme"}
 	if private {
 		args = append(args, "--private")
 	} else {
