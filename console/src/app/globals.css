@@ -103,6 +103,9 @@ button {
   color: var(--accent);
   font-weight: 400;
 }
+.logo .word {
+  display: inline-flex; /* un solo flex-item: el gap del .logo no separa ai/uda */
+}
 .logo .ai {
   color: var(--accent);
 }

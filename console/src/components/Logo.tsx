@@ -5,8 +5,10 @@ export function Logo() {
   return (
     <div className="logo" aria-label="aiuda labs">
       <span className="b">&lt;</span>
-      <span className="ai">ai</span>
-      <span className="uda">uda</span>
+      <span className="word">
+        <span className="ai">ai</span>
+        <span className="uda">uda</span>
+      </span>
       <span className="b">/&gt;</span>
       <span className="labs">labs</span>
     </div>
