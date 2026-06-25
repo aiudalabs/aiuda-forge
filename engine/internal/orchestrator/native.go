@@ -37,6 +37,18 @@ type StoryProvider interface {
 	// MarkFailed advances a story to failed when its run ends in a terminal
 	// non-DONE state (FAILED, CANCELLED) so it does not stay stuck.
 	MarkFailed(ctx context.Context, id string) error
+	// GetStory fetches the full story (body, acceptance, owner) so the fired run
+	// carries the complete context — not just the title.
+	GetStory(ctx context.Context, id string) (NativeStory, error)
+}
+
+// NativeStory is the full story the scheduler passes to a run as context.
+type NativeStory struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Accept string `json:"acceptance"`
+	Owner  string `json:"owner"`
 }
 
 // NativeHTTPProvider implements StoryProvider against the control-plane HTTP API.
@@ -145,6 +157,27 @@ func (p *NativeHTTPProvider) MarkDone(ctx context.Context, id string) error {
 // MarkFailed PUTs /stories/{id}/status with status=failed.
 func (p *NativeHTTPProvider) MarkFailed(ctx context.Context, id string) error {
 	return p.putStatus(ctx, id, storyStatusReq{Status: "failed"})
+}
+
+// GetStory GETs /stories/{id} and returns the full story.
+func (p *NativeHTTPProvider) GetStory(ctx context.Context, id string) (NativeStory, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/stories/"+id, nil)
+	if err != nil {
+		return NativeStory{}, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return NativeStory{}, fmt.Errorf("get /stories/%s: %w", id, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return NativeStory{}, fmt.Errorf("get /stories/%s: status %d", id, resp.StatusCode)
+	}
+	var st NativeStory
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return NativeStory{}, fmt.Errorf("decode story: %w", err)
+	}
+	return st, nil
 }
 
 func (p *NativeHTTPProvider) putStatus(ctx context.Context, id string, payload storyStatusReq) error {
@@ -268,10 +301,24 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 			continue
 		}
 
+		// Build a rich ticket from the full story (title + body + acceptance) so the
+		// implementing agent has the complete context, and a short `title` so the UI
+		// doesn't show the whole description as the run title.
+		title, ticket := t.Title, t.Title
+		if st, gerr := s.provider.GetStory(ctx, t.ID); gerr == nil {
+			title = st.Title
+			ticket = st.Title
+			if st.Body != "" {
+				ticket += "\n\n" + st.Body
+			}
+			if st.Accept != "" {
+				ticket += "\n\nAcceptance criteria:\n" + st.Accept
+			}
+		}
 		payload := map[string]any{
 			"story_id": t.ID,
-			"title":    t.Title,
-			"body":     t.Title, // body comes from title for the HTTP provider; extended payloads via richer providers
+			"title":    title,
+			"ticket":   ticket,
 		}
 		runID, err := s.cp.FireRun(ctx, s.workflow, payload)
 		if err != nil {

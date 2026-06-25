@@ -136,14 +136,23 @@ interface KernelRun {
 function mapRun(r: KernelRun): Run {
   let issue: number | undefined;
   let ticketText = "";
+  let shortTitle = "";
   try {
     const p = JSON.parse(r.payload ?? "{}");
     issue = typeof p.issue === "number" ? p.issue : undefined;
     ticketText = typeof p.ticket === "string" ? p.ticket : "";
+    // Un título corto explícito (payload.title, de las stories) gana sobre la
+    // primera línea del ticket — así una descripción larga no se vuelve el título.
+    if (typeof p.title === "string") shortTitle = p.title;
   } catch {
     /* payload no-JSON: lo dejamos vacío */
   }
-  const title = ticketText.split("\n")[0] || r.workflow_id || r.id;
+  const firstLine = ticketText.split("\n")[0] ?? "";
+  const title =
+    shortTitle ||
+    (firstLine.length > 80 ? firstLine.slice(0, 79) + "…" : firstLine) ||
+    r.workflow_id ||
+    r.id;
   return {
     id: r.id,
     ticket: { id: issue ? `#${issue}` : r.id.slice(0, 11), title },

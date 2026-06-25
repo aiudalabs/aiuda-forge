@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -116,6 +117,17 @@ func (p *fakeStoryProvider) MarkFailed(_ context.Context, id string) error {
 	s.status = "failed"
 	s.runID = ""
 	return nil
+}
+
+// GetStory returns a minimal story (title only) for the fake.
+func (p *fakeStoryProvider) GetStory(_ context.Context, id string) (NativeStory, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.stories[id]
+	if !ok {
+		return NativeStory{}, fmt.Errorf("story %s not found", id)
+	}
+	return NativeStory{ID: id, Title: s.title}, nil
 }
 
 // statusOf returns a story's current status (test helper).

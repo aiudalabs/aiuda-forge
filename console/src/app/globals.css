@@ -370,6 +370,11 @@ header.top .sp {
   font-weight: 700;
   font-size: 15px;
   margin-top: 1px;
+  /* Clamp a 2 líneas: una descripción larga no debe dominar la card. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .run .meta {
   display: flex;
