@@ -8,6 +8,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -70,6 +71,8 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /registry/{kind}/{id}", s.putRegistry)
 	m.HandleFunc("POST /registry/{kind}/{id}", s.putRegistry)
 	m.HandleFunc("DELETE /registry/{kind}/{id}", s.delRegistry)
+	// Persona sidecar for agents: the <id>.md file next to the <id>.yaml manifest.
+	m.HandleFunc("GET /registry/agents/{id}/persona", s.getAgentPersona)
 	// settings (MCP connections, agent auth, sandbox, merge policy) — secrets masked.
 	m.HandleFunc("GET /settings", s.getSettings)
 	m.HandleFunc("PUT /settings", s.putSettings)
@@ -372,6 +375,29 @@ func (s *Server) delRegistry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deleteRegistryFile(w, path)
+}
+
+// getAgentPersona serves the markdown persona sidecar (<id>.md) for an agent.
+// Returns 200 with the file body (text/plain) or 404 if the sidecar is absent.
+// Uses the same path-traversal guard as pathFor so id can never escape the registry.
+func (s *Server) getAgentPersona(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	// Resolve and validate via pathFor (agents kind) to get the traversal-safe
+	// path to the .yaml manifest, then swap the extension.
+	yamlPath, ok := s.Registry.pathFor("agents", id)
+	if !ok {
+		httpErr(w, http.StatusNotFound, "unknown agent id")
+		return
+	}
+	mdPath := yamlPath[:len(yamlPath)-len(".yaml")] + ".md"
+	b, err := os.ReadFile(mdPath)
+	if err != nil {
+		httpErr(w, http.StatusNotFound, "persona not found")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
 }
 
 // ---- settings ---------------------------------------------------------------

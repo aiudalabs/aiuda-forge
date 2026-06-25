@@ -104,6 +104,34 @@ func TestRegistryValidation(t *testing.T) {
 	}
 }
 
+// TestAgentPersona: GET /registry/agents/{id}/persona returns the .md sidecar
+// (200 with content) for a known agent and 404 for an unknown id.
+// Also validates that a traversal id is rejected before any file I/O.
+func TestAgentPersona(t *testing.T) {
+	base, _, _ := testKernel(t)
+
+	// Known agent with a persona sidecar.
+	resp, data := do(t, "GET", base+"/registry/agents/dev/persona", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /registry/agents/dev/persona = %d: %s", resp.StatusCode, data)
+	}
+	if !strings.Contains(string(data), "Persona") && !strings.Contains(string(data), "dev") {
+		t.Errorf("persona body looks empty or wrong: %s", data)
+	}
+
+	// Non-existent agent id → 404.
+	resp, _ = do(t, "GET", base+"/registry/agents/no-such-agent/persona", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown agent persona expected 404, got %d", resp.StatusCode)
+	}
+
+	// Traversal id must not escape the registry root.
+	resp, _ = putRaw(t, "GET", base+"/registry/agents/..%2f..%2fetc%2fpasswd/persona", "")
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("traversal persona expected 404/400, got %d", resp.StatusCode)
+	}
+}
+
 // TestRegistryUnknownKind: a bogus kind 404s (no silent file path traversal).
 func TestRegistryUnknownKind(t *testing.T) {
 	base, _, _ := testKernel(t)
