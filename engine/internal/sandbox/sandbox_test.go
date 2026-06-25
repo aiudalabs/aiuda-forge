@@ -159,6 +159,41 @@ func TestCopyTreeNoGit(t *testing.T) {
 	}
 }
 
+// TestCopyTreePreservesSymlinks: a symlink (e.g. a venv's bin/python ->
+// /usr/bin/python3) must be copied AS a symlink, never dereferenced — otherwise
+// the host interpreter is baked into the tree and the gate container fails with
+// "Exec format error".
+func TestCopyTreePreservesSymlinks(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "real.txt"), "hello")
+	// An ABSOLUTE symlink to a path that exists in the (linux) container but not
+	// necessarily on the host — the point is it must survive as a symlink.
+	if err := os.Symlink("/usr/bin/python3", filepath.Join(src, "pylink")); err != nil {
+		t.Fatal(err)
+	}
+	// A relative symlink within the tree.
+	if err := os.Symlink("real.txt", filepath.Join(src, "rellink")); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "work")
+	if err := CopyTreeNoGit(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pylink", "rellink"} {
+		fi, err := os.Lstat(filepath.Join(dst, name))
+		if err != nil {
+			t.Fatalf("%s should exist: %v", name, err)
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s must remain a symlink, was dereferenced into a regular file", name)
+		}
+	}
+	if got, _ := os.Readlink(filepath.Join(dst, "pylink")); got != "/usr/bin/python3" {
+		t.Fatalf("pylink target: got %q, want /usr/bin/python3", got)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -253,8 +253,30 @@ func CopyTreeNoGit(src, dst string) error {
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
+		// Preserve symlinks AS symlinks — do NOT dereference. A virtualenv's
+		// bin/python is a symlink to /usr/bin/python3; following it here (on the
+		// host) would copy the HOST's interpreter into the tree, so the gate's
+		// Linux container then fails with "Exec format error". Kept as a symlink,
+		// it resolves to the gate container's own python instead.
+		if entry.Type()&os.ModeSymlink != 0 {
+			return copySymlink(path, target)
+		}
 		return copyFile(path, target)
 	})
+}
+
+// copySymlink recreates the symlink at src (pointing at the same target) at dst,
+// without following it.
+func copySymlink(src, dst string) error {
+	link, err := os.Readlink(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(dst) // O_CREATE on a symlink would follow it; ensure a clean slot
+	return os.Symlink(link, dst)
 }
 
 // SyncBack propagates the agent's edits from its .git-less worktree (src) back
