@@ -167,6 +167,15 @@ export function useRegistryItem(kind: RegistryKind, id: string | null) {
   });
 }
 
+export function useAgentPersona(id: string | null) {
+  return useQuery({
+    queryKey: id ? ["agentPersona", id] : ["agentPersona", "none"],
+    queryFn: () => api.getAgentPersona(id as string),
+    enabled: !!id,
+    staleTime: 60_000,
+  });
+}
+
 export function useSaveRegistryItem(kind: RegistryKind) {
   const qc = useQueryClient();
   return useMutation({

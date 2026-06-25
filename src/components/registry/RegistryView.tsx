@@ -5,13 +5,22 @@
 // Modo mock: cae a datos de ejemplo de lib/mock cuando la API no responde.
 
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
+import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
+import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import {
+  useAgentPersona,
   useDeleteRegistryItem,
   useRegistryItem,
   useRegistryList,
   useSaveRegistryItem,
 } from "@/lib/hooks";
 import type { RegistryKind } from "@/lib/types";
+
+// Register only the YAML language to keep the bundle minimal.
+SyntaxHighlighter.registerLanguage("yaml", yaml);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos locales
@@ -165,7 +174,91 @@ function ItemCard({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Modal editor de ítem (YAML / markdown crudo)
+// Vista renderizada — YAML resaltado o markdown según kind
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RenderedView({
+  kind,
+  id,
+  content,
+}: {
+  kind: RegistryKind;
+  id: string;
+  content: string;
+}) {
+  // Persona del agente (solo para agents).
+  const { data: persona } = useAgentPersona(kind === "agents" ? id : null);
+
+  if (kind === "skills") {
+    // Skills son markdown puro.
+    return (
+      <div className="artifact-md" style={{ maxHeight: 460, overflowY: "auto" }}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  // Agents y workflows: YAML resaltado.
+  return (
+    <div>
+      <div className="reg-code-block">
+        <SyntaxHighlighter
+          language="yaml"
+          style={githubGist}
+          customStyle={{
+            background: "var(--bg2)",
+            border: "1px solid var(--stroke)",
+            borderRadius: "var(--r)",
+            fontSize: 12,
+            lineHeight: 1.6,
+            margin: 0,
+            padding: "12px 14px",
+            overflowX: "auto",
+            maxHeight: 320,
+            fontFamily: "var(--mono)",
+          }}
+          wrapLongLines={false}
+        >
+          {content}
+        </SyntaxHighlighter>
+      </div>
+
+      {/* Persona del agente: markdown bajo el YAML */}
+      {kind === "agents" && persona && (
+        <div style={{ marginTop: 16 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: "var(--ink4)",
+              marginBottom: 8,
+            }}
+          >
+            Persona
+          </div>
+          <div
+            className="artifact-md"
+            style={{
+              background: "var(--bg2)",
+              border: "1px solid var(--stroke)",
+              borderRadius: "var(--r)",
+              maxHeight: 260,
+              overflowY: "auto",
+              padding: "12px 14px",
+            }}
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{persona}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modal editor de ítem — con toggle vista/edición
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ItemEditorModal({
@@ -185,11 +278,22 @@ function ItemEditorModal({
   const [idInput, setIdInput] = useState(initialId);
   const [body, setBody] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Default: rendered view; switch to edit only on demand.
+  const [editMode, setEditMode] = useState(isNew);
 
   // Cuando llega el contenido del servidor, lo ponemos en el editor.
   useEffect(() => {
     if (remoteContent !== undefined) setBody(remoteContent);
   }, [remoteContent]);
+
+  // Cierra con Escape.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   async function handleSave() {
     setSaveError(null);
@@ -200,7 +304,7 @@ function ItemEditorModal({
     }
     try {
       await save.mutateAsync({ id: targetId, body });
-      onClose();
+      setEditMode(false); // vuelve a la vista renderizada tras guardar
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setSaveError(msg);
@@ -210,12 +314,23 @@ function ItemEditorModal({
   const kindLabel = kind === "agents" ? "agente" : kind === "skills" ? "skill" : "workflow";
 
   return (
-    <div className="modal on">
+    <div className="modal on" role="dialog" aria-label={`${isNew ? "Nuevo" : "Editar"} ${kindLabel}`}>
       <div className="mh">
-        <h3>{isNew ? `Nuevo ${kindLabel}` : `Editar ${kindLabel} · ${initialId}`}</h3>
-        <button className="x" onClick={onClose}>
-          ✕
-        </button>
+        <h3>{isNew ? `Nuevo ${kindLabel}` : `${kindLabel} · ${initialId}`}</h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {/* Toggle vista/edición — solo en ítems existentes */}
+          {!isNew && (
+            <button
+              className={`btn ghost sm${editMode ? " on" : ""}`}
+              onClick={() => setEditMode((v) => !v)}
+            >
+              {editMode ? "Ver" : "Editar"}
+            </button>
+          )}
+          <button className="x" onClick={onClose} aria-label="Cerrar">
+            ✕
+          </button>
+        </div>
       </div>
       <div className="mb">
         {isNew && (
@@ -236,13 +351,15 @@ function ItemEditorModal({
           </label>
           {isLoading ? (
             <div style={{ padding: 12, color: "var(--ink4)" }}>Cargando…</div>
-          ) : (
+          ) : editMode ? (
             <textarea
               className="inp mono"
               style={{ minHeight: 280, resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
               value={body}
               onChange={(e) => setBody(e.target.value)}
             />
+          ) : (
+            <RenderedView kind={kind} id={initialId} content={body} />
           )}
         </div>
 
@@ -263,23 +380,27 @@ function ItemEditorModal({
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-          <button className="btn ghost" style={{ flex: 1 }} onClick={onClose}>
-            Cancelar
-          </button>
-          <button
-            className="btn primary"
-            style={{ flex: 1 }}
-            onClick={handleSave}
-            disabled={save.isPending || isLoading}
-          >
-            {save.isPending ? "Guardando…" : "Validar y guardar"}
-          </button>
-        </div>
-        <p style={{ fontSize: 12, color: "var(--ink4)", marginTop: 12 }}>
-          El servidor valida el schema; si el cuerpo es inválido verás el error arriba.
-          Los cambios son efectivos en el próximo run.
-        </p>
+        {editMode && (
+          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+            <button className="btn ghost" style={{ flex: 1 }} onClick={onClose}>
+              Cancelar
+            </button>
+            <button
+              className="btn primary"
+              style={{ flex: 1 }}
+              onClick={handleSave}
+              disabled={save.isPending || isLoading}
+            >
+              {save.isPending ? "Guardando…" : "Validar y guardar"}
+            </button>
+          </div>
+        )}
+        {editMode && (
+          <p style={{ fontSize: 12, color: "var(--ink4)", marginTop: 12 }}>
+            El servidor valida el schema; si el cuerpo es inválido verás el error arriba.
+            Los cambios son efectivos en el próximo run.
+          </p>
+        )}
       </div>
     </div>
   );

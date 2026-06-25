@@ -431,6 +431,22 @@ export async function saveRegistryItem(kind: RegistryKind, id: string, body: str
   return (await res.json()) as RegistrySaveResponse;
 }
 
+/** Persona sidecar para un agente: GET /registry/agents/{id}/persona.
+ *  Devuelve el markdown de <id>.md; cadena vacía si el sidecar no existe (404). */
+export async function getAgentPersona(id: string): Promise<string> {
+  if (await isMock()) {
+    // En modo mock no hay sidecars — devolvemos vacío para no bloquear la vista.
+    return "";
+  }
+  const res = await fetch(`${API_URL}/registry/agents/${encodeURIComponent(id)}/persona`);
+  if (res.status === 404) return "";
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(res.status, `GET /registry/agents/${id}/persona → ${res.status} ${body}`);
+  }
+  return res.text();
+}
+
 export async function deleteRegistryItem(kind: RegistryKind, id: string): Promise<RegistryDeleteResponse> {
   if (await isMock()) {
     const idx = mockRegistryIds[kind]?.indexOf(id) ?? -1;
