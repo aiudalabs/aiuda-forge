@@ -15,14 +15,21 @@ import (
 // BacklogFile is the parsed representation of docs/backlog.yaml produced by the
 // scrum-master design phase. All fields map 1:1 to the native ticket store.
 type BacklogFile struct {
-	Epic    backlogEpic    `yaml:"epic"`
-	Stories []backlogStory `yaml:"stories"`
+	Epic    backlogEpic     `yaml:"epic"`
+	Sprints []backlogSprint `yaml:"sprints"`
+	Stories []backlogStory  `yaml:"stories"`
 }
 
 type backlogEpic struct {
 	ID          string `yaml:"id"`
 	Title       string `yaml:"title"`
 	Description string `yaml:"description"`
+}
+
+type backlogSprint struct {
+	ID   string `yaml:"id"`
+	Name string `yaml:"name"`
+	Goal string `yaml:"goal"`
 }
 
 type backlogStory struct {
@@ -90,6 +97,37 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		}
 	}
 
+	// Materialize sprints BEFORE stories: the sprint-batched scheduler fires by
+	// sprint (ReadySprints iterates the sprints table), so a story's sprint_id is
+	// inert unless the Sprint row exists. Create from the explicit `sprints:`
+	// section first, then derive any sprint_id referenced by a story but not
+	// declared (name defaults to the id). Idempotent — existing rows are skipped.
+	declared := map[string]bool{}
+	for _, sp := range bf.Sprints {
+		if sp.ID == "" {
+			continue
+		}
+		if err := r.createSprint(sp.ID, sp.Name, sp.Goal); err != nil {
+			return workflow.StepResult{
+				Success: false,
+				Detail:  fmt.Sprintf("ticket_publish: create sprint %s: %v", sp.ID, err),
+			}, nil
+		}
+		declared[sp.ID] = true
+	}
+	for _, s := range bf.Stories {
+		if s.SprintID == "" || declared[s.SprintID] {
+			continue
+		}
+		if err := r.createSprint(s.SprintID, s.SprintID, ""); err != nil {
+			return workflow.StepResult{
+				Success: false,
+				Detail:  fmt.Sprintf("ticket_publish: derive sprint %s: %v", s.SprintID, err),
+			}, nil
+		}
+		declared[s.SprintID] = true
+	}
+
 	created, skipped := 0, 0
 	for _, s := range bf.Stories {
 		if s.ID == "" {
@@ -124,11 +162,24 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		Success: true,
 		Output: map[string]any{
 			"epic":    bf.Epic.ID,
+			"sprints": len(declared),
 			"created": created,
 			"skipped": skipped,
 		},
-		Detail: fmt.Sprintf("ticket_publish: epic=%s created=%d skipped=%d", bf.Epic.ID, created, skipped),
+		Detail: fmt.Sprintf("ticket_publish: epic=%s sprints=%d created=%d skipped=%d", bf.Epic.ID, len(declared), created, skipped),
 	}, nil
+}
+
+// createSprint inserts a sprint, treating an "already exists" UNIQUE conflict as
+// success so republishing a backlog is idempotent.
+func (r *PublishRunner) createSprint(id, name, goal string) error {
+	if name == "" {
+		name = id
+	}
+	if err := r.Store.CreateSprint(Sprint{ID: id, Name: name, Goal: goal}); err != nil && !isSQLiteConflict(err) {
+		return err
+	}
+	return nil
 }
 
 // isSQLiteConflict reports whether err is a SQLite UNIQUE constraint violation

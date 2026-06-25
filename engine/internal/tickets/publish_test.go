@@ -107,6 +107,88 @@ func TestPublishRunnerHappyPath(t *testing.T) {
 	}
 }
 
+// TestPublishRunnerDerivesSprints: a backlog with sprint_id but NO `sprints:`
+// section must still materialize the Sprint rows, otherwise sprint-batched mode
+// (ReadySprints iterates the sprints table) would never fire.
+func TestPublishRunnerDerivesSprints(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	writeBacklog(t, workdir, "docs/backlog.yaml", fixture)
+
+	res := runPublish(t, st, workdir, nil)
+	if !res.Success {
+		t.Fatalf("expected success, got detail: %s", res.Detail)
+	}
+	if res.Output["sprints"] != 1 {
+		t.Errorf("output sprints: got %v, want 1", res.Output["sprints"])
+	}
+	sprints, err := st.ListSprints()
+	if err != nil {
+		t.Fatalf("ListSprints: %v", err)
+	}
+	if len(sprints) != 1 || sprints[0].ID != "SP1" {
+		t.Fatalf("derived sprints: got %v, want [SP1]", sprints)
+	}
+	// Name defaults to the id when derived.
+	if sprints[0].Name != "SP1" {
+		t.Errorf("derived sprint name: got %q, want SP1", sprints[0].Name)
+	}
+}
+
+// TestPublishRunnerExplicitSprints: an explicit `sprints:` section carries the
+// name/goal; derivation fills any sprint_id it omits.
+func TestPublishRunnerExplicitSprints(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	const withSprints = `
+epic:
+  id: E1
+  title: "Foundation"
+  description: "Core"
+sprints:
+  - id: SP1
+    name: "Sprint 1 — auth"
+    goal: "Ship login"
+stories:
+  - id: S1-01
+    title: "Auth"
+    body: "b"
+    acceptance: "a"
+    owner: dev
+    sprint_id: SP1
+    deps: []
+  - id: S1-02
+    title: "Profile"
+    body: "b"
+    acceptance: "a"
+    owner: dev
+    sprint_id: SP2
+    deps: [S1-01]
+`
+	writeBacklog(t, workdir, "docs/backlog.yaml", withSprints)
+	res := runPublish(t, st, workdir, nil)
+	if !res.Success {
+		t.Fatalf("expected success, got detail: %s", res.Detail)
+	}
+	if res.Output["sprints"] != 2 {
+		t.Errorf("output sprints: got %v, want 2 (SP1 explicit + SP2 derived)", res.Output["sprints"])
+	}
+	sprints, err := st.ListSprints()
+	if err != nil {
+		t.Fatalf("ListSprints: %v", err)
+	}
+	byID := map[string]tickets.Sprint{}
+	for _, sp := range sprints {
+		byID[sp.ID] = sp
+	}
+	if byID["SP1"].Name != "Sprint 1 — auth" || byID["SP1"].Goal != "Ship login" {
+		t.Errorf("SP1: got %+v, want explicit name/goal", byID["SP1"])
+	}
+	if byID["SP2"].ID != "SP2" {
+		t.Errorf("SP2 not derived from story sprint_id: got %v", sprints)
+	}
+}
+
 // TestPublishRunnerIdempotent: running twice with same fixture must not
 // duplicate rows and must not error.
 func TestPublishRunnerIdempotent(t *testing.T) {

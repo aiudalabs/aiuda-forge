@@ -31,6 +31,20 @@ can implement each story without reading the upstream documents.
      Check for cycles (A→B and B→A means one must be split).
    - Waves are implicit in the DAG: wave 1 = stories with no deps; a story's wave is
      strictly greater than all its dependencies'. Keep wave 1 large enough for parallel work.
+   - `sprint_id`: group stories into sprints, where a sprint is ONE coherent, shippable
+     increment — the whole sprint becomes a SINGLE pull request, so its stories must hang
+     together as something a stakeholder can review and demo. Rules that keep sprint mode
+     correct:
+       * **Backward-only deps**: every cross-sprint dependency points to an EARLIER sprint
+         (SP2 may depend on SP1, never the reverse). A sprint fires only once all its external
+         deps are done, so a forward or circular cross-sprint dep would deadlock it.
+       * Order sprints by the wave DAG: wave-1 stories go in SP1; a later sprint never holds a
+         story that an earlier sprint depends on.
+       * Keep a sprint reviewable (~2–6 stories of one coherent feature); split a sprint that
+         mixes unrelated features or is too large to review in one PR.
+       * Prefer ONE lane (owner) per sprint when practical — a single-lane sprint runs as one
+         specialist on one branch. Mixed-lane sprints currently run under the default agent;
+         avoid them unless the feature genuinely spans stacks.
    - Owner: the registry agent id of the SPECIALIST for the lane this story touches —
      this is the lane router that decides which engine implements the story. Pick from the
      architecture's stack and which part of the system the story implements:
@@ -62,6 +76,8 @@ can implement each story without reading the upstream documents.
      every external integration has an integration-layer story; ≥1 story covers observability
      (logging / metrics / health check).
    - Wave 1 contains only stories with no deps; each story's wave > all its deps' waves.
+   - Every sprint a story references is declared in `sprints:`; cross-sprint deps are
+     backward-only (no sprint depends on a later one); each sprint is one coherent increment.
 
 6. **Output MUST be structured YAML** following the exact backlog.yaml contract below.
    The file is machine-parsed by the ticket_publish step — any deviation will fail the run.
@@ -74,6 +90,13 @@ epic:
   id: E1                      # short identifier, e.g. E1
   title: "..."
   description: "..."
+sprints:                      # declare every sprint a story references
+  - id: SP1                   # sprint identifier, e.g. SP1
+    name: "Sprint 1 — ..."    # short coherent-increment name (shown in the UI / PR)
+    goal: "..."               # the demoable outcome this sprint delivers
+  - id: SP2
+    name: "Sprint 2 — ..."
+    goal: "..."
 stories:
   - id: S1-01                 # <EpicID>-<sequence>, e.g. S1-01
     title: "..."
