@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -84,6 +85,10 @@ func main() {
 		if out, err := exec.Command("git", "clone", "--quiet", remote, workdir).CombinedOutput(); err != nil {
 			return fmt.Errorf("clone target: %v: %s", err, out)
 		}
+		// GitHub Flow: base the run's work on `dev` so it includes prior MERGED
+		// sprints (merge-gated deps). If `dev` doesn't exist (older/foreign repos),
+		// fall back to the default branch already checked out and log it.
+		checkoutDev(workdir, remote)
 		return gate.SealWorkdir(workdir)
 	}
 
@@ -113,6 +118,26 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("serve: %v", err)
 	}
+}
+
+// checkoutDev switches the freshly cloned workdir to the `dev` branch so the
+// agent's work is based on dev (which includes prior MERGED sprints). If `dev`
+// does not exist on the remote, the default branch stays checked out and we log
+// the fallback rather than failing the seed.
+func checkoutDev(workdir, remote string) {
+	chk := exec.Command("git", "-C", workdir, "checkout", "dev")
+	if out, err := chk.CombinedOutput(); err != nil {
+		log.Printf("seed: repo %s has no dev branch (%s) — using default branch", remote, exitText(out, err))
+	}
+}
+
+// exitText returns a compact one-line description of a git failure for logging.
+func exitText(out []byte, err error) string {
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return err.Error()
+	}
+	return s
 }
 
 func envOr(key, def string) string {

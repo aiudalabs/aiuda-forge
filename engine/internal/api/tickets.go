@@ -145,6 +145,11 @@ func (s *Server) updateSprintStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.Status {
 	case "": // run_id-only update (record the firing run on a still-running sprint)
+	case tickets.StatusInReview:
+		if err := s.Tickets.MarkSprintInReview(id, req.PRURL); err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	case tickets.StatusDone:
 		if err := s.Tickets.MarkSprintDone(id); err != nil {
 			httpErr(w, http.StatusInternalServerError, err.Error())
@@ -156,7 +161,7 @@ func (s *Server) updateSprintStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		httpErr(w, http.StatusBadRequest, "sprint status must be done or failed")
+		httpErr(w, http.StatusBadRequest, "sprint status must be in_review, done or failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -213,6 +218,9 @@ type updateStatusReq struct {
 	// addition to the status. Used by the native scheduler to record which
 	// control-plane run is executing a story (MarkRunning path).
 	RunID string `json:"run_id,omitempty"`
+	// PRURL is optional: when present (with status=in_review) the story's pr_url
+	// column is recorded so the merge-reconcile loop can check the PR.
+	PRURL string `json:"pr_url,omitempty"`
 }
 
 func (s *Server) updateStoryStatus(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +233,14 @@ func (s *Server) updateStoryStatus(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "status is required")
 		return
 	}
-	if err := s.Tickets.UpdateStoryStatus(id, req.Status); err != nil {
+	// in_review records the PR URL alongside the status so the merge-reconcile
+	// loop can find the PR; other statuses use the plain status update.
+	if req.Status == tickets.StatusInReview {
+		if err := s.Tickets.MarkInReview(id, req.PRURL); err != nil {
+			ticketNotFound(w, err)
+			return
+		}
+	} else if err := s.Tickets.UpdateStoryStatus(id, req.Status); err != nil {
 		ticketNotFound(w, err)
 		return
 	}
@@ -293,6 +308,8 @@ type ticketView struct {
 	Deps     []string `json:"deps"`
 	RunID    string   `json:"run_id,omitempty"`
 	SprintID string   `json:"sprint_id,omitempty"` // lets the scheduler group running stories by sprint
+	PRURL    string   `json:"pr_url,omitempty"`    // recorded in_review; the reconcile loop checks this PR
+	Repo     string   `json:"repo,omitempty"`      // the repo the PR lives in (needed to address it via gh)
 }
 
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
@@ -330,6 +347,8 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			Deps:     deps,
 			RunID:    st.RunID,
 			SprintID: st.SprintID,
+			PRURL:    st.PRURL,
+			Repo:     st.Repo,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": views})

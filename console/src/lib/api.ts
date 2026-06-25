@@ -545,6 +545,7 @@ interface RawSettings {
   sandbox?: { runtime?: string; image?: string; egress?: string };
   merge_policy?: Record<string, string>;
   execution_unit?: string;
+  merge_mode?: string;
 }
 
 function settingsFromBackend(r: RawSettings): SettingsPayload {
@@ -559,6 +560,7 @@ function settingsFromBackend(r: RawSettings): SettingsPayload {
     sandbox: { runtime: r.sandbox?.runtime ?? "", image: r.sandbox?.image ?? "" },
     merge_policy: { low_risk: r.merge_policy?.low ?? "", high_risk: r.merge_policy?.high ?? "" },
     execution_unit: r.execution_unit ?? "sprint",
+    merge_mode: r.merge_mode ?? "manual",
   };
 }
 
@@ -571,6 +573,7 @@ function settingsToBackend(s: SettingsPayload): RawSettings {
     sandbox: { runtime: s.sandbox.runtime, image: s.sandbox.image },
     merge_policy: { low: s.merge_policy.low_risk, high: s.merge_policy.high_risk },
     execution_unit: s.execution_unit,
+    merge_mode: s.merge_mode,
   };
 }
 

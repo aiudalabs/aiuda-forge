@@ -172,6 +172,7 @@ export interface SettingsPayload {
     high_risk: string;  // "human_gate"
   };
   execution_unit: string; // "sprint" (default, 1 PR/sprint) | "story" (1 PR/story)
+  merge_mode: string; // "manual" (default, human merges PR) | "auto" (factory merges)
 }
 
 // ── Metrics / Spend ───────────────────────────────────────────────────────────

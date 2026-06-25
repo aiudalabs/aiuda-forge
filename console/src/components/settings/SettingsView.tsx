@@ -135,6 +135,12 @@ export function SettingsView() {
           unit={form.execution_unit}
           onChange={(execution_unit) => setForm((f) => f ? { ...f, execution_unit } : f)}
         />
+
+        {/* Modo de merge */}
+        <MergeModeSection
+          mode={form.merge_mode}
+          onChange={(merge_mode) => setForm((f) => f ? { ...f, merge_mode } : f)}
+        />
       </div>
     </div>
   );
@@ -271,6 +277,35 @@ function ExecutionUnitSection({
         {unit === "sprint"
           ? "Cada sprint se implementa en un solo run, sobre una rama, como un PR coherente."
           : "Cada story se implementa por separado: un run y un PR por story."}
+      </div>
+    </div>
+  );
+}
+
+function MergeModeSection({
+  mode,
+  onChange,
+}: {
+  mode: SettingsPayload["merge_mode"];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="card">
+      <h3>Modo de merge</h3>
+      <div className="role">
+        Quién hace merge del PR antes de desbloquear los sprints/stories dependientes.
+      </div>
+      <div className="field" style={{ marginTop: 10 }}>
+        <label>Modo</label>
+        <select className="inp" value={mode} onChange={(e) => onChange(e.target.value)}>
+          <option value="manual">manual — un humano hace merge en GitHub</option>
+          <option value="auto">auto — la fábrica hace merge del PR</option>
+        </select>
+      </div>
+      <div className="role" style={{ marginTop: 8, fontSize: 12 }}>
+        {mode === "auto"
+          ? "El PR ya pasó gate + review; la fábrica lo mergea y desbloquea los dependientes."
+          : "El trabajo queda en revisión hasta que alguien mergea el PR; ahí se desbloquean los dependientes."}
       </div>
     </div>
   );

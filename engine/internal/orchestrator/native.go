@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,6 +20,8 @@ type NativeTicket struct {
 	RunID    string   `json:"run_id"`
 	Deps     []string `json:"deps"`
 	SprintID string   `json:"sprint_id"` // empty in story mode; set when the story belongs to a sprint
+	PRURL    string   `json:"pr_url"`    // recorded when in_review; the PR the reconcile loop checks for merge
+	Repo     string   `json:"repo"`      // the repo the PR lives in (needed to address it via gh)
 }
 
 // StoryProvider is the interface through which NativeScheduler reads stories
@@ -33,11 +37,17 @@ type StoryProvider interface {
 	Claim(ctx context.Context, id string) (bool, error)
 	// MarkRunning records the run_id on a story that was claimed.
 	MarkRunning(ctx context.Context, id, runID string) error
-	// MarkDone advances a story to done once its run finishes.
+	// MarkInReview moves a story whose run finished (PR opened, not yet merged) to
+	// in_review and records the PR URL so the reconcile loop can check the merge.
+	MarkInReview(ctx context.Context, id, prURL string) error
+	// MarkDone advances a story to done — called when its in_review PR is MERGED.
 	MarkDone(ctx context.Context, id string) error
 	// MarkFailed advances a story to failed when its run ends in a terminal
 	// non-DONE state (FAILED, CANCELLED) so it does not stay stuck.
 	MarkFailed(ctx context.Context, id string) error
+	// InReview lists stories awaiting a merge (status in_review, PR recorded) so
+	// the merge-reconcile loop can poll whether each PR has been merged.
+	InReview(ctx context.Context) ([]NativeTicket, error)
 	// GetStory fetches the full story (body, acceptance, owner) so the fired run
 	// carries the complete context — not just the title.
 	GetStory(ctx context.Context, id string) (NativeStory, error)
@@ -56,7 +66,11 @@ type StoryProvider interface {
 	ClaimSprint(ctx context.Context, sprintID string) (claimed []string, ok bool, err error)
 	// MarkSprintRunning records the firing run_id on all the sprint's stories.
 	MarkSprintRunning(ctx context.Context, sprintID, runID string) error
+	// MarkSprintInReview moves all the sprint's running stories to in_review and
+	// records the shared PR URL the goal-mode run opened.
+	MarkSprintInReview(ctx context.Context, sprintID, prURL string) error
 	// MarkSprintDone / MarkSprintFailed advance all the sprint's running stories.
+	// MarkSprintDone is called when the sprint's in_review PR is MERGED.
 	MarkSprintDone(ctx context.Context, sprintID string) error
 	MarkSprintFailed(ctx context.Context, sprintID string) error
 }
@@ -139,6 +153,7 @@ func (p *NativeHTTPProvider) filterTickets(ctx context.Context, status string) (
 type storyStatusReq struct {
 	Status string `json:"status"`
 	RunID  string `json:"run_id,omitempty"`
+	PRURL  string `json:"pr_url,omitempty"`
 }
 
 type claimResp struct {
@@ -178,9 +193,19 @@ func (p *NativeHTTPProvider) MarkRunning(ctx context.Context, id, runID string) 
 	return p.putStatus(ctx, id, storyStatusReq{Status: "running", RunID: runID})
 }
 
+// MarkInReview PUTs /stories/{id}/status with status=in_review and the PR URL.
+func (p *NativeHTTPProvider) MarkInReview(ctx context.Context, id, prURL string) error {
+	return p.putStatus(ctx, id, storyStatusReq{Status: "in_review", PRURL: prURL})
+}
+
 // MarkDone PUTs /stories/{id}/status with status=done.
 func (p *NativeHTTPProvider) MarkDone(ctx context.Context, id string) error {
 	return p.putStatus(ctx, id, storyStatusReq{Status: "done"})
+}
+
+// InReview GETs /tickets and returns stories whose status is "in_review".
+func (p *NativeHTTPProvider) InReview(ctx context.Context) ([]NativeTicket, error) {
+	return p.filterTickets(ctx, "in_review")
 }
 
 // MarkFailed PUTs /stories/{id}/status with status=failed.
@@ -296,6 +321,11 @@ func (p *NativeHTTPProvider) MarkSprintRunning(ctx context.Context, sprintID, ru
 	return p.putSprintStatus(ctx, sprintID, storyStatusReq{RunID: runID})
 }
 
+// MarkSprintInReview PUTs /sprints/{id}/status with status=in_review and the shared PR URL.
+func (p *NativeHTTPProvider) MarkSprintInReview(ctx context.Context, sprintID, prURL string) error {
+	return p.putSprintStatus(ctx, sprintID, storyStatusReq{Status: "in_review", PRURL: prURL})
+}
+
 // MarkSprintDone PUTs /sprints/{id}/status with status=done.
 func (p *NativeHTTPProvider) MarkSprintDone(ctx context.Context, sprintID string) error {
 	return p.putSprintStatus(ctx, sprintID, storyStatusReq{Status: "done"})
@@ -364,11 +394,21 @@ type NativeScheduler struct {
 	provider StoryProvider
 	cp       ControlPlane
 	workflow string
+	gh       MergeChecker
 }
 
-// NewNativeScheduler builds a NativeScheduler.
-func NewNativeScheduler(provider StoryProvider, cp ControlPlane, workflow string) *NativeScheduler {
-	return &NativeScheduler{provider: provider, cp: cp, workflow: workflow}
+// MergeChecker is the GitHub surface the merge-reconcile loop needs: check whether
+// a PR is merged, and (in auto mode) merge it. *github.Client satisfies this; tests
+// use a fake. A nil MergeChecker disables the merge loop (work stays in_review).
+type MergeChecker interface {
+	PRMerged(ctx context.Context, repoURL string, number int) (bool, error)
+	MergePR(ctx context.Context, repoURL string, number int) error
+}
+
+// NewNativeScheduler builds a NativeScheduler. gh may be nil to disable the
+// merge-reconcile loop (e.g. local PR_MODE where there are no GitHub PRs).
+func NewNativeScheduler(provider StoryProvider, cp ControlPlane, workflow string, gh MergeChecker) *NativeScheduler {
+	return &NativeScheduler{provider: provider, cp: cp, workflow: workflow, gh: gh}
 }
 
 // terminalFailed reports whether a run status is a terminal failure — the run
@@ -401,10 +441,143 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 	if unit == "" {
 		unit = "sprint"
 	}
+
+	// Merge-reconcile first: advance any in_review work whose PR has merged (and,
+	// in auto mode, merge the PRs ourselves) BEFORE firing, so a dependent can
+	// unblock in the same cycle its prerequisite's PR lands.
+	actions := s.reconcileMerges(ctx)
+
+	var fired int
 	if unit == "story" {
-		return s.runStoryMode(ctx)
+		fired, err = s.runStoryMode(ctx)
+	} else {
+		fired, err = s.runSprintMode(ctx)
 	}
-	return s.runSprintMode(ctx)
+	return actions + fired, err
+}
+
+// reconcileMerges advances in_review work toward done based on its PR's merge
+// state. Each cycle, for every in_review story (grouped so a goal-mode sprint is
+// handled once), it:
+//   - checks whether the recorded PR is MERGED → marks done (unblocking dependents);
+//   - if merge_mode == "auto" AND the PR is still open, MERGES it (the run already
+//     passed gate + review) and marks done in the same cycle.
+//
+// merge_mode is read fresh from the control plane each cycle (like execution_unit),
+// so the toggle takes effect without a restart. A nil gh client or an unrecorded PR
+// leaves the work in_review (manual-merge-by-human is then the only path). Errors
+// are logged and skipped — the work simply waits for the next cycle.
+func (s *NativeScheduler) reconcileMerges(ctx context.Context) int {
+	if s.gh == nil {
+		return 0
+	}
+	inReview, err := s.provider.InReview(ctx)
+	if err != nil {
+		log.Printf("native-scheduler: list in_review: %v", err)
+		return 0
+	}
+	if len(inReview) == 0 {
+		return 0
+	}
+	mode, err := s.cp.MergeMode(ctx)
+	if err != nil {
+		log.Printf("native-scheduler: read merge_mode (defaulting to manual): %v", err)
+		mode = "manual"
+	}
+	if mode == "" {
+		mode = "manual"
+	}
+
+	actions := 0
+	seenSprint := map[string]bool{} // a goal-mode sprint shares one PR — reconcile it once
+	for _, t := range inReview {
+		if t.SprintID != "" {
+			if seenSprint[t.SprintID] {
+				continue
+			}
+			seenSprint[t.SprintID] = true
+		}
+		if s.reconcileOne(ctx, t, mode) {
+			actions++
+		}
+	}
+	return actions
+}
+
+// reconcileOne reconciles a single in_review unit (a loose story, or one sprint
+// represented by any of its stories). Returns true if it advanced the unit to done.
+func (s *NativeScheduler) reconcileOne(ctx context.Context, t NativeTicket, mode string) bool {
+	if t.PRURL == "" {
+		return false // no PR recorded yet — nothing to check
+	}
+	number, ok := prNumberFromURL(t.PRURL)
+	if !ok {
+		log.Printf("native-scheduler: cannot parse PR number from %q (story=%s)", t.PRURL, t.ID)
+		return false
+	}
+
+	merged, err := s.gh.PRMerged(ctx, t.Repo, number)
+	if err != nil {
+		log.Printf("native-scheduler: PR merged check story=%s pr=%d: %v", t.ID, number, err)
+		return false
+	}
+	if !merged {
+		if mode != "auto" {
+			return false // manual mode — wait for a human to merge on GitHub
+		}
+		// Auto mode: the run already passed gate + review, so merge it ourselves.
+		if err := s.gh.MergePR(ctx, t.Repo, number); err != nil {
+			log.Printf("native-scheduler: auto-merge story=%s pr=%d: %v", t.ID, number, err)
+			return false
+		}
+		log.Printf("native-scheduler: auto-merged story=%s pr=%d", t.ID, number)
+	}
+	// Merged (just now in auto mode, or by a human in manual mode) → advance to done.
+	return s.markMerged(ctx, t)
+}
+
+// markMerged advances a reconciled unit to done: the whole sprint for a goal-mode
+// story, or the single story otherwise. Returns true on success.
+func (s *NativeScheduler) markMerged(ctx context.Context, t NativeTicket) bool {
+	if t.SprintID != "" {
+		if err := s.provider.MarkSprintDone(ctx, t.SprintID); err != nil {
+			log.Printf("native-scheduler: mark sprint done sprint=%s: %v", t.SprintID, err)
+			return false
+		}
+		log.Printf("native-scheduler: sprint %s PR merged — all stories done", t.SprintID)
+		return true
+	}
+	if err := s.provider.MarkDone(ctx, t.ID); err != nil {
+		log.Printf("native-scheduler: mark done story=%s: %v", t.ID, err)
+		return false
+	}
+	log.Printf("native-scheduler: story %s PR merged — done", t.ID)
+	return true
+}
+
+// prNumberFromURL extracts the PR number from a GitHub PR URL, e.g.
+// "https://github.com/acme/widgets/pull/42" → 42. Returns ok=false if the URL has
+// no "/pull/<n>" segment or the number does not parse.
+func prNumberFromURL(prURL string) (int, bool) {
+	const marker = "/pull/"
+	i := strings.Index(prURL, marker)
+	if i < 0 {
+		return 0, false
+	}
+	rest := prURL[i+len(marker):]
+	// Trim anything after the number (e.g. "/files", "#discussion", a trailing /).
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // runStoryMode is the per-story poll-and-fire cycle:
@@ -436,12 +609,16 @@ func (s *NativeScheduler) runStoryMode(ctx context.Context) (int, error) {
 			continue
 		}
 		if status == "DONE" {
-			if err := s.provider.MarkDone(ctx, t.ID); err != nil {
-				log.Printf("native-scheduler: mark done story=%s: %v", t.ID, err)
+			// Run finished → PR is OPEN, not merged. Move to in_review and record the
+			// PR so the merge-reconcile loop advances it to done once it merges. The
+			// dependent stays blocked until then (Ready gates on done).
+			prURL, _ := s.cp.RunPRURL(ctx, t.RunID)
+			if err := s.provider.MarkInReview(ctx, t.ID, prURL); err != nil {
+				log.Printf("native-scheduler: mark in_review story=%s: %v", t.ID, err)
 				continue
 			}
 			actions++
-			log.Printf("native-scheduler: story %s run %s DONE — marked done", t.ID, t.RunID)
+			log.Printf("native-scheduler: story %s run %s DONE — in_review (pr=%s)", t.ID, t.RunID, prURL)
 			continue
 		}
 		if terminalFailed(status) {
@@ -597,12 +774,16 @@ func (s *NativeScheduler) advanceRunningSprints(ctx context.Context, running []N
 			continue
 		}
 		if status == "DONE" {
-			if err := s.provider.MarkSprintDone(ctx, sprintID); err != nil {
-				log.Printf("native-scheduler: mark sprint done sprint=%s: %v", sprintID, err)
+			// Run finished → the sprint's single PR is OPEN. Move all its stories to
+			// in_review and record the shared PR; the reconcile loop marks them done
+			// once that PR merges. Dependents of the sprint stay blocked until then.
+			prURL, _ := s.cp.RunPRURL(ctx, runID)
+			if err := s.provider.MarkSprintInReview(ctx, sprintID, prURL); err != nil {
+				log.Printf("native-scheduler: mark sprint in_review sprint=%s: %v", sprintID, err)
 				continue
 			}
 			actions++
-			log.Printf("native-scheduler: sprint %s run %s DONE — all stories marked done", sprintID, runID)
+			log.Printf("native-scheduler: sprint %s run %s DONE — in_review (pr=%s)", sprintID, runID, prURL)
 			continue
 		}
 		if terminalFailed(status) {
@@ -630,8 +811,10 @@ func (s *NativeScheduler) advanceLooseStory(ctx context.Context, t NativeTicket)
 		return 0
 	}
 	if status == "DONE" {
-		if err := s.provider.MarkDone(ctx, t.ID); err != nil {
-			log.Printf("native-scheduler: mark done story=%s: %v", t.ID, err)
+		// Loose story (story-mode leftover): same merge-gated path — in_review, not done.
+		prURL, _ := s.cp.RunPRURL(ctx, t.RunID)
+		if err := s.provider.MarkInReview(ctx, t.ID, prURL); err != nil {
+			log.Printf("native-scheduler: mark in_review story=%s: %v", t.ID, err)
 			return 0
 		}
 		return 1

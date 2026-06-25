@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
 	"forge/internal/workflow"
+	"gopkg.in/yaml.v3"
 )
 
 // BacklogFile is the parsed representation of docs/backlog.yaml produced by the

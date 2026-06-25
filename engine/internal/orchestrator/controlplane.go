@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // cpClient implements ControlPlane by POSTing to a real control-plane server.
@@ -115,4 +116,83 @@ func (c *cpClient) ExecutionUnit(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("decode /settings: %w", err)
 	}
 	return s.ExecutionUnit, nil
+}
+
+// MergeMode GETs /settings and returns the merge_mode field ("manual"|"auto").
+// An empty/missing value is returned as "" so the caller applies its own default.
+func (c *cpClient) MergeMode(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/settings", nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get /settings: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get /settings: status %d", resp.StatusCode)
+	}
+	var s struct {
+		MergeMode string `json:"merge_mode"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return "", fmt.Errorf("decode /settings: %w", err)
+	}
+	return s.MergeMode, nil
+}
+
+// RunPRURL GETs /runs/{id} and extracts the PR URL the run's `pr` step opened.
+// The pr step records "pr(github): opened <url>" in its result detail; this finds
+// the pr-type step and parses that URL. Returns "" (nil error) when no pr step
+// reported a GitHub PR (local mode, or the run hasn't reached the pr step yet).
+func (c *cpClient) RunPRURL(ctx context.Context, runID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/runs/"+runID, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get /runs/%s: %w", runID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get /runs/%s: status %d", runID, resp.StatusCode)
+	}
+	var rv struct {
+		Steps []struct {
+			Type   string `json:"type"`
+			Result string `json:"result"` // JSON: {"success":..,"output":..,"detail":".."}
+		} `json:"steps"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rv); err != nil {
+		return "", fmt.Errorf("decode /runs/%s: %w", runID, err)
+	}
+	for _, st := range rv.Steps {
+		if st.Type != "pr" {
+			continue
+		}
+		var res struct {
+			Detail string `json:"detail"`
+		}
+		if json.Unmarshal([]byte(st.Result), &res) != nil {
+			continue
+		}
+		if url := prURLFromDetail(res.Detail); url != "" {
+			return url, nil
+		}
+	}
+	return "", nil
+}
+
+// prURLFromDetail parses the PR URL from a pr step's detail string, which the pr
+// runner formats as "pr(github): opened <url>". Returns "" if the detail is not
+// the GitHub-opened form (e.g. a local-mode "pr(local): committed …" detail).
+func prURLFromDetail(detail string) string {
+	const marker = "pr(github): opened "
+	i := strings.Index(detail, marker)
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(detail[i+len(marker):])
 }

@@ -33,6 +33,13 @@ type Settings struct {
 	//   "sprint" (default) — a whole sprint is implemented in ONE run → ONE PR.
 	//   "story"            — one run/PR per story (the original per-story behavior).
 	ExecutionUnit string `json:"execution_unit"`
+	// MergeMode selects who merges a run's PR before its dependents unblock:
+	//   "manual" (default) — a human merges the PR on GitHub; the scheduler then
+	//                        detects the merge and advances the work to done.
+	//   "auto"             — the scheduler merges the (already-reviewed) PR itself.
+	// A dependent never launches until the prerequisite's PR is MERGED regardless
+	// of this setting — merge_mode only decides whether that merge is automatic.
+	MergeMode string `json:"merge_mode"`
 }
 
 // Execution-unit modes. "sprint" is the default (goal mode).
@@ -41,9 +48,20 @@ const (
 	ExecutionUnitStory  = "story"
 )
 
+// Merge modes. "manual" is the default (a human merges the PR on GitHub).
+const (
+	MergeModeManual = "manual"
+	MergeModeAuto   = "auto"
+)
+
 // validExecutionUnit reports whether v is an accepted execution_unit value.
 func validExecutionUnit(v string) bool {
 	return v == ExecutionUnitSprint || v == ExecutionUnitStory
+}
+
+// validMergeMode reports whether v is an accepted merge_mode value.
+func validMergeMode(v string) bool {
+	return v == MergeModeManual || v == MergeModeAuto
 }
 
 // AgentAuth holds how the agent authenticates. Secret never crosses to clients.
@@ -75,6 +93,10 @@ func Open(path string) (*Store, error) {
 	if st.s.ExecutionUnit == "" {
 		st.s.ExecutionUnit = ExecutionUnitSprint
 	}
+	// Backfill merge_mode for files written before it existed → manual (human merge).
+	if st.s.MergeMode == "" {
+		st.s.MergeMode = MergeModeManual
+	}
 	return st, nil
 }
 
@@ -85,6 +107,7 @@ func defaults() Settings {
 		Sandbox:       map[string]any{"runtime": "docker", "egress": "allowlist"},
 		MergePolicy:   map[string]string{"low": "automerge", "high": "human_gate"},
 		ExecutionUnit: ExecutionUnitSprint, // default: goal mode (whole sprint per run)
+		MergeMode:     MergeModeManual,     // default: a human merges the PR on GitHub
 	}
 }
 
@@ -128,6 +151,15 @@ func (st *Store) Put(in Settings) (Settings, error) {
 				ErrInvalid, in.ExecutionUnit, ExecutionUnitSprint, ExecutionUnitStory)
 		}
 		st.s.ExecutionUnit = in.ExecutionUnit
+	}
+	// merge_mode: same contract as execution_unit — empty means "unchanged",
+	// a present value must be one of the accepted modes.
+	if in.MergeMode != "" {
+		if !validMergeMode(in.MergeMode) {
+			return Settings{}, fmt.Errorf("%w: merge_mode %q must be %q or %q",
+				ErrInvalid, in.MergeMode, MergeModeManual, MergeModeAuto)
+		}
+		st.s.MergeMode = in.MergeMode
 	}
 	if in.AgentAuth.Mode != "" {
 		st.s.AgentAuth.Mode = in.AgentAuth.Mode

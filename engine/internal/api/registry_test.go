@@ -239,3 +239,37 @@ func TestExecutionUnitSetting(t *testing.T) {
 		t.Fatalf("rejected PUT corrupted stored execution_unit: %s", d)
 	}
 }
+
+// TestMergeModeSetting: merge_mode defaults to "manual", accepts "auto", and
+// rejects an unknown value with 400 (without corrupting the stored value).
+func TestMergeModeSetting(t *testing.T) {
+	base, _, _ := testKernel(t)
+
+	// Default must be "manual".
+	_, d := do(t, "GET", base+"/settings", nil)
+	if !strings.Contains(string(d), `"merge_mode":"manual"`) {
+		t.Fatalf("default merge_mode should be manual, got: %s", d)
+	}
+
+	// Switch to auto.
+	if resp, d := do(t, "PUT", base+"/settings", map[string]any{
+		"merge_mode": "auto",
+	}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT merge_mode=auto = %d: %s", resp.StatusCode, d)
+	}
+	_, d = do(t, "GET", base+"/settings", nil)
+	if !strings.Contains(string(d), `"merge_mode":"auto"`) {
+		t.Fatalf("merge_mode did not persist as auto: %s", d)
+	}
+
+	// An invalid value is a 400 and must NOT change the stored value.
+	if resp, _ := do(t, "PUT", base+"/settings", map[string]any{
+		"merge_mode": "rebase",
+	}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid merge_mode should be 400, got %d", resp.StatusCode)
+	}
+	_, d = do(t, "GET", base+"/settings", nil)
+	if !strings.Contains(string(d), `"merge_mode":"auto"`) {
+		t.Fatalf("rejected PUT corrupted stored merge_mode: %s", d)
+	}
+}

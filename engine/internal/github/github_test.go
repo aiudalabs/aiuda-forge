@@ -144,6 +144,78 @@ func TestEnsureDevBranchIdempotent(t *testing.T) {
 	}
 }
 
+// TestPRMerged covers the state/mergedAt combinations gh can return.
+func TestPRMerged(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+		want  bool
+	}{
+		{"merged-by-state", `{"state":"MERGED","mergedAt":"2026-06-20T10:00:00Z"}`, true},
+		{"merged-by-time-only", `{"state":"OPEN","mergedAt":"2026-06-20T10:00:00Z"}`, true},
+		{"open", `{"state":"OPEN","mergedAt":null}`, false},
+		{"closed-not-merged", `{"state":"CLOSED","mergedAt":""}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []call
+			c := withRunner(fakeRunner(map[string]string{"gh pr view": tc.reply}, &calls))
+			got, err := c.PRMerged(context.Background(), "https://github.com/acme/widgets", 7)
+			if err != nil {
+				t.Fatalf("PRMerged: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("PRMerged = %v, want %v", got, tc.want)
+			}
+			// Args must carry the number, the derived slug, and the json fields.
+			args := calls[0].args
+			mustContain(t, args, "7")
+			mustContain(t, args, "acme/widgets")
+			mustContain(t, args, "state,mergedAt")
+		})
+	}
+}
+
+// TestMergePRArgs verifies MergePR squash-merges and deletes the branch.
+func TestMergePRArgs(t *testing.T) {
+	var calls []call
+	c := withRunner(fakeRunner(map[string]string{"gh pr merge": ""}, &calls))
+	if err := c.MergePR(context.Background(), "https://github.com/acme/widgets.git", 7); err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	args := calls[0].args
+	mustContain(t, args, "merge")
+	mustContain(t, args, "7")
+	mustContain(t, args, "acme/widgets") // .git suffix stripped from slug
+	mustContain(t, args, "--squash")
+	mustContain(t, args, "--delete-branch")
+}
+
+// TestSlugFromURL exercises the owner/repo derivation, incl. error cases.
+func TestSlugFromURL(t *testing.T) {
+	ok := map[string]string{
+		"https://github.com/acme/widgets":     "acme/widgets",
+		"https://github.com/acme/widgets.git": "acme/widgets",
+		"https://github.com/acme/widgets/":    "acme/widgets",
+		"https://github.com/o/r":              "o/r",
+	}
+	for in, want := range ok {
+		got, err := slugFromURL(in)
+		if err != nil {
+			t.Errorf("slugFromURL(%q): unexpected error %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("slugFromURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, in := range []string{"", "https://gitlab.com/a/b", "https://github.com/onlyowner", "not a url"} {
+		if _, err := slugFromURL(in); err == nil {
+			t.Errorf("slugFromURL(%q): expected error, got nil", in)
+		}
+	}
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 type errExitCode1 struct{}

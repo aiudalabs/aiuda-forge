@@ -37,6 +37,7 @@ import (
 	"syscall"
 	"time"
 
+	"forge/internal/github"
 	"forge/internal/httpx"
 	"forge/internal/orchestrator"
 )
@@ -74,7 +75,9 @@ func main() {
 // runNative drives the scheduler from the control-plane's native ticket store.
 func runNative(cp orchestrator.ControlPlane, cpURL, workflow string, interval time.Duration, addr string, once bool) {
 	provider := orchestrator.NewNativeHTTPProvider(cpURL)
-	sched := orchestrator.NewNativeScheduler(provider, cp, workflow)
+	// The github client drives the merge-reconcile loop: it checks whether an
+	// in_review PR has merged and, in auto mode, merges it (gh CLI under the hood).
+	sched := orchestrator.NewNativeScheduler(provider, cp, workflow, github.New())
 
 	if once {
 		if _, err := sched.RunOnce(context.Background()); err != nil {

@@ -23,17 +23,17 @@ import (
 
 // Config configures an assembled kernel.
 type Config struct {
-	DBPath         string         // sqlite path
-	TicketsDB      string         // tickets sqlite path; "" disables the ticket store
-	ProjectsDB     string         // projects sqlite path; "" disables the project store
-	RegistryRoot   string         // registry/
-	WorkdirRoot    string         // where per-run working trees live
-	EngineMode     string         // "echo" (FakeBackend) | "claude" (real)
-	SandboxRuntime string         // "", "docker", "local"; "runsc" via env
-	Backend        agent.Backend  // optional override (tests inject a fake)
-	AgentAuth      agent.Auth     // auth for the real backend
-	AgentTimeout   time.Duration  // per-agent wall clock
-	Workers        int            // in-process worker pool size (<=0 → 1)
+	DBPath         string        // sqlite path
+	TicketsDB      string        // tickets sqlite path; "" disables the ticket store
+	ProjectsDB     string        // projects sqlite path; "" disables the project store
+	RegistryRoot   string        // registry/
+	WorkdirRoot    string        // where per-run working trees live
+	EngineMode     string        // "echo" (FakeBackend) | "claude" (real)
+	SandboxRuntime string        // "", "docker", "local"; "runsc" via env
+	Backend        agent.Backend // optional override (tests inject a fake)
+	AgentAuth      agent.Auth    // auth for the real backend
+	AgentTimeout   time.Duration // per-agent wall clock
+	Workers        int           // in-process worker pool size (<=0 → 1)
 }
 
 // App is the assembled kernel.

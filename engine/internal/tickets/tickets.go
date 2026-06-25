@@ -59,6 +59,10 @@ type Story struct {
 	Status   Status   `json:"status"`
 	RunID    string   `json:"run_id,omitempty"`
 	Repo     string   `json:"repo,omitempty"`
+	// PRURL is the pull request the story's run opened. It is recorded when the
+	// run finishes (status → in_review) so the merge-reconcile loop can check
+	// whether that PR has been merged before advancing the story to done.
+	PRURL string `json:"pr_url,omitempty"`
 }
 
 const schema = `
@@ -84,7 +88,8 @@ CREATE TABLE IF NOT EXISTS stories (
   owner     TEXT NOT NULL DEFAULT '',
   status    TEXT NOT NULL DEFAULT 'backlog',
   run_id    TEXT NOT NULL DEFAULT '',
-  repo      TEXT NOT NULL DEFAULT ''
+  repo      TEXT NOT NULL DEFAULT '',
+  pr_url    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS story_deps (
@@ -100,6 +105,10 @@ CREATE INDEX IF NOT EXISTS idx_story_deps_dep   ON story_deps(dep_id);
 // databases that predate its introduction. SQLite's "duplicate column" error
 // (code 1) is silently swallowed so an already-migrated DB is a no-op.
 const migrationAddRepo = `ALTER TABLE stories ADD COLUMN repo TEXT NOT NULL DEFAULT ''`
+
+// migrationAddPRURL adds the pr_url column to databases predating the merge-gated
+// lifecycle. Same swallow-on-duplicate contract as migrationAddRepo.
+const migrationAddPRURL = `ALTER TABLE stories ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''`
 
 // Store is the ticket store backed by a sqlite database.
 type Store struct {
@@ -126,6 +135,10 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(migrationAddRepo); err != nil && !isDuplicateColumn(err) {
 		db.Close()
 		return nil, fmt.Errorf("migrate stories.repo: %w", err)
+	}
+	if _, err := db.Exec(migrationAddPRURL); err != nil && !isDuplicateColumn(err) {
+		db.Close()
+		return nil, fmt.Errorf("migrate stories.pr_url: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -220,9 +233,9 @@ func (s *Store) CreateStory(st Story) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		st.ID, st.EpicID, st.SprintID, st.Title, st.Body, st.Accept, st.Owner, string(st.Status), st.RunID, st.Repo)
+	_, err = tx.Exec(`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		st.ID, st.EpicID, st.SprintID, st.Title, st.Body, st.Accept, st.Owner, string(st.Status), st.RunID, st.Repo, st.PRURL)
 	if err != nil {
 		return err
 	}
@@ -237,9 +250,9 @@ func (s *Store) CreateStory(st Story) error {
 // GetStory loads a Story by id, including its deps.
 func (s *Store) GetStory(id string) (Story, error) {
 	var st Story
-	err := s.db.QueryRow(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo
+	err := s.db.QueryRow(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
 		FROM stories WHERE id=?`, id).
-		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo)
+		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Story{}, ErrNotFound
 	}
@@ -256,7 +269,7 @@ func (s *Store) GetStory(id string) (Story, error) {
 
 // ListStories returns all stories with their deps.
 func (s *Store) ListStories() ([]Story, error) {
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
 		FROM stories ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -265,7 +278,7 @@ func (s *Store) ListStories() ([]Story, error) {
 	var out []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL); err != nil {
 			return nil, err
 		}
 		out = append(out, st)
@@ -354,7 +367,7 @@ func (s *Store) AddDep(storyID string, deps []string) error {
 // A story with no deps is ready immediately when its stored status is backlog.
 func (s *Store) Ready() ([]Story, error) {
 	// Load all backlog stories and check deps in one pass.
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
 		FROM stories WHERE status='backlog' ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -363,7 +376,7 @@ func (s *Store) Ready() ([]Story, error) {
 	var candidates []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, st)
@@ -402,7 +415,7 @@ func (s *Store) Ready() ([]Story, error) {
 // Ties (no ordering constraint between two stories) are broken stably by id, so
 // the order is deterministic. Returns an empty slice for a sprint with no stories.
 func (s *Store) StoriesBySprint(sprintID string) ([]Story, error) {
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
 		FROM stories WHERE sprint_id=? ORDER BY id ASC`, sprintID)
 	if err != nil {
 		return nil, err
@@ -411,7 +424,7 @@ func (s *Store) StoriesBySprint(sprintID string) ([]Story, error) {
 	var stories []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL); err != nil {
 			return nil, err
 		}
 		stories = append(stories, st)
@@ -598,9 +611,12 @@ func (s *Store) ClaimSprint(sprintID string) (claimed []string, ok bool, err err
 	return ids, true, nil
 }
 
-// MarkSprintDone advances all of a sprint's running stories to done.
+// MarkSprintDone advances all of a sprint's running OR in_review stories to done.
+// In the merge-gated lifecycle a sprint's stories sit in in_review until their PR
+// merges, at which point this advances them; the running-state clause keeps the
+// pre-lifecycle direct path working too.
 func (s *Store) MarkSprintDone(sprintID string) error {
-	_, err := s.db.Exec(`UPDATE stories SET status='done' WHERE sprint_id=? AND status='running'`, sprintID)
+	_, err := s.db.Exec(`UPDATE stories SET status='done' WHERE sprint_id=? AND status IN ('running','in_review')`, sprintID)
 	return err
 }
 
@@ -615,6 +631,69 @@ func (s *Store) MarkSprintFailed(sprintID string) error {
 func (s *Store) SetSprintRun(sprintID, runID string) error {
 	_, err := s.db.Exec(`UPDATE stories SET run_id=? WHERE sprint_id=?`, runID, sprintID)
 	return err
+}
+
+// ---- Merge-gated lifecycle (in_review) --------------------------------------
+//
+// A run finishing only means its PR is OPEN, not merged. Work therefore moves
+// running → in_review (PR recorded) and stays there until the PR is MERGED, at
+// which point it advances to done and unblocks dependents. MarkInReview /
+// MarkSprintInReview record the PR; InReview lists the work the reconcile loop
+// must check; MarkDone / MarkSprintDone (already defined) advance on merge.
+
+// MarkInReview moves a single running story to in_review and records the PR URL
+// its run opened. A blank prURL is allowed (the loop will skip it until set).
+func (s *Store) MarkInReview(id, prURL string) error {
+	res, err := s.db.Exec(`UPDATE stories SET status='in_review', pr_url=? WHERE id=?`, prURL, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkDone advances a single story to done (used when its in_review PR merges).
+func (s *Store) MarkDone(id string) error {
+	res, err := s.db.Exec(`UPDATE stories SET status='done' WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkSprintInReview moves all of a sprint's running stories to in_review and
+// records the shared PR URL on every story in the sprint.
+func (s *Store) MarkSprintInReview(sprintID, prURL string) error {
+	_, err := s.db.Exec(`UPDATE stories SET status='in_review', pr_url=? WHERE sprint_id=? AND status='running'`,
+		prURL, sprintID)
+	return err
+}
+
+// InReview returns all stories currently in_review (any sprint or loose). The
+// merge-reconcile loop reads these each cycle to check whether their PR merged.
+func (s *Store) InReview() ([]Story, error) {
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
+		FROM stories WHERE status='in_review' ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Story
+	for rows.Next() {
+		var st Story
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
 }
 
 // loadDeps returns the dep IDs for storyID, sorted.

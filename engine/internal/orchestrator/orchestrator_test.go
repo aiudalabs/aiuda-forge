@@ -42,10 +42,12 @@ func (f *fakeGitHub) setIssue(issue Issue) {
 
 // fakeControlPlane records fired runs. Thread-safe.
 type fakeControlPlane struct {
-	mu       sync.Mutex
-	runs     []firedRun
-	statuses map[string]string // runID → status; absent → "RUNNING"
-	execUnit string            // execution_unit reported to RunOnce; "" → "story"
+	mu        sync.Mutex
+	runs      []firedRun
+	statuses  map[string]string // runID → status; absent → "RUNNING"
+	execUnit  string            // execution_unit reported to RunOnce; "" → "story"
+	mergeMode string            // merge_mode reported to RunOnce; "" → "manual"
+	prURLs    map[string]string // runID → PR URL the run "opened"
 }
 
 type firedRun struct {
@@ -79,6 +81,35 @@ func (f *fakeControlPlane) ExecutionUnit(_ context.Context) (string, error) {
 		return "story", nil
 	}
 	return f.execUnit, nil
+}
+
+// MergeMode reports the configured merge mode. Defaults to "manual" in tests so
+// the scheduler does not auto-merge unless a test opts in.
+func (f *fakeControlPlane) MergeMode(_ context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.mergeMode == "" {
+		return "manual", nil
+	}
+	return f.mergeMode, nil
+}
+
+// RunPRURL reports the PR URL recorded for a run (empty if none set).
+func (f *fakeControlPlane) RunPRURL(_ context.Context, runID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.prURLs[runID], nil
+}
+
+// setPRURL records the PR URL a run "opened" so a DONE run moves to in_review
+// with a checkable PR.
+func (f *fakeControlPlane) setPRURL(runID, url string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prURLs == nil {
+		f.prURLs = map[string]string{}
+	}
+	f.prURLs[runID] = url
 }
 
 // setStatus simulates a run reaching a terminal state.

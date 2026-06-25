@@ -29,6 +29,7 @@ type fakeStory struct {
 	body     string
 	accept   string
 	owner    string // lane/agent id; "" in fakes that don't exercise routing
+	prURL    string // recorded when the story moves to in_review
 }
 
 func newFakeProvider(stories ...*fakeStory) *fakeStoryProvider {
@@ -122,6 +123,35 @@ func (p *fakeStoryProvider) MarkFailed(_ context.Context, id string) error {
 	s.status = "failed"
 	s.runID = ""
 	return nil
+}
+
+// MarkInReview moves a story to in_review and records its PR URL.
+func (p *fakeStoryProvider) MarkInReview(_ context.Context, id, prURL string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.stories[id]
+	if !ok {
+		return nil
+	}
+	s.status = "in_review"
+	s.prURL = prURL
+	return nil
+}
+
+// InReview returns stories whose status is "in_review".
+func (p *fakeStoryProvider) InReview(_ context.Context) ([]NativeTicket, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []NativeTicket
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.status != "in_review" {
+			continue
+		}
+		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status,
+			RunID: s.runID, Deps: s.deps, SprintID: s.sprintID, PRURL: s.prURL, Repo: s.repo})
+	}
+	return out, nil
 }
 
 // GetStory returns a minimal story (title only) for the fake.
@@ -246,13 +276,29 @@ func (p *fakeStoryProvider) MarkSprintRunning(_ context.Context, sprintID, runID
 	return nil
 }
 
-// MarkSprintDone flips every running story in the sprint to done.
-func (p *fakeStoryProvider) MarkSprintDone(_ context.Context, sprintID string) error {
+// MarkSprintInReview flips every running story in the sprint to in_review and
+// records the shared PR URL on each.
+func (p *fakeStoryProvider) MarkSprintInReview(_ context.Context, sprintID, prURL string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, id := range p.order {
 		s := p.stories[id]
 		if s.sprintID == sprintID && s.status == "running" {
+			s.status = "in_review"
+			s.prURL = prURL
+		}
+	}
+	return nil
+}
+
+// MarkSprintDone flips every running or in_review story in the sprint to done
+// (matches the store: the merge-gated path advances from in_review).
+func (p *fakeStoryProvider) MarkSprintDone(_ context.Context, sprintID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID == sprintID && (s.status == "running" || s.status == "in_review") {
 			s.status = "done"
 		}
 	}
@@ -303,6 +349,41 @@ func (p *fakeStoryProvider) depsAllDoneLocked(deps []string) bool {
 	return true
 }
 
+// ---- fakeMergeChecker -------------------------------------------------------
+
+// fakeMergeChecker is an in-memory MergeChecker. merged[number] reports a PR as
+// merged; MergePR records the merge and flips merged[number] true so a follow-up
+// PRMerged sees it. mergeCalls/mergedNumbers let tests assert auto-merge behavior.
+type fakeMergeChecker struct {
+	mu            sync.Mutex
+	merged        map[int]bool
+	mergeCalls    int
+	mergedNumbers []int
+	failMerge     bool // when true, MergePR returns an error (auto-merge failure path)
+}
+
+func newFakeMergeChecker() *fakeMergeChecker {
+	return &fakeMergeChecker{merged: map[int]bool{}}
+}
+
+func (m *fakeMergeChecker) PRMerged(_ context.Context, _ string, number int) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.merged[number], nil
+}
+
+func (m *fakeMergeChecker) MergePR(_ context.Context, _ string, number int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mergeCalls++
+	if m.failMerge {
+		return fmt.Errorf("merge %d failed", number)
+	}
+	m.merged[number] = true
+	m.mergedNumbers = append(m.mergedNumbers, number)
+	return nil
+}
+
 // ---- tests ------------------------------------------------------------------
 
 // TestNativeReadyStoriesGetFired: a backlog story with no deps is fired and
@@ -312,7 +393,7 @@ func TestNativeReadyStoriesGetFired(t *testing.T) {
 		&fakeStory{id: "S1", title: "first story", status: "backlog"},
 	)
 	cp := &fakeControlPlane{}
-	sched := NewNativeScheduler(provider, cp, "dev")
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -329,23 +410,25 @@ func TestNativeReadyStoriesGetFired(t *testing.T) {
 	}
 }
 
-// TestNativeRunningStoryMarkedDoneWhenRunDone: a story in "running" state whose
-// run reaches DONE is marked done by the next RunOnce cycle.
-func TestNativeRunningStoryMarkedDoneWhenRunDone(t *testing.T) {
+// TestNativeRunningStoryMovesToInReviewWhenRunDone: a story in "running" state
+// whose run reaches DONE is moved to in_review (PR opened, not yet merged) by the
+// next RunOnce cycle — under merge gating a finished run no longer means done.
+func TestNativeRunningStoryMovesToInReviewWhenRunDone(t *testing.T) {
 	provider := newFakeProvider(
 		&fakeStory{id: "S1", title: "already running", status: "running", runID: "run-42"},
 	)
 	cp := &fakeControlPlane{}
 	cp.setStatus("run-42", "DONE")
+	cp.setPRURL("run-42", "https://github.com/acme/x/pull/5")
 
-	sched := NewNativeScheduler(provider, cp, "dev")
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	if provider.statusOf("S1") != "done" {
-		t.Errorf("S1 status: want done, got %s", provider.statusOf("S1"))
+	if provider.statusOf("S1") != "in_review" {
+		t.Errorf("S1 status: want in_review, got %s", provider.statusOf("S1"))
 	}
 }
 
@@ -357,7 +440,7 @@ func TestNativeRunningStoryUntouchedWhileRunning(t *testing.T) {
 	)
 	cp := &fakeControlPlane{} // default status → "RUNNING"
 
-	sched := NewNativeScheduler(provider, cp, "dev")
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -376,7 +459,7 @@ func TestNativeNoDoubleFire(t *testing.T) {
 		&fakeStory{id: "S1", title: "idempotent", status: "backlog"},
 	)
 	cp := &fakeControlPlane{}
-	sched := NewNativeScheduler(provider, cp, "dev")
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
 
 	ctx := context.Background()
 	if _, err := sched.RunOnce(ctx); err != nil {
@@ -391,16 +474,19 @@ func TestNativeNoDoubleFire(t *testing.T) {
 	}
 }
 
-// TestNativeDepUnblockEndToEnd: completing story S1 unblocks S2 (which depends
-// on S1), so S2 fires on the next cycle. Exercises the full ready→running→done
-// state machine in the fake provider.
-func TestNativeDepUnblockEndToEnd(t *testing.T) {
+// TestNativeMergeGatedDepUnblock: the core merge-gated lifecycle. Completing S1's
+// run only moves it to in_review (PR opened) — S2 (which depends on S1) stays
+// blocked until S1's PR is MERGED. Only after the merge does S1 → done and S2 fire.
+// Run in auto merge mode so the scheduler merges the PR itself.
+func TestNativeMergeGatedDepUnblock(t *testing.T) {
 	provider := newFakeProvider(
-		&fakeStory{id: "S1", title: "dep", status: "backlog"},
-		&fakeStory{id: "S2", title: "consumer", status: "backlog", deps: []string{"S1"}},
+		&fakeStory{id: "S1", title: "dep", status: "backlog", repo: "https://github.com/acme/x"},
+		&fakeStory{id: "S2", title: "consumer", status: "backlog", deps: []string{"S1"},
+			repo: "https://github.com/acme/x"},
 	)
-	cp := &fakeControlPlane{}
-	sched := NewNativeScheduler(provider, cp, "dev")
+	cp := &fakeControlPlane{mergeMode: "auto"}
+	gh := newFakeMergeChecker()
+	sched := NewNativeScheduler(provider, cp, "dev", gh)
 	ctx := context.Background()
 
 	// Cycle 1: S1 has no deps → fires; S2 is blocked (dep not done).
@@ -410,37 +496,104 @@ func TestNativeDepUnblockEndToEnd(t *testing.T) {
 	if cp.firedCount() != 1 {
 		t.Fatalf("cycle 1: expected 1 fired (S1 only), got %d", cp.firedCount())
 	}
-	if provider.statusOf("S1") != "running" {
-		t.Errorf("S1 after cycle 1: want running, got %s", provider.statusOf("S1"))
-	}
 	if provider.statusOf("S2") != "backlog" {
 		t.Errorf("S2 after cycle 1: want backlog (blocked), got %s", provider.statusOf("S2"))
 	}
 
-	// S2 still blocked while S1 is RUNNING.
+	// S1's run finishes and opens a PR. The run reaching DONE moves S1 to
+	// in_review — NOT done — so S2 must STILL be blocked this cycle.
+	s1RunID := provider.runIDOf("S1")
+	cp.setStatus(s1RunID, "DONE")
+	cp.setPRURL(s1RunID, "https://github.com/acme/x/pull/11")
+
+	// Cycle 2: reconcile runs before completion-handling, so S1 (still running at
+	// the top of this cycle) only reaches in_review here — no merge yet, S2 blocked.
 	if _, err := sched.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if cp.firedCount() != 1 {
-		t.Fatalf("while S1 RUNNING, S2 should stay blocked; fired=%d", cp.firedCount())
+	if gh.mergeCalls != 0 {
+		t.Fatalf("PR should not merge the cycle it becomes in_review, got %d", gh.mergeCalls)
+	}
+	if provider.statusOf("S1") != "in_review" {
+		t.Errorf("S1 after run DONE: want in_review, got %s", provider.statusOf("S1"))
+	}
+	if provider.statusOf("S2") != "backlog" {
+		t.Errorf("S2 while S1 in_review: want backlog (blocked), got %s", provider.statusOf("S2"))
 	}
 
-	// Simulate S1's run finishing.
+	// Cycle 3: reconcile now sees S1 in_review with an open PR → auto-merges it,
+	// advances S1 to done, and S2 (unblocked) fires.
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gh.mergeCalls != 1 {
+		t.Fatalf("auto mode should merge S1's PR exactly once, got %d", gh.mergeCalls)
+	}
+	if provider.statusOf("S1") != "done" {
+		t.Errorf("S1 after PR merged: want done, got %s", provider.statusOf("S1"))
+	}
+	if provider.statusOf("S2") != "running" {
+		t.Errorf("S2 after S1 merged: want running, got %s", provider.statusOf("S2"))
+	}
+	if cp.firedCount() != 2 {
+		t.Fatalf("after S1 merged, S2 should fire; fired=%d", cp.firedCount())
+	}
+}
+
+// TestNativeManualMergeGate: in manual mode, a DONE run moves the story to
+// in_review and it STAYS there (the scheduler never merges); only when a human
+// merges the PR on GitHub (PRMerged flips true) does the next cycle advance it to
+// done and unblock the dependent.
+func TestNativeManualMergeGate(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "dep", status: "backlog", repo: "https://github.com/acme/x"},
+		&fakeStory{id: "S2", title: "consumer", status: "backlog", deps: []string{"S1"},
+			repo: "https://github.com/acme/x"},
+	)
+	cp := &fakeControlPlane{mergeMode: "manual"}
+	gh := newFakeMergeChecker()
+	sched := NewNativeScheduler(provider, cp, "dev", gh)
+	ctx := context.Background()
+
+	// Fire S1, finish its run, open a PR.
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
 	s1RunID := provider.runIDOf("S1")
 	cp.setStatus(s1RunID, "DONE")
+	cp.setPRURL(s1RunID, "https://github.com/acme/x/pull/22")
 
-	// Cycle 3: S1 gets marked done → S2 becomes ready and fires.
+	// Cycle: S1 → in_review. Manual mode → no merge, stays in_review, S2 blocked.
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gh.mergeCalls != 0 {
+		t.Fatalf("manual mode must NOT merge; got %d merge calls", gh.mergeCalls)
+	}
+	if provider.statusOf("S1") != "in_review" {
+		t.Errorf("S1 manual: want in_review, got %s", provider.statusOf("S1"))
+	}
+	if provider.statusOf("S2") != "backlog" {
+		t.Errorf("S2 while S1 in_review: want backlog (blocked), got %s", provider.statusOf("S2"))
+	}
+	// Another cycle with the PR still open changes nothing.
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if provider.statusOf("S1") != "in_review" {
+		t.Errorf("S1 should stay in_review until merged, got %s", provider.statusOf("S1"))
+	}
+
+	// A human merges the PR on GitHub → PRMerged now reports true.
+	gh.merged[22] = true
 	if _, err := sched.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if provider.statusOf("S1") != "done" {
-		t.Errorf("S1 after DONE run: want done, got %s", provider.statusOf("S1"))
-	}
-	if cp.firedCount() != 2 {
-		t.Fatalf("after S1 done, S2 should fire; fired=%d", cp.firedCount())
+		t.Errorf("S1 after human merge: want done, got %s", provider.statusOf("S1"))
 	}
 	if provider.statusOf("S2") != "running" {
-		t.Errorf("S2 after firing: want running, got %s", provider.statusOf("S2"))
+		t.Errorf("S2 after S1 merged: want running, got %s", provider.statusOf("S2"))
 	}
 }
 
@@ -455,7 +608,7 @@ func TestNativeFailedRunMarksStoryFailed(t *testing.T) {
 	cp := &fakeControlPlane{}
 	cp.setStatus("run-fail", "FAILED")
 
-	sched := NewNativeScheduler(provider, cp, "dev")
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -474,7 +627,7 @@ func TestNativeCancelledRunMarksStoryFailed(t *testing.T) {
 	cp := &fakeControlPlane{}
 	cp.setStatus("run-cancel", "CANCELLED")
 
-	sched := NewNativeScheduler(provider, cp, "dev")
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -496,8 +649,8 @@ func TestNativeClaimPreventsDoubleFire(t *testing.T) {
 	)
 	cp := &fakeControlPlane{}
 
-	sched1 := NewNativeScheduler(provider, cp, "dev")
-	sched2 := NewNativeScheduler(provider, cp, "dev")
+	sched1 := NewNativeScheduler(provider, cp, "dev", nil)
+	sched2 := NewNativeScheduler(provider, cp, "dev", nil)
 	ctx := context.Background()
 
 	// Both schedulers see S1 as ready and try to claim-then-fire.
@@ -540,7 +693,7 @@ func TestSprintModeFiresOneRunForWholeSprint(t *testing.T) {
 			body: "do B", accept: "B works", repo: "github.com/acme/x", deps: []string{"A"}},
 	)
 	cp := sprintMode()
-	sched := NewNativeScheduler(provider, cp, "factory")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -592,7 +745,7 @@ func TestSprintModeNoReadySprintFiresNothing(t *testing.T) {
 		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1"},
 	)
 	cp := sprintMode()
-	sched := NewNativeScheduler(provider, cp, "factory")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -601,23 +754,57 @@ func TestSprintModeNoReadySprintFiresNothing(t *testing.T) {
 	}
 }
 
-// TestSprintModeDoneMarksAllStories: when the sprint's shared run reaches DONE,
-// ALL its stories are marked done in one cycle.
-func TestSprintModeDoneMarksAllStories(t *testing.T) {
+// TestSprintModeDoneMovesAllToInReview: when the sprint's shared run reaches DONE,
+// ALL its stories move to in_review (the single sprint PR is opened, not merged).
+func TestSprintModeDoneMovesAllToInReview(t *testing.T) {
 	provider := newFakeProvider(
-		&fakeStory{id: "A", title: "A", status: "running", sprintID: "SP1", runID: "run-sp"},
-		&fakeStory{id: "B", title: "B", status: "running", sprintID: "SP1", runID: "run-sp"},
+		&fakeStory{id: "A", title: "A", status: "running", sprintID: "SP1", runID: "run-sp", repo: "https://github.com/acme/x"},
+		&fakeStory{id: "B", title: "B", status: "running", sprintID: "SP1", runID: "run-sp", repo: "https://github.com/acme/x"},
 	)
 	cp := sprintMode()
 	cp.setStatus("run-sp", "DONE")
-	sched := NewNativeScheduler(provider, cp, "factory")
+	cp.setPRURL("run-sp", "https://github.com/acme/x/pull/9")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"A", "B"} {
+		if provider.statusOf(id) != "in_review" {
+			t.Errorf("%s: want in_review, got %s", id, provider.statusOf(id))
+		}
+	}
+}
+
+// TestSprintModeMergeGatedToDone: the whole merge-gated sprint flow. A DONE sprint
+// run moves all stories to in_review with ONE shared PR; in auto mode the next
+// cycle merges that PR ONCE (not once per story) and advances ALL stories to done.
+func TestSprintModeMergeGatedToDone(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "running", sprintID: "SP1", runID: "run-sp", repo: "https://github.com/acme/x"},
+		&fakeStory{id: "B", title: "B", status: "running", sprintID: "SP1", runID: "run-sp", repo: "https://github.com/acme/x"},
+	)
+	cp := &fakeControlPlane{execUnit: "sprint", mergeMode: "auto"}
+	cp.setStatus("run-sp", "DONE")
+	cp.setPRURL("run-sp", "https://github.com/acme/x/pull/9")
+	gh := newFakeMergeChecker()
+	sched := NewNativeScheduler(provider, cp, "factory", gh)
+	ctx := context.Background()
+
+	// Cycle 1: DONE run → all stories in_review (PR opened, reconcile sees it open).
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Cycle 2: reconcile merges the single PR and advances both stories to done.
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gh.mergeCalls != 1 {
+		t.Fatalf("the sprint's single PR must be merged exactly once, got %d", gh.mergeCalls)
+	}
+	for _, id := range []string{"A", "B"} {
 		if provider.statusOf(id) != "done" {
-			t.Errorf("%s: want done, got %s", id, provider.statusOf(id))
+			t.Errorf("%s: want done after merge, got %s", id, provider.statusOf(id))
 		}
 	}
 }
@@ -630,7 +817,7 @@ func TestSprintModeFailedMarksAllStories(t *testing.T) {
 	)
 	cp := sprintMode()
 	cp.setStatus("run-sp", "FAILED")
-	sched := NewNativeScheduler(provider, cp, "factory")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -650,7 +837,7 @@ func TestSprintModeNoDoubleFire(t *testing.T) {
 		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1"},
 	)
 	cp := sprintMode()
-	sched := NewNativeScheduler(provider, cp, "factory")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 	ctx := context.Background()
 
 	if _, err := sched.RunOnce(ctx); err != nil {
@@ -674,7 +861,7 @@ func TestStoryModePassesOwnerAsAgent(t *testing.T) {
 	)
 	cp := &fakeControlPlane{} // default execution_unit "" → sprint; force story below
 	cp.execUnit = "story"
-	sched := NewNativeScheduler(provider, cp, "factory")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -694,7 +881,7 @@ func TestStoryModeEmptyOwnerYieldsEmptyAgent(t *testing.T) {
 		&fakeStory{id: "S1", title: "unowned story", status: "backlog"},
 	)
 	cp := &fakeControlPlane{execUnit: "story"}
-	sched := NewNativeScheduler(provider, cp, "factory")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -712,7 +899,7 @@ func TestSprintModeUsesCommonOwner(t *testing.T) {
 		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1", owner: "react-dev", deps: []string{"A"}},
 	)
 	cp := sprintMode()
-	sched := NewNativeScheduler(provider, cp, "factory")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -734,7 +921,7 @@ func TestSprintModeMixedOwnersFallsBackToEmpty(t *testing.T) {
 		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1", owner: "react-dev"},
 	)
 	cp := sprintMode()
-	sched := NewNativeScheduler(provider, cp, "factory")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
 
 	if _, err := sched.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)

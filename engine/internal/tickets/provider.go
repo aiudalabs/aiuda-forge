@@ -33,6 +33,17 @@ type TicketProvider interface {
 	MarkSprintFailed(ctx context.Context, sprintID string) error
 	// SetSprintRun records the firing run_id on every story in the sprint.
 	SetSprintRun(ctx context.Context, sprintID, runID string) error
+
+	// ---- Merge-gated lifecycle (in_review) ----------------------------------
+
+	// MarkInReview / MarkSprintInReview move finished (run-DONE) work to in_review
+	// and record the PR URL the run opened.
+	MarkInReview(ctx context.Context, id, prURL string) error
+	MarkSprintInReview(ctx context.Context, sprintID, prURL string) error
+	// MarkDone advances a single in_review story to done (its PR merged).
+	MarkDone(ctx context.Context, id string) error
+	// InReview lists stories awaiting a merge so the reconcile loop can check them.
+	InReview(ctx context.Context) ([]Story, error)
 }
 
 // NativeProvider implements TicketProvider backed by Store.
@@ -93,4 +104,20 @@ func (p *NativeProvider) MarkSprintFailed(_ context.Context, sprintID string) er
 
 func (p *NativeProvider) SetSprintRun(_ context.Context, sprintID, runID string) error {
 	return p.store.SetSprintRun(sprintID, runID)
+}
+
+func (p *NativeProvider) MarkInReview(_ context.Context, id, prURL string) error {
+	return p.store.MarkInReview(id, prURL)
+}
+
+func (p *NativeProvider) MarkSprintInReview(_ context.Context, sprintID, prURL string) error {
+	return p.store.MarkSprintInReview(sprintID, prURL)
+}
+
+func (p *NativeProvider) MarkDone(_ context.Context, id string) error {
+	return p.store.MarkDone(id)
+}
+
+func (p *NativeProvider) InReview(_ context.Context) ([]Story, error) {
+	return p.store.InReview()
 }

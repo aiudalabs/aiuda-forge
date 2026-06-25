@@ -270,6 +270,7 @@ export const mockSettings: SettingsPayload = {
     high_risk: "human_gate",
   },
   execution_unit: "sprint",
+  merge_mode: "manual",
 };
 
 // ── Metrics mock ──────────────────────────────────────────────────────────────

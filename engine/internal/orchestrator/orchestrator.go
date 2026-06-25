@@ -65,6 +65,14 @@ type ControlPlane interface {
 	// the control-plane settings. The native scheduler reads it each cycle to pick
 	// sprint-batched (goal mode) vs per-story execution.
 	ExecutionUnit(ctx context.Context) (string, error)
+	// MergeMode returns the configured merge_mode ("manual"|"auto") from the
+	// control-plane settings. The native scheduler reads it each cycle to decide
+	// whether to merge an in-review PR itself ("auto") or wait for a human merge.
+	MergeMode(ctx context.Context) (string, error)
+	// RunPRURL returns the pull-request URL a run opened (parsed from its pr step's
+	// detail, "pr(github): opened <url>"). Empty (with nil error) when the run has
+	// no GitHub PR yet — e.g. a local-mode pr step that only pushed a branch.
+	RunPRURL(ctx context.Context, runID string) (string, error)
 }
 
 // Config holds tunables for the orchestrator loop.
