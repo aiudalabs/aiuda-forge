@@ -223,12 +223,76 @@ export function mapEvent(e: KernelEvent): RunEvent {
 }
 
 function eventMessage(type: string, data: Record<string, unknown>, step?: string): string {
+  // step.event = una acción fina del agente (lo que claude HIZO): tool_use / text.
+  // Se renderiza como una línea de log estilo terminal: "→ Edit notas.py", etc.
+  if (type === "step.event") return stepEventLine(data);
   if (typeof data.detail === "string" && data.detail) return data.detail;
   const from = data.from;
   const to = data.to;
   if (from && to) return `${step ? step + ": " : ""}${from} → ${to}`;
   if (typeof data.workflow === "string") return `workflow: ${data.workflow}`;
   return type;
+}
+
+// stepEventLine formatea un evento fino del agente (payload del engine:
+// {kind:"tool_use",tool,input} | {kind:"text",text} | {kind:"system",subtype})
+// como una sola línea legible para el live-log.
+function stepEventLine(data: Record<string, unknown>): string {
+  const kind = typeof data.kind === "string" ? data.kind : "";
+  if (kind === "tool_use") {
+    const tool = typeof data.tool === "string" ? data.tool : "tool";
+    const input = typeof data.input === "string" ? data.input : "";
+    const arg = toolArg(tool, input);
+    return arg ? `→ ${tool}: ${arg}` : `→ ${tool}`;
+  }
+  if (kind === "text") {
+    const text = typeof data.text === "string" ? data.text : "";
+    return firstLine(text);
+  }
+  if (kind === "system") {
+    const sub = typeof data.subtype === "string" ? data.subtype : "";
+    return sub ? `system: ${sub}` : "system";
+  }
+  return "step.event";
+}
+
+// toolArg saca el dato más relevante del input del tool para la línea de log:
+// el path para Read/Edit/Write, el comando para Bash, el patrón para Grep/Glob.
+// El input llega como JSON (truncado en el engine) o como string plano.
+function toolArg(tool: string, input: string): string {
+  if (!input) return "";
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const p = JSON.parse(input);
+    if (p && typeof p === "object") parsed = p as Record<string, unknown>;
+  } catch {
+    return firstLine(input);
+  }
+  if (!parsed) return firstLine(input);
+  const pick = (k: string) => (typeof parsed![k] === "string" ? (parsed![k] as string) : "");
+  const t = tool.toLowerCase();
+  if (t === "bash") return firstLine(pick("command"));
+  if (t === "read" || t === "edit" || t === "write" || t === "multiedit")
+    return shortPath(pick("file_path") || pick("path"));
+  if (t === "grep" || t === "glob") return pick("pattern") || pick("query");
+  // Fallback: primer string del objeto, o el JSON compacto.
+  for (const v of Object.values(parsed)) {
+    if (typeof v === "string" && v) return firstLine(v);
+  }
+  return firstLine(input);
+}
+
+function firstLine(s: string): string {
+  const line = s.split("\n", 1)[0].trim();
+  return line.length > 160 ? line.slice(0, 160) + "…" : line;
+}
+
+// shortPath recorta paths absolutos largos a las últimas 2 componentes para que
+// la línea lea "dir/notas.py" en vez del path completo del workdir del run.
+function shortPath(p: string): string {
+  if (!p) return "";
+  const parts = p.split("/").filter(Boolean);
+  return parts.length <= 2 ? p : parts.slice(-2).join("/");
 }
 
 function mapRunDetail(r: KernelRun & { steps?: KernelStep[] }): RunDetail {

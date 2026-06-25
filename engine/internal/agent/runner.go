@@ -92,7 +92,7 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 		}
 	}
 
-	res, err := r.Backend.Run(ctx, prompt, opts, r.Emit)
+	res, err := r.Backend.Run(ctx, prompt, opts, eventSink(ctx, r.Emit))
 	if err != nil {
 		return workflow.StepResult{Success: false, Detail: "agent error: " + err.Error()}, nil
 	}

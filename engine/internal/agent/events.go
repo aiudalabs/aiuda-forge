@@ -1,0 +1,101 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"forge/internal/store"
+	"forge/internal/workflow"
+)
+
+// Truncation bounds keep a single step.event row small even when the agent edits
+// a huge file or emits a wall of text — the live-log stays an auditable trail,
+// not a copy of the repo. Tool inputs are summarised tighter than assistant text.
+const (
+	maxToolInputLen = 600
+	maxTextLen      = 2000
+)
+
+// eventSink builds the onEvent callback passed to Backend.Run. It fans each
+// streamed agent Event to BOTH the context-threaded step emitter (the real,
+// per-run path that persists step.event rows) and the legacy r.Emit field (kept
+// working as a belt-and-suspenders hook for callers that set it). Either may be
+// nil. If neither is present it returns nil so the backend skips event work.
+func eventSink(ctx context.Context, legacy func(Event)) func(Event) {
+	emit := workflow.EmitterFrom(ctx)
+	if emit == nil && legacy == nil {
+		return nil
+	}
+	return func(e Event) {
+		if legacy != nil {
+			legacy(e)
+		}
+		if emit == nil {
+			return
+		}
+		if data, ok := eventPayload(e); ok {
+			emit(store.EventStepEvent, data)
+		}
+	}
+}
+
+// eventPayload converts one streamed agent Event into the bounded, auditable map
+// persisted as a step.event row. Returns ok=false for events we deliberately
+// drop (the terminal result — already stored as the step detail — and empties).
+func eventPayload(e Event) (map[string]any, bool) {
+	switch e.Kind {
+	case KindToolUse:
+		return map[string]any{
+			"kind":  "tool_use",
+			"tool":  e.Tool,
+			"input": toolInputSummary(e.Raw),
+		}, true
+	case KindText:
+		if e.Text == "" {
+			return nil, false
+		}
+		return map[string]any{
+			"kind": "text",
+			"text": truncate(e.Text, maxTextLen),
+		}, true
+	case KindSystem:
+		// Minimal: enough to mark a system notice on the timeline without the
+		// noisy init blob (model list, tool inventory, cwd, ...).
+		return map[string]any{
+			"kind":    "system",
+			"subtype": asString(e.Raw["subtype"]),
+		}, true
+	default:
+		// KindResult and anything else: the result is already the step detail.
+		return nil, false
+	}
+}
+
+// toolInputSummary renders the tool's "input" object as a compact JSON-ish
+// string, truncated. This is what makes the line read like "Edit notas.py" or
+// "Bash: python -m unittest" — the raw block carries name + input.
+func toolInputSummary(raw map[string]any) string {
+	if raw == nil {
+		return ""
+	}
+	in, ok := raw["input"]
+	if !ok {
+		return ""
+	}
+	if s, isStr := in.(string); isStr {
+		return truncate(s, maxToolInputLen)
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		return truncate(fmt.Sprintf("%v", in), maxToolInputLen)
+	}
+	return truncate(string(b), maxToolInputLen)
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}

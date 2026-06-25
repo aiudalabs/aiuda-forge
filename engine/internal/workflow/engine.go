@@ -148,7 +148,16 @@ func (e *Engine) ExecuteOne(ctx context.Context, workerID string) (bool, error) 
 	hbCtx, stopHeartbeat := context.WithCancel(ctx)
 	go e.heartbeat(hbCtx, task.ID, task.Fence)
 
-	result, runErr := runner.Run(ctx, step, inputs, e.Workdir(task.RunID))
+	// Thread a per-step emitter through ctx so the agent runner can persist each
+	// streamed event (tool_use / text / system) as a step.event row LIVE, bound
+	// to this run+task. The emitter is per-call (not a field on the shared,
+	// singleton runner) so concurrent runs never cross streams.
+	runID, taskID := task.RunID, task.ID
+	stepCtx := WithEmitter(ctx, func(eventType string, data map[string]any) {
+		_, _ = e.Store.AppendEvent(runID, taskID, eventType, data)
+	})
+
+	result, runErr := runner.Run(stepCtx, step, inputs, e.Workdir(task.RunID))
 	stopHeartbeat()
 	if runErr != nil {
 		// Execution error (not a logical failure) — record and fail the step.

@@ -507,6 +507,12 @@ header.top .sp {
   max-height: 172px;
   overflow: auto;
 }
+/* Cada evento en su propia línea; los comandos/paths largos (step.event)
+   envuelven en vez de desbordar horizontalmente — se lee como un log real. */
+.livelog > div {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .livelog .k {
   color: #7f8696;
 }

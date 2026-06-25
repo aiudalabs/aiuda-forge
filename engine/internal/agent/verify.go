@@ -52,7 +52,7 @@ func (r *VerifyRunner) Run(ctx context.Context, step workflow.Step, inputs map[s
 		Workdir:      workdir,
 		Timeout:      r.Timeout,
 		Auth:         r.Auth,
-	}, nil)
+	}, eventSink(ctx, nil))
 	if runErr != nil {
 		return workflow.StepResult{Success: false, Detail: "verifier error: " + runErr.Error()}, nil
 	}
