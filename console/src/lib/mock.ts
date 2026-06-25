@@ -269,6 +269,7 @@ export const mockSettings: SettingsPayload = {
     low_risk: "automerge",
     high_risk: "human_gate",
   },
+  execution_unit: "sprint",
 };
 
 // ── Metrics mock ──────────────────────────────────────────────────────────────

@@ -544,6 +544,7 @@ interface RawSettings {
   agent_auth?: { mode?: string; secret?: string };
   sandbox?: { runtime?: string; image?: string; egress?: string };
   merge_policy?: Record<string, string>;
+  execution_unit?: string;
 }
 
 function settingsFromBackend(r: RawSettings): SettingsPayload {
@@ -557,6 +558,7 @@ function settingsFromBackend(r: RawSettings): SettingsPayload {
     agent_auth: { mode: r.agent_auth?.mode ?? "subscription", secret: r.agent_auth?.secret ?? "" },
     sandbox: { runtime: r.sandbox?.runtime ?? "", image: r.sandbox?.image ?? "" },
     merge_policy: { low_risk: r.merge_policy?.low ?? "", high_risk: r.merge_policy?.high ?? "" },
+    execution_unit: r.execution_unit ?? "sprint",
   };
 }
 
@@ -568,6 +570,7 @@ function settingsToBackend(s: SettingsPayload): RawSettings {
     agent_auth: s.agent_auth,
     sandbox: { runtime: s.sandbox.runtime, image: s.sandbox.image },
     merge_policy: { low: s.merge_policy.low_risk, high: s.merge_policy.high_risk },
+    execution_unit: s.execution_unit,
   };
 }
 

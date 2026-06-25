@@ -129,6 +129,12 @@ export function SettingsView() {
           sandbox={form.sandbox}
           onChange={(sandbox) => setForm((f) => f ? { ...f, sandbox } : f)}
         />
+
+        {/* Unidad de ejecución */}
+        <ExecutionUnitSection
+          unit={form.execution_unit}
+          onChange={(execution_unit) => setForm((f) => f ? { ...f, execution_unit } : f)}
+        />
       </div>
     </div>
   );
@@ -236,6 +242,35 @@ function AgentAuthSection({
           value={isMasked(auth.secret) ? "" : auth.secret}
           onChange={(e) => onChange({ ...auth, secret: e.target.value || MASKED })}
         />
+      </div>
+    </div>
+  );
+}
+
+function ExecutionUnitSection({
+  unit,
+  onChange,
+}: {
+  unit: SettingsPayload["execution_unit"];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="card">
+      <h3>Unidad de ejecución</h3>
+      <div className="role">
+        Cómo la fábrica agrupa el trabajo en PRs.
+      </div>
+      <div className="field" style={{ marginTop: 10 }}>
+        <label>Modo</label>
+        <select className="inp" value={unit} onChange={(e) => onChange(e.target.value)}>
+          <option value="sprint">por sprint — 1 PR por sprint (goal mode)</option>
+          <option value="story">por story — 1 PR por story</option>
+        </select>
+      </div>
+      <div className="role" style={{ marginTop: 8, fontSize: 12 }}>
+        {unit === "sprint"
+          ? "Cada sprint se implementa en un solo run, sobre una rama, como un PR coherente."
+          : "Cada story se implementa por separado: un run y un PR por story."}
       </div>
     </div>
   );

@@ -171,6 +171,7 @@ export interface SettingsPayload {
     low_risk: string;   // "automerge"
     high_risk: string;  // "human_gate"
   };
+  execution_unit: string; // "sprint" (default, 1 PR/sprint) | "story" (1 PR/story)
 }
 
 // ── Metrics / Spend ───────────────────────────────────────────────────────────
