@@ -28,6 +28,7 @@ type fakeStory struct {
 	repo     string
 	body     string
 	accept   string
+	owner    string // lane/agent id; "" in fakes that don't exercise routing
 }
 
 func newFakeProvider(stories ...*fakeStory) *fakeStoryProvider {
@@ -131,7 +132,7 @@ func (p *fakeStoryProvider) GetStory(_ context.Context, id string) (NativeStory,
 	if !ok {
 		return NativeStory{}, fmt.Errorf("story %s not found", id)
 	}
-	return NativeStory{ID: id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo}, nil
+	return NativeStory{ID: id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo, Owner: s.owner}, nil
 }
 
 // ---- sprint-batched fake methods --------------------------------------------
@@ -203,7 +204,7 @@ func (p *fakeStoryProvider) SprintStories(_ context.Context, sprintID string) ([
 		if s.sprintID != sprintID {
 			continue
 		}
-		out = append(out, NativeStory{ID: s.id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo})
+		out = append(out, NativeStory{ID: s.id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo, Owner: s.owner})
 	}
 	return out, nil
 }
@@ -660,6 +661,89 @@ func TestSprintModeNoDoubleFire(t *testing.T) {
 	}
 	if cp.firedCount() != 1 {
 		t.Fatalf("want exactly 1 fire across two cycles, got %d", cp.firedCount())
+	}
+}
+
+// ---- Lane-aware routing (B1) ------------------------------------------------
+
+// TestStoryModePassesOwnerAsAgent: in story mode the story's owner is plumbed
+// into the run payload as `agent`, so the runner routes to that specialist.
+func TestStoryModePassesOwnerAsAgent(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "backend story", status: "backlog", owner: "python-dev"},
+	)
+	cp := &fakeControlPlane{} // default execution_unit "" → sprint; force story below
+	cp.execUnit = "story"
+	sched := NewNativeScheduler(provider, cp, "factory")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("want 1 fired run, got %d", cp.firedCount())
+	}
+	if got := cp.payloadOf(0)["agent"]; got != "python-dev" {
+		t.Errorf("payload agent: got %v, want python-dev", got)
+	}
+}
+
+// TestStoryModeEmptyOwnerYieldsEmptyAgent: a story with no owner sends an empty
+// `agent`, which the runner treats as "use the workflow's default (dev)".
+func TestStoryModeEmptyOwnerYieldsEmptyAgent(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "unowned story", status: "backlog"},
+	)
+	cp := &fakeControlPlane{execUnit: "story"}
+	sched := NewNativeScheduler(provider, cp, "factory")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := cp.payloadOf(0)["agent"]; got != "" {
+		t.Errorf("payload agent: got %v, want empty (falls back to dev)", got)
+	}
+}
+
+// TestSprintModeUsesCommonOwner: a mono-lane sprint (all stories share an owner)
+// fires with that owner as the run's `agent`.
+func TestSprintModeUsesCommonOwner(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "backlog", sprintID: "SP1", owner: "react-dev"},
+		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1", owner: "react-dev", deps: []string{"A"}},
+	)
+	cp := sprintMode()
+	sched := NewNativeScheduler(provider, cp, "factory")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("want 1 fired run, got %d", cp.firedCount())
+	}
+	if got := cp.payloadOf(0)["agent"]; got != "react-dev" {
+		t.Errorf("payload agent: got %v, want react-dev", got)
+	}
+}
+
+// TestSprintModeMixedOwnersFallsBackToEmpty: a multi-lane sprint (stories with
+// different owners) falls back to "" — the runner then uses the default "dev".
+// Mixed-lane sub-batching is a B2 concern.
+func TestSprintModeMixedOwnersFallsBackToEmpty(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "backlog", sprintID: "SP1", owner: "python-dev"},
+		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1", owner: "react-dev"},
+	)
+	cp := sprintMode()
+	sched := NewNativeScheduler(provider, cp, "factory")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("want 1 fired run, got %d", cp.firedCount())
+	}
+	if got := cp.payloadOf(0)["agent"]; got != "" {
+		t.Errorf("payload agent: got %v, want empty (mixed owners → default dev)", got)
 	}
 }
 

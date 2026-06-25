@@ -477,7 +477,9 @@ func (s *NativeScheduler) runStoryMode(ctx context.Context) (int, error) {
 		// implementing agent has the complete context, and a short `title` so the UI
 		// doesn't show the whole description as the run title.
 		// repo is passed through so OnSeed can clone the project repository.
-		title, ticket, repo := t.Title, t.Title, ""
+		// agent is the story's owner — lane routing: the runner uses it to pick the
+		// per-lane specialist (python-dev, react-dev…); empty falls back to "dev".
+		title, ticket, repo, agent := t.Title, t.Title, "", ""
 		if st, gerr := s.provider.GetStory(ctx, t.ID); gerr == nil {
 			title = st.Title
 			ticket = st.Title
@@ -488,12 +490,14 @@ func (s *NativeScheduler) runStoryMode(ctx context.Context) (int, error) {
 				ticket += "\n\nAcceptance criteria:\n" + st.Accept
 			}
 			repo = st.Repo
+			agent = st.Owner
 		}
 		payload := map[string]any{
 			"story_id": t.ID,
 			"title":    title,
 			"ticket":   ticket,
 			"repo":     repo,
+			"agent":    agent,
 		}
 		runID, err := s.cp.FireRun(ctx, s.workflow, payload)
 		if err != nil {
@@ -680,12 +684,18 @@ func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool 
 		}
 	}
 
+	// Lane routing for a sprint: a mono-lane sprint shares one owner, fired as that
+	// specialist. A MIXED-owner sprint is a B2 concern (per-lane sub-batching) — for
+	// now fall back to "" (the runner defaults to "dev") and warn.
+	agent := commonOwner(stories, sp.ID)
+
 	payload := map[string]any{
 		"sprint_id": sp.ID,
 		"story_ids": storyIDs,
 		"title":     title,
 		"ticket":    ticket,
 		"repo":      repo,
+		"agent":     agent,
 	}
 	runID, err := s.cp.FireRun(ctx, s.workflow, payload)
 	if err != nil {
@@ -698,6 +708,29 @@ func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool 
 	}
 	log.Printf("native-scheduler: sprint %s claimed and fired (%d stories) — run %s", sp.ID, len(stories), runID)
 	return true
+}
+
+// commonOwner returns the single owner shared by every story in a mono-lane
+// sprint. If the stories have MIXED owners (a multi-lane sprint), it returns ""
+// and logs a warning — the runner then defaults to "dev". Stories with an empty
+// owner are treated as "dev" for the purpose of agreement, so a sprint of all
+// unowned stories resolves to "" (default) without a spurious mixed warning.
+// Mixed-lane sub-batching is deferred to Phase B2.
+func commonOwner(stories []NativeStory, sprintID string) string {
+	owner := ""
+	for i, st := range stories {
+		o := st.Owner
+		if i == 0 {
+			owner = o
+			continue
+		}
+		if o != owner {
+			log.Printf("native-scheduler: sprint %s has mixed owners (%q vs %q) — defaulting agent to dev (B2: per-lane sub-batching)",
+				sprintID, owner, o)
+			return ""
+		}
+	}
+	return owner
 }
 
 // renderSprintStories renders each story as a goal-mode section in the order

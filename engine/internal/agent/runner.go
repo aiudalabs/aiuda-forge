@@ -43,10 +43,21 @@ func NewStepRunner(backend Backend, agents Loader) *StepRunner {
 
 // Run implements workflow.Runner.
 func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[string]any, workdir string) (workflow.StepResult, error) {
-	if step.Agent == "" {
+	// Lane-aware routing: a non-empty inputs["agent"] (the story's owner, plumbed
+	// by the orchestrator) overrides the workflow's static step.Agent so a per-lane
+	// specialist (python-dev, react-dev, …) implements the story. An empty value
+	// falls back to step.Agent, which itself defaults the runner to "dev".
+	// TODO(B2): the sandbox IMAGE per lane is a Phase B2 concern — today every lane
+	// shares the control's global image (r.SandboxTemplate). When B2 lands, pick the
+	// image here from the resolved agentID (e.g. a flutter lane needs the Flutter SDK).
+	agentID := step.Agent
+	if v := asString(inputs["agent"]); v != "" {
+		agentID = v
+	}
+	if agentID == "" {
 		return workflow.StepResult{Success: false, Detail: "agent step has no agent id"}, nil
 	}
-	manifest, err := r.Agents.Load(step.Agent)
+	manifest, err := r.Agents.Load(agentID)
 	if err != nil {
 		return workflow.StepResult{Success: false, Detail: "load agent: " + err.Error()}, nil
 	}
@@ -159,7 +170,8 @@ func buildPrompt(m *Manifest, step workflow.Step, inputs map[string]any) string 
 	// Any other inputs appended generically so nothing is silently dropped.
 	for k, val := range inputs {
 		switch k {
-		case "ticket", "instructions", "feedback":
+		case "ticket", "instructions", "feedback", "agent":
+			// "agent" is a routing key (selects the specialist), not prompt content.
 			continue
 		}
 		s := asString(val)

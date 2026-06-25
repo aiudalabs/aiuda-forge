@@ -31,7 +31,18 @@ can implement each story without reading the upstream documents.
      Check for cycles (A→B and B→A means one must be split).
    - Waves are implicit in the DAG: wave 1 = stories with no deps; a story's wave is
      strictly greater than all its dependencies'. Keep wave 1 large enough for parallel work.
-   - Owner: a valid registry agent id (`dev`, `python-dev`, `react-dev`…). Default `dev`.
+   - Owner: the registry agent id of the SPECIALIST for the lane this story touches —
+     this is the lane router that decides which engine implements the story. Pick from the
+     architecture's stack and which part of the system the story implements:
+       - frontend / web / admin dashboard (React, TypeScript)       → `react-dev`
+       - backend / API / services / migrations (Python, FastAPI)    → `python-dev`
+       - mobile app (Flutter, Dart widgets/screens)                 → `flutter-dev`
+       - cloud functions / Firestore rules / indexes (Firebase)     → `firebase-dev`
+       - generic, unknown, or single-stack project with no match     → `dev`
+     A story stays in ONE lane — if it would need two, split it (see step 2). For a
+     single-stack project (e.g. a Python CLI) EVERY story's owner is that one agent (e.g.
+     `python-dev`, or `dev` when the stack has no specialist). Use the ids exactly as written —
+     each must resolve to a registry agent.
    - Size: XS (config/migration) · S (one function + test) · M (one module) · L (cross-module).
      Split anything larger than L or that you cannot describe in one paragraph of what-to-build.
    - Priority: P0 = blocks the core loop (cannot demo without it) · P1 = important, deferrable

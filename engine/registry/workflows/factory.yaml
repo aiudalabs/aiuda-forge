@@ -6,9 +6,10 @@ version: 1.0.0
 steps:
   - id: implement
     type: agent
-    agent: dev
+    agent: dev                  # static fallback; the per-lane specialist below overrides it
     inputs:
       ticket: $trigger.ticket
+      agent: $trigger.agent      # lane routing: the story's owner (python-dev, react-dev…); empty -> falls back to `dev`
 
   - id: gate
     type: gate
