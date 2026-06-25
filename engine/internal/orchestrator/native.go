@@ -43,12 +43,15 @@ type StoryProvider interface {
 }
 
 // NativeStory is the full story the scheduler passes to a run as context.
+// Repo is the GitHub repository URL the factory agent clones to implement
+// the story; it flows from the design run payload → story.repo → run payload.
 type NativeStory struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
 	Body   string `json:"body"`
 	Accept string `json:"acceptance"`
 	Owner  string `json:"owner"`
+	Repo   string `json:"repo"`
 }
 
 // NativeHTTPProvider implements StoryProvider against the control-plane HTTP API.
@@ -304,7 +307,8 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 		// Build a rich ticket from the full story (title + body + acceptance) so the
 		// implementing agent has the complete context, and a short `title` so the UI
 		// doesn't show the whole description as the run title.
-		title, ticket := t.Title, t.Title
+		// repo is passed through so OnSeed can clone the project repository.
+		title, ticket, repo := t.Title, t.Title, ""
 		if st, gerr := s.provider.GetStory(ctx, t.ID); gerr == nil {
 			title = st.Title
 			ticket = st.Title
@@ -314,11 +318,13 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 			if st.Accept != "" {
 				ticket += "\n\nAcceptance criteria:\n" + st.Accept
 			}
+			repo = st.Repo
 		}
 		payload := map[string]any{
 			"story_id": t.ID,
 			"title":    title,
 			"ticket":   ticket,
+			"repo":     repo,
 		}
 		runID, err := s.cp.FireRun(ctx, s.workflow, payload)
 		if err != nil {

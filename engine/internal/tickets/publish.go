@@ -44,12 +44,19 @@ type PublishRunner struct {
 
 // Run implements workflow.Runner. It reads the backlog artifact, creates the
 // epic (idempotently), and creates each story (skipping existing ones).
+// The optional inputs["repo"] value is recorded on every story so the factory
+// scheduler knows which repository to clone when the story is fired.
 // Returns a failed StepResult — never an error — so the run surfaces the
 // problem rather than panicking.
 func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[string]any, workdir string) (workflow.StepResult, error) {
 	backlogPath := "docs/backlog.yaml"
 	if v, ok := inputs["backlog"].(string); ok && v != "" {
 		backlogPath = v
+	}
+
+	repo := ""
+	if v, ok := inputs["repo"].(string); ok {
+		repo = v
 	}
 
 	full := filepath.Join(workdir, backlogPath)
@@ -98,6 +105,7 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 			Owner:    s.Owner,
 			Deps:     s.Deps,
 			Status:   StatusBacklog,
+			Repo:     repo,
 		})
 		if err != nil {
 			if isSQLiteConflict(err) {

@@ -46,6 +46,7 @@ type Sprint struct {
 // Story is the unit of work. epic_id and sprint_id are optional. deps is the
 // list of story IDs that must reach StatusDone before this story is "ready".
 // run_id records the control-plane run that is executing this story.
+// repo is the GitHub repository URL the factory run clones to implement this story.
 type Story struct {
 	ID       string   `json:"id"`
 	EpicID   string   `json:"epic_id,omitempty"`
@@ -57,6 +58,7 @@ type Story struct {
 	Deps     []string `json:"deps"`
 	Status   Status   `json:"status"`
 	RunID    string   `json:"run_id,omitempty"`
+	Repo     string   `json:"repo,omitempty"`
 }
 
 const schema = `
@@ -81,7 +83,8 @@ CREATE TABLE IF NOT EXISTS stories (
   accept    TEXT NOT NULL DEFAULT '',
   owner     TEXT NOT NULL DEFAULT '',
   status    TEXT NOT NULL DEFAULT 'backlog',
-  run_id    TEXT NOT NULL DEFAULT ''
+  run_id    TEXT NOT NULL DEFAULT '',
+  repo      TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS story_deps (
@@ -93,6 +96,11 @@ CREATE INDEX IF NOT EXISTS idx_story_deps_story ON story_deps(story_id);
 CREATE INDEX IF NOT EXISTS idx_story_deps_dep   ON story_deps(dep_id);
 `
 
+// migrationAddRepo is an upgrade guard that adds the repo column to existing
+// databases that predate its introduction. SQLite's "duplicate column" error
+// (code 1) is silently swallowed so an already-migrated DB is a no-op.
+const migrationAddRepo = `ALTER TABLE stories ADD COLUMN repo TEXT NOT NULL DEFAULT ''`
+
 // Store is the ticket store backed by a sqlite database.
 type Store struct {
 	db *sql.DB
@@ -100,6 +108,8 @@ type Store struct {
 
 // Open opens (creating if needed) the sqlite database at path and applies the
 // schema. Matches the DSN pattern used in internal/store for WAL + busy_timeout.
+// For databases predating the repo column, a guarded ALTER TABLE is applied so
+// an existing DB upgrades without error on restart.
 func Open(path string) (*Store, error) {
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)", path)
 	db, err := sql.Open("sqlite", dsn)
@@ -109,6 +119,13 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
+	}
+	// Upgrade guard: add repo column to databases created before this migration.
+	// SQLite returns "duplicate column name" (error text contains "duplicate column")
+	// when the column already exists; that is not an error here.
+	if _, err := db.Exec(migrationAddRepo); err != nil && !isDuplicateColumn(err) {
+		db.Close()
+		return nil, fmt.Errorf("migrate stories.repo: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -203,9 +220,9 @@ func (s *Store) CreateStory(st Story) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id)
-		VALUES(?,?,?,?,?,?,?,?,?)`,
-		st.ID, st.EpicID, st.SprintID, st.Title, st.Body, st.Accept, st.Owner, string(st.Status), st.RunID)
+	_, err = tx.Exec(`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		st.ID, st.EpicID, st.SprintID, st.Title, st.Body, st.Accept, st.Owner, string(st.Status), st.RunID, st.Repo)
 	if err != nil {
 		return err
 	}
@@ -220,9 +237,9 @@ func (s *Store) CreateStory(st Story) error {
 // GetStory loads a Story by id, including its deps.
 func (s *Store) GetStory(id string) (Story, error) {
 	var st Story
-	err := s.db.QueryRow(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id
+	err := s.db.QueryRow(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo
 		FROM stories WHERE id=?`, id).
-		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID)
+		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Story{}, ErrNotFound
 	}
@@ -239,7 +256,7 @@ func (s *Store) GetStory(id string) (Story, error) {
 
 // ListStories returns all stories with their deps.
 func (s *Store) ListStories() ([]Story, error) {
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo
 		FROM stories ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -248,7 +265,7 @@ func (s *Store) ListStories() ([]Story, error) {
 	var out []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo); err != nil {
 			return nil, err
 		}
 		out = append(out, st)
@@ -337,7 +354,7 @@ func (s *Store) AddDep(storyID string, deps []string) error {
 // A story with no deps is ready immediately when its stored status is backlog.
 func (s *Store) Ready() ([]Story, error) {
 	// Load all backlog stories and check deps in one pass.
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo
 		FROM stories WHERE status='backlog' ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -346,7 +363,7 @@ func (s *Store) Ready() ([]Story, error) {
 	var candidates []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, st)
@@ -407,6 +424,16 @@ func (s *Store) depsDone(deps []string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// isDuplicateColumn reports whether err is a SQLite "duplicate column name"
+// error that signals the column was already added by a prior migration run.
+func isDuplicateColumn(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return indexOf(msg, "duplicate column name") >= 0
 }
 
 // ---- JSON helpers for http layer --------------------------------------------

@@ -3,8 +3,7 @@
 # that parks execution until a human approves. On rejection the gate loops back to the
 # phase step with the reviewer's feedback injected as $<gate>.detail.
 #
-# Phase order: discovery → PRD → architecture → UI → backlog
-# Phase 2 (ticket-store handoff) is NOT included here — see design-v2.yaml when ready.
+# Phase order: discovery → PRD → architecture → UI → mockups → backlog → handoff → docs_pr
 id: design
 version: 1.0.0
 steps:
@@ -69,12 +68,29 @@ steps:
   - id: ui_gate
     type: human_gate
     inputs:
-      reason: "Review the UI spec (docs/UI_SCREENS.md). Approve to proceed to backlog, or reject with feedback."
+      reason: "Review the UI spec (docs/UI_SCREENS.md). Approve to proceed to mockups, or reject with feedback."
     on_fail:
       goto: ui
       feedback: $ui_gate.detail
 
-  # ── Phase 5: Backlog ──────────────────────────────────────────────────────
+  # ── Phase 5: Mockups — self-contained HTML prototype ─────────────────────
+  - id: mockups
+    type: design
+    agent: designer
+    inputs:
+      screens: $ui.text
+      prd: $prd.text
+      output: docs/mockups/index.html
+
+  - id: mockups_gate
+    type: human_gate
+    inputs:
+      reason: "Revisa el mockup HTML (docs/mockups/index.html). Apruébalo o pide cambios."
+    on_fail:
+      goto: mockups
+      feedback: $mockups_gate.detail
+
+  # ── Phase 6: Backlog ──────────────────────────────────────────────────────
   - id: backlog
     type: design
     agent: scrum-master
@@ -91,13 +107,14 @@ steps:
       goto: backlog
       feedback: $backlog_gate.detail
 
-  # ── Phase 6: Handoff — publish backlog into the native ticket store ───────
+  # ── Phase 7: Handoff — publish backlog into the native ticket store ───────
   - id: handoff
     type: ticket_publish
     inputs:
       backlog: docs/backlog.yaml
+      repo: $trigger.repo
 
-  # ── Phase 7: Publish docs — commit docs/ to a branch and open a PR to dev ─
+  # ── Phase 8: Publish docs — commit docs/ to a branch and open a PR to dev ─
   # Requires the run's workdir to be a clone of the project repo (payload.repo).
   # PR_MODE=github opens a real GitHub PR against the `dev` branch.
   - id: docs_pr

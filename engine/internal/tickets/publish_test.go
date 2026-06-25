@@ -186,3 +186,47 @@ func TestPublishRunnerCustomPath(t *testing.T) {
 		t.Errorf("created: got %v, want 2", res.Output["created"])
 	}
 }
+
+// TestPublishRunnerSetsRepo: inputs["repo"] is stored on every created story.
+func TestPublishRunnerSetsRepo(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	writeBacklog(t, workdir, "docs/backlog.yaml", fixture)
+
+	const wantRepo = "https://github.com/acme/myproject"
+	res := runPublish(t, st, workdir, map[string]any{"repo": wantRepo})
+	if !res.Success {
+		t.Fatalf("publish failed: %s", res.Detail)
+	}
+
+	// Both stories must carry the repo URL.
+	for _, id := range []string{"S1-01", "S1-02"} {
+		st2, err := st.GetStory(id)
+		if err != nil {
+			t.Fatalf("GetStory %s: %v", id, err)
+		}
+		if st2.Repo != wantRepo {
+			t.Errorf("story %s repo: got %q, want %q", id, st2.Repo, wantRepo)
+		}
+	}
+}
+
+// TestPublishRunnerNoRepo: when inputs["repo"] is absent, stories get an empty repo.
+func TestPublishRunnerNoRepo(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	writeBacklog(t, workdir, "docs/backlog.yaml", fixture)
+
+	res := runPublish(t, st, workdir, nil)
+	if !res.Success {
+		t.Fatalf("publish failed: %s", res.Detail)
+	}
+
+	got, err := st.GetStory("S1-01")
+	if err != nil {
+		t.Fatalf("GetStory: %v", err)
+	}
+	if got.Repo != "" {
+		t.Errorf("expected empty repo, got %q", got.Repo)
+	}
+}

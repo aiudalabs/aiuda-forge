@@ -435,6 +435,30 @@ func TestMarkFailedNotFound(t *testing.T) {
 	}
 }
 
+// ---- Story.Repo persistence -------------------------------------------------
+
+func TestStoryRepoRoundTrip(t *testing.T) {
+	st := openTemp(t)
+
+	const wantRepo = "https://github.com/acme/widget"
+	story := tickets.Story{
+		ID:    "SR-01",
+		Title: "Repo story",
+		Repo:  wantRepo,
+	}
+	if err := st.CreateStory(story); err != nil {
+		t.Fatalf("create story: %v", err)
+	}
+
+	got, err := st.GetStory("SR-01")
+	if err != nil {
+		t.Fatalf("get story: %v", err)
+	}
+	if got.Repo != wantRepo {
+		t.Errorf("repo: got %q, want %q", got.Repo, wantRepo)
+	}
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 func storyIDs(stories []tickets.Story) []string {
