@@ -2,6 +2,11 @@
 
 How to produce a stakeholder-ready, self-contained HTML prototype.
 
+> NOTE: The operative content of this skill is also inlined into the `designer`
+> persona (`registry/agents/designer.md`), because the runtime injects only the
+> persona into the agent — skill files are not loaded at runtime. Keep the two in
+> sync when editing. This file is the human-readable reference.
+
 ## Core rule: one file, zero dependencies
 
 The output is a **single HTML file** with all CSS and JavaScript written inline
@@ -45,6 +50,20 @@ Provide a top bar listing every screen by its short name. Clicking a name:
 3. Updates the active link style.
 
 Keep the navigation logic in ~10 lines of vanilla JS.
+
+## Design tokens
+
+Define a small token set once in `:root` and reuse it everywhere — never hardcode a colour
+per element. This makes the mockup look like one coherent product:
+
+```css
+:root{
+  --bg:#f7f8fa; --surface:#fff; --text:#1a1d21; --muted:#6b7280;
+  --accent:#<one domain-appropriate hue>; --accent-ink:#fff;
+  --ok:#16a34a; --warn:#d97706; --danger:#dc2626; --border:#e5e7eb;
+  --radius:10px; --gap:16px; --shadow:0 1px 3px rgba(0,0,0,.08);
+}
+```
 
 ## Visual design guidelines
 
