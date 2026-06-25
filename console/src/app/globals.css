@@ -1019,6 +1019,13 @@ header.top .sp {
   font-family: var(--mono);
   color: var(--ink3);
 }
+/* Título de la story: el dato que el ojo busca — destacado sobre el resto. */
+.trow .ttl {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink);
+  line-height: 1.4;
+}
 .dep {
   font-family: var(--mono);
   font-size: 11px;
@@ -1213,6 +1220,81 @@ header.top .sp {
   color: var(--ink3);
   margin-top: 2px;
   font-family: var(--mono);
+}
+
+/* Titular escaneable de un paso: señal derivada + link PR + toggle de detalle. */
+.step-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.step-sig {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--stroke);
+  background: var(--bg3);
+  color: var(--ink3);
+}
+.step-sig.ok {
+  background: var(--emerald-soft);
+  border-color: rgba(10, 123, 90, 0.24);
+  color: var(--emerald);
+}
+.step-sig.warn {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+.step-sig.info {
+  background: var(--navy-soft);
+  border-color: rgba(20, 40, 80, 0.18);
+  color: var(--navy);
+}
+.step-prlink {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+.step-prlink:hover {
+  text-decoration: underline;
+}
+.step-toggle {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink4);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.step-toggle:hover {
+  color: var(--ink3);
+}
+/* Detalle completo del paso: markdown compacto dentro de la fila. */
+.step-detail.artifact-md {
+  padding: 8px 0 2px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.step-detail.artifact-md h1 {
+  font-size: 14px;
+}
+.step-detail.artifact-md h2 {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.step-detail.artifact-md p,
+.step-detail.artifact-md ul,
+.step-detail.artifact-md ol,
+.step-detail.artifact-md pre {
+  margin-bottom: 8px;
 }
 
 .modal {

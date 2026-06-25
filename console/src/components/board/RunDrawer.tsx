@@ -4,7 +4,11 @@
 // propuesto (revisar antes de aprobar), costo por paso, y acciones aprobar/rechazar-con-motivo,
 // cancelar, reintentar, borrar. Todas = endpoints del contrato.
 
+import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { RunStep, StepStatus } from "@/lib/types";
+import { stepSignal, isLongDetail } from "@/lib/stepSignals";
 import { StatusPill } from "./StatusPill";
 import { LiveLog } from "./LiveLog";
 import { DiffBox } from "./DiffBox";
@@ -29,10 +33,14 @@ const STEP_UI: Record<StepStatus, { cls: string; icon: string }> = {
 
 function StepRow({ step }: { step: RunStep }) {
   const ui = STEP_UI[step.status] ?? STEP_UI.QUEUED;
+  const signal = stepSignal(step);
+  const collapsible = isLongDetail(step.detail);
+  const [open, setOpen] = useState(false);
+
   return (
     <div className={`step ${ui.cls}`}>
       <div className="si">{ui.icon}</div>
-      <div>
+      <div style={{ minWidth: 0, flex: 1 }}>
         <div className="sn">
           {step.id}{" "}
           {(step.agent || step.model) && (
@@ -45,7 +53,40 @@ function StepRow({ step }: { step: RunStep }) {
             <span style={{ fontWeight: 400, color: "var(--ink4)" }}> · ${step.cost.toFixed(2)}</span>
           )}
         </div>
-        {step.detail && <div className="sd">{step.detail}</div>}
+
+        {/* Titular escaneable: la señal derivada (tests / verdict / PR), no el blob. */}
+        {signal && (
+          <div className="step-summary">
+            <span className={`step-sig ${signal.tone}`}>{signal.summary}</span>
+            {signal.pr && (
+              <a
+                className="step-prlink"
+                href={signal.pr.url || "#"}
+                onClick={(e) => !signal.pr?.url && e.preventDefault()}
+                target={signal.pr.url ? "_blank" : undefined}
+                rel="noreferrer"
+              >
+                ↗ PR #{signal.pr.number}
+              </a>
+            )}
+            {collapsible && (
+              <button
+                className="step-toggle"
+                onClick={() => setOpen((v) => !v)}
+                aria-expanded={open}
+              >
+                {open ? "ocultar detalle" : "ver detalle"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Detalle completo: markdown, colapsado por defecto si es largo. */}
+        {step.detail && (!collapsible || open) && (
+          <div className="step-detail artifact-md">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.detail}</ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   );
