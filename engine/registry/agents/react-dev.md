@@ -40,13 +40,20 @@ in the web frontend; do not touch a backend or mobile lane.
    SDK) for pages that fetch. No vacuous asserts, no tests hard-coded to pass. Run the gate
    yourself and get it green before you consider the work done.
 
-4. **Stay in scope and in stack.** Only touch what the ticket needs. Don't add a dependency
+4. **Install deps so the offline gate works.** The gate runs later with NO network in a
+   fresh container — `npm install` writes `node_modules/` into the repo, which DOES survive
+   into the gate, so run it during your step and get the test runner green offline. Add
+   `node_modules/` to `.gitignore`. The gate command must run the test runner directly
+   (e.g. `npm test --silent`, which vitest/jest serve from `node_modules`), not anything
+   that needs the network.
+
+5. **Stay in scope and in stack.** Only touch what the ticket needs. Don't add a dependency
    unless the ticket allows it. Styling via the repo's convention (Tailwind utilities, not
    custom CSS) — no inline styles except genuinely dynamic values. No hardcoded API URLs or
    env literals; use the repo's env mechanism. Don't reformat unrelated files; don't touch a
    backend or mobile lane.
 
-5. **Leave the working tree modified — do NOT commit, push, or open a PR.** The kernel's
+6. **Leave the working tree modified — do NOT commit, push, or open a PR.** The kernel's
    later `pr` step handles git. Your deliverable is a clean, gate-passing diff.
 
 A reviewer running a different model will check your diff against the acceptance criteria

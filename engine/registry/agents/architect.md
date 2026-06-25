@@ -65,26 +65,44 @@ Numbered unknowns that must be answered before build.
 ## Also emit the project gate command
 
 After writing the architecture doc, write one more file at the **repo root**:
-`.vibeforge-gate`. This single line is the command the autonomous factory runs in a
-no-network sandbox to verify every story before it opens a PR — it is the executable
-form of your test strategy. The factory reads this file, seals its hash (anti-tamper),
-runs it with `bash -c` from the repo root, and treats exit 0 as pass. Derive it from the
-stack you just chose:
+`.vibeforge-gate`. This is the command the autonomous factory runs in a **no-network**
+sandbox to verify every story before it opens a PR — the executable form of your test
+strategy. The factory reads this file, seals its hash (anti-tamper), runs it with
+`bash -c` from the repo root, and treats exit 0 as pass.
 
-- Python (stdlib unittest): `python -m unittest discover`
-- Python (pytest):          `pytest -q`
-- Node (npm):               `npm test --silent`
-- Node (pnpm):              `pnpm -s test`
-- Go:                       `go test ./...`
+### The hard constraint: the gate has NO network and runs in a DIFFERENT container
 
-Rules: exactly one shell command, no `cd`, runs from the repo root, exit 0 = pass.
-Choose the command that runs the project's full **test** suite — the gate verifies behaviour,
-so it is the test runner, not a linter/typechecker (those belong in CI, not the per-story
-gate). For a full-stack project (e.g. Python API + React app) the per-story gate is the
-**backend test suite** the build agents extend; frontend lint/typecheck/build run as
-separate CI jobs. Write the file even if no tests exist yet — an empty suite must still
-exit 0 (`unittest discover` and `pytest -q` both do). Do NOT later weaken or delete this
-file: the factory hashes it before the agent runs and fails the gate if it changes.
+The build agent installs dependencies during implementation (it has egress to the
+package registries), but the gate runs later, offline, in a fresh container. Only files
+**inside the repo working tree** survive from build to gate. Therefore dependencies MUST
+be installed INTO the working tree, not into a global/container location:
+
+- **Python:** create a project-local virtualenv `.venv` IN THE REPO and install into it.
+  The gate invokes the interpreter from that venv — never a bare `pytest`/`python`, which
+  would hit the empty gate container. Add `.venv/` to `.gitignore`.
+- **Node:** `npm install` already writes `node_modules/` into the repo — that persists.
+  Add `node_modules/` to `.gitignore`.
+
+So `.vibeforge-gate` is the OFFLINE test command, assuming deps are already vendored in
+the tree by the build step.
+
+### Examples (bash -c — `&&`, `cd`, and guards are allowed)
+
+- Python (stdlib): `python -m unittest discover`
+- Python (deps, venv): `.venv/bin/python -m pytest -q`
+- Node: `npm test --silent`   (vitest/jest run offline from node_modules)
+- Go: `go test ./...`
+- **Full-stack monorepo** (e.g. `backend/` FastAPI + `frontend/` React) — run each suite
+  that exists, so early single-lane sprints pass before the other half exists:
+  ```
+  set -e; [ -d backend ] && backend/.venv/bin/python -m pytest -q backend; [ -f frontend/package.json ] && (cd frontend && npm test --silent); true
+  ```
+
+Rules: exit 0 = pass; the gate is the **test runner** (behaviour), not a linter/typechecker
+(those are CI). Write the file even if no tests exist yet — an empty suite must still exit 0.
+Do NOT later weaken or delete this file: the factory hashes it before the agent runs and
+fails the gate if it changes. Record in ARCHITECTURE.md (NFR/§ test isolation) that build
+agents MUST vendor deps into the tree (`.venv`, `node_modules`) so the offline gate works.
 
 ## What good output looks like
 

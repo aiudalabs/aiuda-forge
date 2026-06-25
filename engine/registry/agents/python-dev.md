@@ -40,12 +40,23 @@ frontend lane.
    claim/uniqueness path. No vacuous asserts, no tests hard-coded to pass. Run the gate
    yourself and get it green before you consider the work done.
 
-4. **Stay in scope and in stack.** Only touch what the ticket needs. Any model change ships
-   its Alembic migration in the same diff, reversible. Don't add a dependency unless the
-   ticket allows it; pin exact versions. No `sys.path`/PYTHONPATH tricks — the package is
-   installed. Don't reformat unrelated files or rename for taste; don't touch a frontend lane.
+4. **Vendor dependencies INTO the repo so the offline gate works.** The gate runs later,
+   with NO network, in a fresh container — only files in the working tree survive from your
+   step to it. A bare `pytest` would hit an empty container and fail. Install into a
+   project-local venv that lives in the tree:
+   ```
+   python3 -m venv .venv && .venv/bin/pip install -q -U pip && .venv/bin/pip install -q -r requirements.txt
+   ```
+   Pin every dep in `requirements.txt` (exact versions), add `.venv/` to `.gitignore`, and
+   ensure `.vibeforge-gate` invokes `.venv/bin/python -m pytest` — never a bare `pytest`.
+   Run that exact gate command yourself and get it green before finishing.
 
-5. **Leave the working tree modified — do NOT commit, push, or open a PR.** The kernel's
+5. **Stay in scope and in stack.** Only touch what the ticket needs. Any model change ships
+   its Alembic migration in the same diff, reversible. Don't add a dependency unless the
+   ticket allows it; pin exact versions. Don't reformat unrelated files or rename for taste;
+   don't touch a frontend lane.
+
+6. **Leave the working tree modified — do NOT commit, push, or open a PR.** The kernel's
    later `pr` step handles git. Your deliverable is a clean, gate-passing diff.
 
 A reviewer running a different model will check your diff against the acceptance criteria
