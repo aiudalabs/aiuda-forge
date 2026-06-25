@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"forge/internal/projects"
 	"forge/internal/settings"
 	"forge/internal/store"
 	"forge/internal/tickets"
@@ -19,7 +20,8 @@ import (
 )
 
 // Server wires the store, the executor engine, the event bus, the registry,
-// the settings store, and the native ticket store into one HTTP handler.
+// the settings store, the native ticket store, and the project store into one
+// HTTP handler.
 type Server struct {
 	Store    *store.Store
 	Engine   *workflow.Engine
@@ -27,15 +29,17 @@ type Server struct {
 	Registry *Registry
 	Settings *settings.Store
 	Tickets  *tickets.Store
+	Projects *projects.Store // nil when ProjectsDB is not configured
 	mux      *http.ServeMux
 }
 
 // NewServer builds and routes a Server. The settings store lives next to the
 // registry (registry/../settings.json) — config in the control plane, not the kernel.
-// tix may be nil; ticket routes return 503 until it is set (needTickets guard).
-func NewServer(st *store.Store, eng *workflow.Engine, bus *Bus, reg *Registry, tix *tickets.Store) *Server {
+// tix and proj may be nil; their routes return 503 until they are set
+// (needTickets / needProjects guards).
+func NewServer(st *store.Store, eng *workflow.Engine, bus *Bus, reg *Registry, tix *tickets.Store, proj *projects.Store) *Server {
 	set, _ := settings.Open(filepath.Join(filepath.Dir(reg.Root), "settings.json"))
-	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, Tickets: tix, mux: http.NewServeMux()}
+	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, Tickets: tix, Projects: proj, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -86,6 +90,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /steps/{id}/report", s.report)
 	m.HandleFunc("POST /steps/{id}/heartbeat", s.heartbeat)
 	m.HandleFunc("POST /steps/{id}/usage", s.usage)
+
+	// Project store. Guarded per-request — Projects may be nil (no ProjectsDB configured).
+	m.HandleFunc("POST /projects", s.needProjects(s.createProject))
+	m.HandleFunc("GET /projects", s.needProjects(s.listProjects))
+	m.HandleFunc("GET /projects/{id}", s.needProjects(s.getProject))
 
 	// Native ticket store. Registered unconditionally and guarded per-request:
 	// Tickets may be nil (no TicketsDB configured) — needTickets returns 503 in that case.

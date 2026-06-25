@@ -14,6 +14,7 @@ import (
 	"forge/internal/api"
 	"forge/internal/gate"
 	"forge/internal/pr"
+	"forge/internal/projects"
 	"forge/internal/sandbox"
 	"forge/internal/store"
 	"forge/internal/tickets"
@@ -24,6 +25,7 @@ import (
 type Config struct {
 	DBPath         string         // sqlite path
 	TicketsDB      string         // tickets sqlite path; "" disables the ticket store
+	ProjectsDB     string         // projects sqlite path; "" disables the project store
 	RegistryRoot   string         // registry/
 	WorkdirRoot    string         // where per-run working trees live
 	EngineMode     string         // "echo" (FakeBackend) | "claude" (real)
@@ -36,12 +38,13 @@ type Config struct {
 
 // App is the assembled kernel.
 type App struct {
-	Store   *store.Store
-	Tickets *tickets.Store // nil when TicketsDB is not configured
-	Engine  *workflow.Engine
-	Bus     *api.Bus
-	Server  *api.Server
-	workers int
+	Store    *store.Store
+	Tickets  *tickets.Store  // nil when TicketsDB is not configured
+	Projects *projects.Store // nil when ProjectsDB is not configured
+	Engine   *workflow.Engine
+	Bus      *api.Bus
+	Server   *api.Server
+	workers  int
 }
 
 // Build assembles a kernel per cfg.
@@ -137,15 +140,30 @@ func Build(cfg Config) (*App, error) {
 		eng.Register("ticket_publish", &tickets.PublishRunner{Store: tix})
 	}
 
+	// Project store — optional. When ProjectsDB is set, open the store and pass
+	// it to the API server so POST/GET /projects routes become active.
+	var proj *projects.Store
+	if cfg.ProjectsDB != "" {
+		var projErr error
+		proj, projErr = projects.Open(cfg.ProjectsDB)
+		if projErr != nil {
+			_ = st.Close()
+			if tix != nil {
+				_ = tix.Close()
+			}
+			return nil, fmt.Errorf("open projects db: %w", projErr)
+		}
+	}
+
 	bus := api.NewBus(st)
 	reg := api.NewRegistry(cfg.RegistryRoot)
-	srv := api.NewServer(st, eng, bus, reg, tix)
+	srv := api.NewServer(st, eng, bus, reg, tix, proj)
 
 	workers := cfg.Workers
 	if workers <= 0 {
 		workers = 1
 	}
-	return &App{Store: st, Tickets: tix, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
+	return &App{Store: st, Tickets: tix, Projects: proj, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
 }
 
 // ClaudeBackend builds the real claude -p backend.
@@ -175,6 +193,9 @@ func (a *App) StartBackground(ctx context.Context) {
 func (a *App) Close() error {
 	if a.Tickets != nil {
 		_ = a.Tickets.Close()
+	}
+	if a.Projects != nil {
+		_ = a.Projects.Close()
 	}
 	return a.Store.Close()
 }
