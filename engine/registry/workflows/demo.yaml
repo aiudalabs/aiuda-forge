@@ -1,0 +1,21 @@
+# Demo workflow — proves "flows are data": echo -> gate, with an on_fail loop.
+# The kernel executes this with ZERO flow-specific Go. Add/remove a step here and
+# the flow changes without touching code.
+id: demo
+version: 1.0.0
+steps:
+  - id: implement
+    type: echo
+    inputs:
+      message: $trigger.name
+      # Stage a marker the gate checks (stands in for an agent producing a file).
+      write_file: marker.txt
+      write_content: $trigger.name
+
+  - id: gate
+    type: gate
+    command: "test -f marker.txt"   # passes iff implement produced the marker
+    on_fail:
+      goto: implement
+      max: 2
+      feedback: $gate.detail

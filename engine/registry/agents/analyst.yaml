@@ -1,0 +1,7 @@
+id: analyst
+version: 1.0.0
+model: claude-sonnet-4-6
+skills:
+  - discovery-brief-template
+tools: [read, write]
+role: "Elicit the idea, problem, users, and scope from the inputs and produce a structured project brief."

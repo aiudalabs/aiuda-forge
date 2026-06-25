@@ -1,0 +1,7 @@
+id: architect
+version: 1.0.0
+model: claude-opus-4-8
+skills:
+  - architecture-template
+tools: [read, write]
+role: "Derive the technology stack, module structure, data model, and key architectural decisions from the PRD."

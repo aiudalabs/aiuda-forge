@@ -1,0 +1,49 @@
+# A richer factory variant — same kernel, MORE steps, all in DATA. It adds
+# agentic_verify (a fresh cross-model verifier) and a human_gate before pr, with
+# the generalized on_fail loop wiring both gate-fix and verify-fix back to the
+# implementer. Not a line of Go differs from factory.yaml — that is the thesis.
+id: factory-plus
+version: 1.0.0
+steps:
+  - id: implement
+    type: agent
+    agent: dev
+    inputs:
+      ticket: $trigger.ticket
+
+  - id: gate
+    type: gate
+    command_from: repo
+    on_fail:
+      goto: implement
+      max: 2
+      feedback: $gate.detail
+
+  - id: review
+    type: agent
+    agent: reviewer
+    model: claude-sonnet-4-6
+    prompt: adversarial
+    inputs:
+      ticket: $trigger.ticket
+
+  - id: verify
+    type: agentic_verify        # fresh verifier, different model, works|broken + evidence
+    agent: verifier
+    model: claude-sonnet-4-6
+    inputs:
+      ticket: $trigger.ticket
+    on_fail:
+      goto: implement           # broken -> back to the implementer (capped)
+      max: 2
+
+  - id: approve
+    type: human_gate            # high-risk gate: pause + notify, resume via /approve
+    inputs:
+      reason: "Ship to the target repo — needs human sign-off."
+
+  - id: pr
+    type: pr
+    approval: risk-policy
+    inputs:
+      ticket: $trigger.ticket

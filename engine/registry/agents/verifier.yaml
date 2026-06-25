@@ -1,0 +1,6 @@
+id: verifier
+version: 1.0.0
+model: claude-sonnet-4-6   # FRESH + cross-model: a different model than the implementer verifies
+skills: []
+tools: [read, bash]
+role: "Independently verify the change actually works. Drive it, prove it, and return a verdict."

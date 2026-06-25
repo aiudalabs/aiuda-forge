@@ -1,0 +1,7 @@
+id: pm
+version: 1.0.0
+model: claude-sonnet-4-6
+skills:
+  - prd-template
+tools: [read, write]
+role: "Turn the project brief into a full PRD with goals, functional/non-functional requirements, epics, and success metrics."

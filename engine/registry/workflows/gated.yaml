@@ -1,0 +1,30 @@
+# Governance demo — same kernel, all DATA. A human_gate before pr PARKS the run
+# (AWAITING + run.awaiting_approval) until POST /runs/{id}/steps/approve/approve.
+# Proves controlled autonomy: autonomous up to the checkpoint, then human sign-off.
+id: gated
+version: 1.0.0
+steps:
+  - id: implement
+    type: agent
+    agent: dev
+    inputs:
+      ticket: $trigger.ticket
+
+  - id: gate
+    type: gate
+    command_from: repo
+    on_fail:
+      goto: implement
+      max: 2
+      feedback: $gate.detail
+
+  - id: approve
+    type: human_gate
+    inputs:
+      reason: "Ship to the target repo — needs human sign-off."
+
+  - id: pr
+    type: pr
+    approval: risk-policy
+    inputs:
+      ticket: $trigger.ticket
