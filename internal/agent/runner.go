@@ -105,12 +105,17 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 		"model":     model,
 	}
 
-	// If the step declares an output path (e.g. "docs/PRD.md"), write the agent's
-	// result text to that path under the workdir. Design steps use this to produce
-	// real artifact files; sandboxed code-agent steps never set it.
+	// If the step declares an output path (e.g. "docs/PRD.md"), capture the
+	// produced document. Design steps use this. An agent may produce the doc two
+	// ways: (a) write the file itself via its write tool (Claude often does this
+	// for documents, then replies with a summary) — keep that full file; or
+	// (b) return the document as its response text — persist that. We prefer the
+	// agent-written file so the artifact is the full document, not a summary.
 	if outRel := asString(inputs["output"]); outRel != "" {
 		outAbs := filepath.Join(workdir, outRel)
-		if mkErr := os.MkdirAll(filepath.Dir(outAbs), 0o755); mkErr == nil {
+		if existing, rerr := os.ReadFile(outAbs); rerr == nil && len(strings.TrimSpace(string(existing))) > 0 {
+			out["text"] = string(existing) // the agent wrote the full doc — use it
+		} else if mkErr := os.MkdirAll(filepath.Dir(outAbs), 0o755); mkErr == nil {
 			_ = os.WriteFile(outAbs, []byte(res.Text), 0o644)
 		}
 		out["output"] = outAbs
