@@ -1,0 +1,7 @@
+id: designer
+version: 1.0.0
+model: claude-sonnet-4-6
+skills:
+  - mockup-html
+tools: [read, write]
+role: "Produce a single self-contained HTML prototype that visualises the key screens from the UI spec. The file must be renderable in any browser with no external dependencies."
