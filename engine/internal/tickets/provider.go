@@ -17,6 +17,22 @@ type TicketProvider interface {
 	// MarkFailed sets a story's status to failed. Called when the run driving
 	// the story reaches a terminal non-DONE state (FAILED, CANCELLED).
 	MarkFailed(ctx context.Context, id string) error
+
+	// ---- Sprint-batched (goal mode) -----------------------------------------
+
+	// ReadySprints returns sprints that can be fired as a single goal-mode run
+	// (≥1 story, all backlog, external deps done).
+	ReadySprints(ctx context.Context) ([]Sprint, error)
+	// StoriesBySprint returns a sprint's stories in intra-sprint topological order.
+	StoriesBySprint(ctx context.Context, sprintID string) ([]Story, error)
+	// ClaimSprint atomically claims all of a sprint's backlog stories at once.
+	// ok=false (no error) if a concurrent claimer already moved any of them.
+	ClaimSprint(ctx context.Context, sprintID string) (claimed []string, ok bool, err error)
+	// MarkSprintDone / MarkSprintFailed advance all the sprint's running stories.
+	MarkSprintDone(ctx context.Context, sprintID string) error
+	MarkSprintFailed(ctx context.Context, sprintID string) error
+	// SetSprintRun records the firing run_id on every story in the sprint.
+	SetSprintRun(ctx context.Context, sprintID, runID string) error
 }
 
 // NativeProvider implements TicketProvider backed by Store.
@@ -53,4 +69,28 @@ func (p *NativeProvider) ClaimStory(_ context.Context, id string) (bool, error) 
 
 func (p *NativeProvider) MarkFailed(_ context.Context, id string) error {
 	return p.store.MarkFailed(id)
+}
+
+func (p *NativeProvider) ReadySprints(_ context.Context) ([]Sprint, error) {
+	return p.store.ReadySprints()
+}
+
+func (p *NativeProvider) StoriesBySprint(_ context.Context, sprintID string) ([]Story, error) {
+	return p.store.StoriesBySprint(sprintID)
+}
+
+func (p *NativeProvider) ClaimSprint(_ context.Context, sprintID string) ([]string, bool, error) {
+	return p.store.ClaimSprint(sprintID)
+}
+
+func (p *NativeProvider) MarkSprintDone(_ context.Context, sprintID string) error {
+	return p.store.MarkSprintDone(sprintID)
+}
+
+func (p *NativeProvider) MarkSprintFailed(_ context.Context, sprintID string) error {
+	return p.store.MarkSprintFailed(sprintID)
+}
+
+func (p *NativeProvider) SetSprintRun(_ context.Context, sprintID, runID string) error {
+	return p.store.SetSprintRun(sprintID, runID)
 }

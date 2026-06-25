@@ -205,3 +205,37 @@ func TestSettings(t *testing.T) {
 		t.Fatalf("PUT settings (policy) failed: %d", resp.StatusCode)
 	}
 }
+
+// TestExecutionUnitSetting: execution_unit defaults to "sprint", accepts "story",
+// and rejects an unknown value with 400 (without corrupting the stored value).
+func TestExecutionUnitSetting(t *testing.T) {
+	base, _, _ := testKernel(t)
+
+	// Default must be "sprint".
+	_, d := do(t, "GET", base+"/settings", nil)
+	if !strings.Contains(string(d), `"execution_unit":"sprint"`) {
+		t.Fatalf("default execution_unit should be sprint, got: %s", d)
+	}
+
+	// Switch to story.
+	if resp, d := do(t, "PUT", base+"/settings", map[string]any{
+		"execution_unit": "story",
+	}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT execution_unit=story = %d: %s", resp.StatusCode, d)
+	}
+	_, d = do(t, "GET", base+"/settings", nil)
+	if !strings.Contains(string(d), `"execution_unit":"story"`) {
+		t.Fatalf("execution_unit did not persist as story: %s", d)
+	}
+
+	// An invalid value is a 400 and must NOT change the stored value.
+	if resp, _ := do(t, "PUT", base+"/settings", map[string]any{
+		"execution_unit": "epic",
+	}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid execution_unit should be 400, got %d", resp.StatusCode)
+	}
+	_, d = do(t, "GET", base+"/settings", nil)
+	if !strings.Contains(string(d), `"execution_unit":"story"`) {
+		t.Fatalf("rejected PUT corrupted stored execution_unit: %s", d)
+	}
+}

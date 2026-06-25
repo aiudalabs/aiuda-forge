@@ -91,3 +91,28 @@ func (c *cpClient) RunStatus(ctx context.Context, runID string) (string, error) 
 	}
 	return run.Status, nil
 }
+
+// ExecutionUnit GETs /settings and returns the execution_unit field
+// ("sprint"|"story"). An empty/missing value is returned as "" so the caller can
+// apply its own default.
+func (c *cpClient) ExecutionUnit(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/settings", nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get /settings: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get /settings: status %d", resp.StatusCode)
+	}
+	var s struct {
+		ExecutionUnit string `json:"execution_unit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return "", fmt.Errorf("decode /settings: %w", err)
+	}
+	return s.ExecutionUnit, nil
+}

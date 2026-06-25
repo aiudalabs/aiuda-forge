@@ -7,10 +7,16 @@ package settings
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 )
+
+// ErrInvalid wraps validation failures from Put so callers (the HTTP layer) can
+// distinguish a bad request from a server fault and answer 400 instead of 500.
+var ErrInvalid = errors.New("invalid settings")
 
 // Settings is the editable configuration surface (doc 16 §2.7).
 type Settings struct {
@@ -23,6 +29,21 @@ type Settings struct {
 	Sandbox map[string]any `json:"sandbox"`
 	// Merge policy by lane/risk: {"low":"automerge","auth":"human_gate"}.
 	MergePolicy map[string]string `json:"merge_policy"`
+	// ExecutionUnit selects how the orchestrator batches work into runs:
+	//   "sprint" (default) — a whole sprint is implemented in ONE run → ONE PR.
+	//   "story"            — one run/PR per story (the original per-story behavior).
+	ExecutionUnit string `json:"execution_unit"`
+}
+
+// Execution-unit modes. "sprint" is the default (goal mode).
+const (
+	ExecutionUnitSprint = "sprint"
+	ExecutionUnitStory  = "story"
+)
+
+// validExecutionUnit reports whether v is an accepted execution_unit value.
+func validExecutionUnit(v string) bool {
+	return v == ExecutionUnitSprint || v == ExecutionUnitStory
 }
 
 // AgentAuth holds how the agent authenticates. Secret never crosses to clients.
@@ -49,15 +70,21 @@ func Open(path string) (*Store, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
+	// Backfill for settings files written before execution_unit existed: an empty
+	// value means "unset" → default to sprint (goal mode).
+	if st.s.ExecutionUnit == "" {
+		st.s.ExecutionUnit = ExecutionUnitSprint
+	}
 	return st, nil
 }
 
 func defaults() Settings {
 	return Settings{
-		MCP:         map[string]map[string]any{},
-		AgentAuth:   AgentAuth{Mode: "subscription"},
-		Sandbox:     map[string]any{"runtime": "docker", "egress": "allowlist"},
-		MergePolicy: map[string]string{"low": "automerge", "high": "human_gate"},
+		MCP:           map[string]map[string]any{},
+		AgentAuth:     AgentAuth{Mode: "subscription"},
+		Sandbox:       map[string]any{"runtime": "docker", "egress": "allowlist"},
+		MergePolicy:   map[string]string{"low": "automerge", "high": "human_gate"},
+		ExecutionUnit: ExecutionUnitSprint, // default: goal mode (whole sprint per run)
 	}
 }
 
@@ -91,6 +118,16 @@ func (st *Store) Put(in Settings) (Settings, error) {
 	}
 	if in.MergePolicy != nil {
 		st.s.MergePolicy = in.MergePolicy
+	}
+	// execution_unit: an empty value means "unchanged"; a present value must be
+	// one of the accepted modes — reject anything else so the orchestrator never
+	// reads a garbage mode.
+	if in.ExecutionUnit != "" {
+		if !validExecutionUnit(in.ExecutionUnit) {
+			return Settings{}, fmt.Errorf("%w: execution_unit %q must be %q or %q",
+				ErrInvalid, in.ExecutionUnit, ExecutionUnitSprint, ExecutionUnitStory)
+		}
+		st.s.ExecutionUnit = in.ExecutionUnit
 	}
 	if in.AgentAuth.Mode != "" {
 		st.s.AgentAuth.Mode = in.AgentAuth.Mode

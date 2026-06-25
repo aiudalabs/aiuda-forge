@@ -459,6 +459,244 @@ func TestStoryRepoRoundTrip(t *testing.T) {
 	}
 }
 
+// ---- Sprint-batched (goal mode) ---------------------------------------------
+
+// seedSprint creates a sprint and its stories (each pre-assigned to the sprint).
+func seedSprint(t *testing.T, st *tickets.Store, sprintID string, stories ...tickets.Story) {
+	t.Helper()
+	if err := st.CreateSprint(tickets.Sprint{ID: sprintID, Name: sprintID}); err != nil {
+		t.Fatalf("create sprint %s: %v", sprintID, err)
+	}
+	for _, s := range stories {
+		s.SprintID = sprintID
+		if err := st.CreateStory(s); err != nil {
+			t.Fatalf("create story %s: %v", s.ID, err)
+		}
+	}
+}
+
+// TestStoriesBySprintTopoOrder: intra-sprint deps order the stories so a story
+// always follows its in-sprint deps; ties break by id.
+func TestStoriesBySprintTopoOrder(t *testing.T) {
+	st := openTemp(t)
+	// C depends on B, B depends on A → A, B, C. D has no deps; by id it sorts
+	// before others but must still respect that nothing depends on it.
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "C", Title: "C", Deps: []string{"B"}},
+		tickets.Story{ID: "B", Title: "B", Deps: []string{"A"}},
+		tickets.Story{ID: "A", Title: "A"},
+		tickets.Story{ID: "D", Title: "D"},
+	)
+
+	got, err := st.StoriesBySprint("SP1")
+	if err != nil {
+		t.Fatalf("stories by sprint: %v", err)
+	}
+	order := storyIDs(got)
+	// A must come before B, B before C. D (no deps) sorts by id first.
+	if idx(order, "A") > idx(order, "B") || idx(order, "B") > idx(order, "C") {
+		t.Errorf("topo order violated: %v", order)
+	}
+	// Deterministic full order: at each step the lowest-id story whose in-sprint
+	// deps are already placed is chosen → A (no deps), B (A placed), C (B placed),
+	// then D (no deps, but higher id than A/B/C so it lands last).
+	want := []string{"A", "B", "C", "D"}
+	if !equalSlice(order, want) {
+		t.Errorf("order: got %v, want %v", order, want)
+	}
+}
+
+// TestStoriesBySprintExternalDepIgnored: a dep OUTSIDE the sprint doesn't affect
+// intra-sprint ordering.
+func TestStoriesBySprintExternalDepIgnored(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "EXT", Title: "ext"}); err != nil {
+		t.Fatal(err)
+	}
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "B", Title: "B", Deps: []string{"EXT"}},
+		tickets.Story{ID: "A", Title: "A"},
+	)
+	got, _ := st.StoriesBySprint("SP1")
+	// EXT is external → no intra-sprint constraint; order is id-stable A, B.
+	if !equalSlice(storyIDs(got), []string{"A", "B"}) {
+		t.Errorf("order: got %v, want [A B]", storyIDs(got))
+	}
+}
+
+// TestReadySprintsAllBacklog: a sprint with all-backlog stories and no external
+// deps is ready; a sprint with a started story is not.
+func TestReadySprintsAllBacklog(t *testing.T) {
+	st := openTemp(t)
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "A", Title: "A"},
+		tickets.Story{ID: "B", Title: "B", Deps: []string{"A"}}, // intra-sprint dep — OK
+	)
+	seedSprint(t, st, "SP2",
+		tickets.Story{ID: "C", Title: "C", Status: tickets.StatusRunning}, // already started
+		tickets.Story{ID: "D", Title: "D"},
+	)
+
+	ready, err := st.ReadySprints()
+	if err != nil {
+		t.Fatalf("ready sprints: %v", err)
+	}
+	ids := sprintIDs(ready)
+	if !contains(ids, "SP1") {
+		t.Errorf("SP1 should be ready (all backlog, intra-sprint dep), got %v", ids)
+	}
+	if contains(ids, "SP2") {
+		t.Errorf("SP2 should NOT be ready (a story already started), got %v", ids)
+	}
+}
+
+// TestReadySprintsExternalDepGate: an external (cross-sprint) dep that is not
+// done blocks the sprint; once done, the sprint becomes ready.
+func TestReadySprintsExternalDepGate(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "EXT", Title: "ext"}); err != nil {
+		t.Fatal(err)
+	}
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "A", Title: "A", Deps: []string{"EXT"}}, // external dep
+	)
+
+	ready, _ := st.ReadySprints()
+	if contains(sprintIDs(ready), "SP1") {
+		t.Errorf("SP1 should be blocked while EXT is backlog, got %v", sprintIDs(ready))
+	}
+
+	if err := st.UpdateStoryStatus("EXT", tickets.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	ready, _ = st.ReadySprints()
+	if !contains(sprintIDs(ready), "SP1") {
+		t.Errorf("SP1 should be ready after EXT done, got %v", sprintIDs(ready))
+	}
+}
+
+// TestReadySprintsSkipsEmpty: a sprint with zero stories is never ready.
+func TestReadySprintsSkipsEmpty(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateSprint(tickets.Sprint{ID: "EMPTY", Name: "empty"}); err != nil {
+		t.Fatal(err)
+	}
+	ready, _ := st.ReadySprints()
+	if contains(sprintIDs(ready), "EMPTY") {
+		t.Errorf("empty sprint must be skipped, got %v", sprintIDs(ready))
+	}
+}
+
+// TestClaimSprintAtomicity: the first claim moves all stories to running and
+// returns them topo-ordered; a second claim returns ok=false.
+func TestClaimSprintAtomicity(t *testing.T) {
+	st := openTemp(t)
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "B", Title: "B", Deps: []string{"A"}},
+		tickets.Story{ID: "A", Title: "A"},
+	)
+
+	claimed, ok, err := st.ClaimSprint("SP1")
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if !ok {
+		t.Fatal("first claim should win")
+	}
+	if !equalSlice(claimed, []string{"A", "B"}) {
+		t.Errorf("claimed order: got %v, want [A B]", claimed)
+	}
+	for _, id := range []string{"A", "B"} {
+		got, _ := st.GetStory(id)
+		if got.Status != tickets.StatusRunning {
+			t.Errorf("%s status after claim: want running, got %s", id, got.Status)
+		}
+	}
+
+	// Second claim: every story is now running → ok=false, nothing changes.
+	_, ok2, err := st.ClaimSprint("SP1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok2 {
+		t.Error("second claim should not win — sprint already running")
+	}
+}
+
+// TestClaimSprintPartialNotBacklog: if even one story is already non-backlog the
+// claim is abandoned and the other stories stay untouched.
+func TestClaimSprintPartialNotBacklog(t *testing.T) {
+	st := openTemp(t)
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "A", Title: "A", Status: tickets.StatusRunning},
+		tickets.Story{ID: "B", Title: "B"},
+	)
+	_, ok, err := st.ClaimSprint("SP1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("claim should fail when a story is not backlog")
+	}
+	// B must remain backlog — the failed claim wrote nothing.
+	got, _ := st.GetStory("B")
+	if got.Status != tickets.StatusBacklog {
+		t.Errorf("B should stay backlog after abandoned claim, got %s", got.Status)
+	}
+}
+
+// TestMarkSprintDoneAndFailed: completion advances only the sprint's running
+// stories.
+func TestMarkSprintDoneAndFailed(t *testing.T) {
+	st := openTemp(t)
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "A", Title: "A", Status: tickets.StatusRunning},
+		tickets.Story{ID: "B", Title: "B", Status: tickets.StatusRunning},
+	)
+	seedSprint(t, st, "SP2",
+		tickets.Story{ID: "C", Title: "C", Status: tickets.StatusRunning},
+	)
+
+	if err := st.MarkSprintDone("SP1"); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+	for _, id := range []string{"A", "B"} {
+		got, _ := st.GetStory(id)
+		if got.Status != tickets.StatusDone {
+			t.Errorf("%s: want done, got %s", id, got.Status)
+		}
+	}
+	// SP2 untouched.
+	if got, _ := st.GetStory("C"); got.Status != tickets.StatusRunning {
+		t.Errorf("C should be untouched, got %s", got.Status)
+	}
+
+	if err := st.MarkSprintFailed("SP2"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	if got, _ := st.GetStory("C"); got.Status != tickets.StatusFailed {
+		t.Errorf("C: want failed, got %s", got.Status)
+	}
+}
+
+// TestSetSprintRun: records the run_id on every story in the sprint.
+func TestSetSprintRun(t *testing.T) {
+	st := openTemp(t)
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "A", Title: "A"},
+		tickets.Story{ID: "B", Title: "B"},
+	)
+	if err := st.SetSprintRun("SP1", "run-sprint-1"); err != nil {
+		t.Fatalf("set sprint run: %v", err)
+	}
+	for _, id := range []string{"A", "B"} {
+		got, _ := st.GetStory(id)
+		if got.RunID != "run-sprint-1" {
+			t.Errorf("%s run_id: got %q, want run-sprint-1", id, got.RunID)
+		}
+	}
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 func storyIDs(stories []tickets.Story) []string {
@@ -478,3 +716,32 @@ func contains(ss []string, s string) bool {
 	return false
 }
 
+func sprintIDs(sprints []tickets.Sprint) []string {
+	ids := make([]string, len(sprints))
+	for i, sp := range sprints {
+		ids[i] = sp.ID
+	}
+	return ids
+}
+
+// idx returns the position of s in ss, or len(ss) if absent.
+func idx(ss []string, s string) int {
+	for i, v := range ss {
+		if v == s {
+			return i
+		}
+	}
+	return len(ss)
+}
+
+func equalSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

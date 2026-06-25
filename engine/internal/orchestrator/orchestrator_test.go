@@ -45,6 +45,7 @@ type fakeControlPlane struct {
 	mu       sync.Mutex
 	runs     []firedRun
 	statuses map[string]string // runID → status; absent → "RUNNING"
+	execUnit string            // execution_unit reported to RunOnce; "" → "story"
 }
 
 type firedRun struct {
@@ -67,6 +68,17 @@ func (f *fakeControlPlane) RunStatus(_ context.Context, runID string) (string, e
 		return s, nil
 	}
 	return "RUNNING", nil
+}
+
+// ExecutionUnit reports the configured mode. Defaults to "story" in tests so the
+// existing per-story tests keep their semantics; sprint tests set execUnit.
+func (f *fakeControlPlane) ExecutionUnit(_ context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.execUnit == "" {
+		return "story", nil
+	}
+	return f.execUnit, nil
 }
 
 // setStatus simulates a run reaching a terminal state.

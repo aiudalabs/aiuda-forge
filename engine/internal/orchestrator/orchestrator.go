@@ -61,6 +61,10 @@ type ControlPlane interface {
 	// RunStatus returns the current status of a run ("RUNNING", "DONE",
 	// "FAILED", …) so the orchestrator can advance a ticket once its run finishes.
 	RunStatus(ctx context.Context, runID string) (status string, err error)
+	// ExecutionUnit returns the configured execution_unit ("sprint"|"story") from
+	// the control-plane settings. The native scheduler reads it each cycle to pick
+	// sprint-batched (goal mode) vs per-story execution.
+	ExecutionUnit(ctx context.Context) (string, error)
 }
 
 // Config holds tunables for the orchestrator loop.

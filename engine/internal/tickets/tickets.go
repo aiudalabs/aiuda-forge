@@ -390,6 +390,233 @@ func (s *Store) Ready() ([]Story, error) {
 	return out, nil
 }
 
+// ---- Sprint-batched execution ----------------------------------------------
+//
+// "Goal mode" fires a whole sprint as ONE run on ONE branch → ONE PR. The store
+// surface here is the readiness/claim/completion machinery the orchestrator uses
+// to batch a sprint; the per-story machinery above still backs story mode.
+
+// StoriesBySprint returns the sprint's stories ordered TOPOLOGICALLY by their
+// intra-sprint deps — a story comes after any of its deps that live in the SAME
+// sprint. Deps pointing outside the sprint do not affect intra-sprint order.
+// Ties (no ordering constraint between two stories) are broken stably by id, so
+// the order is deterministic. Returns an empty slice for a sprint with no stories.
+func (s *Store) StoriesBySprint(sprintID string) ([]Story, error) {
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo
+		FROM stories WHERE sprint_id=? ORDER BY id ASC`, sprintID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stories []Story
+	for rows.Next() {
+		var st Story
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo); err != nil {
+			return nil, err
+		}
+		stories = append(stories, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range stories {
+		deps, err := s.loadDeps(stories[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		stories[i].Deps = deps
+	}
+	return topoSortStories(stories), nil
+}
+
+// topoSortStories returns stories ordered so every story follows the deps it has
+// that are present in the same set. Ties are broken by id (stable, deterministic).
+// A dependency cycle (which the backlog should never contain) degrades gracefully
+// to id order for the stories it cannot place, rather than dropping them.
+func topoSortStories(stories []Story) []Story {
+	inSet := make(map[string]bool, len(stories))
+	for _, st := range stories {
+		inSet[st.ID] = true
+	}
+	// Remaining unmet intra-sprint deps per story.
+	pending := make(map[string]map[string]bool, len(stories))
+	for _, st := range stories {
+		need := map[string]bool{}
+		for _, dep := range st.Deps {
+			if inSet[dep] {
+				need[dep] = true
+			}
+		}
+		pending[st.ID] = need
+	}
+
+	out := make([]Story, 0, len(stories))
+	placed := make(map[string]bool, len(stories))
+	for len(out) < len(stories) {
+		// Pick the lowest-id story whose intra-sprint deps are all placed.
+		var next *Story
+		for i := range stories {
+			st := stories[i]
+			if placed[st.ID] {
+				continue
+			}
+			if depsPlaced(pending[st.ID], placed) {
+				next = &stories[i]
+				break
+			}
+		}
+		if next == nil {
+			// Cycle / unresolvable: append the rest in id order to avoid dropping work.
+			for i := range stories {
+				if !placed[stories[i].ID] {
+					out = append(out, stories[i])
+					placed[stories[i].ID] = true
+				}
+			}
+			break
+		}
+		out = append(out, *next)
+		placed[next.ID] = true
+	}
+	return out
+}
+
+// depsPlaced reports whether every dep in need has already been placed.
+func depsPlaced(need, placed map[string]bool) bool {
+	for dep := range need {
+		if !placed[dep] {
+			return false
+		}
+	}
+	return true
+}
+
+// ReadySprints returns sprints that can be fired as a single goal-mode run. A
+// sprint is ready when: it has ≥1 story, EVERY story is still backlog (none
+// started), and every dep pointing OUTSIDE the sprint is done. Intra-sprint deps
+// are resolved inside the single run, so they never block sprint readiness.
+// Sprints with zero stories are skipped.
+func (s *Store) ReadySprints() ([]Sprint, error) {
+	sprints, err := s.ListSprints()
+	if err != nil {
+		return nil, err
+	}
+	var out []Sprint
+	for _, sp := range sprints {
+		ready, err := s.sprintReady(sp.ID)
+		if err != nil {
+			return nil, err
+		}
+		if ready {
+			out = append(out, sp)
+		}
+	}
+	return out, nil
+}
+
+// sprintReady reports whether the sprint at sprintID satisfies the goal-mode
+// readiness rule (≥1 story, all backlog, external deps done).
+func (s *Store) sprintReady(sprintID string) (bool, error) {
+	stories, err := s.StoriesBySprint(sprintID)
+	if err != nil {
+		return false, err
+	}
+	if len(stories) == 0 {
+		return false, nil
+	}
+	inSprint := make(map[string]bool, len(stories))
+	for _, st := range stories {
+		inSprint[st.ID] = true
+	}
+	for _, st := range stories {
+		if st.Status != StatusBacklog {
+			return false, nil // some story already started/finished → not a fresh sprint
+		}
+		for _, dep := range st.Deps {
+			if inSprint[dep] {
+				continue // intra-sprint dep — resolved inside the run
+			}
+			done, err := s.depsDone([]string{dep})
+			if err != nil {
+				return false, err
+			}
+			if !done {
+				return false, nil // an external dep is not done → sprint blocked
+			}
+		}
+	}
+	return true, nil
+}
+
+// ClaimSprint atomically transitions ALL of a sprint's stories from backlog →
+// running in ONE transaction. It re-verifies every story is still backlog inside
+// the transaction; if a concurrent claimer already moved any of them the claim is
+// abandoned (ok=false, no error) and nothing is written. On success it returns
+// the claimed story IDs in topological order. ok=false with no claimed IDs also
+// covers an empty sprint.
+func (s *Store) ClaimSprint(sprintID string) (claimed []string, ok bool, err error) {
+	ordered, err := s.StoriesBySprint(sprintID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(ordered) == 0 {
+		return nil, false, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+
+	// Re-check inside the tx: every story must still be backlog.
+	var backlog int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM stories WHERE sprint_id=? AND status='backlog'`, sprintID).
+		Scan(&backlog); err != nil {
+		return nil, false, err
+	}
+	if backlog != len(ordered) {
+		return nil, false, nil // a concurrent claimer moved at least one story
+	}
+
+	res, err := tx.Exec(`UPDATE stories SET status='running' WHERE sprint_id=? AND status='backlog'`, sprintID)
+	if err != nil {
+		return nil, false, err
+	}
+	n, _ := res.RowsAffected()
+	if int(n) != len(ordered) {
+		return nil, false, nil // raced between count and update — abandon, rollback
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+
+	ids := make([]string, len(ordered))
+	for i, st := range ordered {
+		ids[i] = st.ID
+	}
+	return ids, true, nil
+}
+
+// MarkSprintDone advances all of a sprint's running stories to done.
+func (s *Store) MarkSprintDone(sprintID string) error {
+	_, err := s.db.Exec(`UPDATE stories SET status='done' WHERE sprint_id=? AND status='running'`, sprintID)
+	return err
+}
+
+// MarkSprintFailed advances all of a sprint's running stories to failed.
+func (s *Store) MarkSprintFailed(sprintID string) error {
+	_, err := s.db.Exec(`UPDATE stories SET status='failed' WHERE sprint_id=? AND status='running'`, sprintID)
+	return err
+}
+
+// SetSprintRun records runID on every story in the sprint so the UI can link the
+// stories of a goal-mode sprint back to the single run that implemented them.
+func (s *Store) SetSprintRun(sprintID, runID string) error {
+	_, err := s.db.Exec(`UPDATE stories SET run_id=? WHERE sprint_id=?`, runID, sprintID)
+	return err
+}
+
 // loadDeps returns the dep IDs for storyID, sorted.
 func (s *Store) loadDeps(storyID string) ([]string, error) {
 	rows, err := s.db.Query(`SELECT dep_id FROM story_deps WHERE story_id=? ORDER BY dep_id ASC`, storyID)

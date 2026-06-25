@@ -7,6 +7,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -103,6 +104,12 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /epics/{id}", s.needTickets(s.getEpic))
 	m.HandleFunc("POST /sprints", s.needTickets(s.createSprint))
 	m.HandleFunc("GET /sprints", s.needTickets(s.listSprints))
+	// Sprint-batched (goal-mode) endpoints the orchestrator polls. "/sprints/ready"
+	// is a more specific pattern than "/sprints/{id}/..." so it routes correctly.
+	m.HandleFunc("GET /sprints/ready", s.needTickets(s.readySprints))
+	m.HandleFunc("GET /sprints/{id}/stories", s.needTickets(s.sprintStories))
+	m.HandleFunc("POST /sprints/{id}/claim", s.needTickets(s.claimSprint))
+	m.HandleFunc("PUT /sprints/{id}/status", s.needTickets(s.updateSprintStatus))
 	m.HandleFunc("POST /stories", s.needTickets(s.createStory))
 	m.HandleFunc("GET /stories", s.needTickets(s.listStoriesHandler))
 	m.HandleFunc("GET /stories/{id}", s.needTickets(s.getStory))
@@ -422,6 +429,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.Settings.Put(in)
 	if err != nil {
+		// A rejected execution_unit (or any validation failure) is a client error,
+		// not a server fault — surface it as 400 so the UI can show the reason.
+		if errors.Is(err, settings.ErrInvalid) {
+			httpErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

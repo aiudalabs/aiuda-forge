@@ -81,6 +81,87 @@ func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sprints": sprints})
 }
 
+// readySprints handles GET /sprints/ready — sprints that can be fired as a
+// single goal-mode run (≥1 story, all backlog, external deps done).
+func (s *Server) readySprints(w http.ResponseWriter, r *http.Request) {
+	sprints, err := s.Tickets.ReadySprints()
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if sprints == nil {
+		sprints = []tickets.Sprint{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sprints": sprints})
+}
+
+// sprintStories handles GET /sprints/{id}/stories — the sprint's stories in
+// intra-sprint topological order (the order the goal-mode ticket renders them).
+func (s *Server) sprintStories(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	stories, err := s.Tickets.StoriesBySprint(id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if stories == nil {
+		stories = []tickets.Story{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stories": stories})
+}
+
+// claimSprint handles POST /sprints/{id}/claim. It atomically claims ALL the
+// sprint's backlog stories at once (backlog→running). Returns 200
+// {claimed:[ids...]} if this caller won, or 409 {claimed:[]} if a concurrent
+// claimer already moved any of them (or the sprint is empty).
+func (s *Server) claimSprint(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claimed, ok, err := s.Tickets.ClaimSprint(id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusConflict, map[string]any{"claimed": []string{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"claimed": claimed})
+}
+
+// updateSprintStatus handles PUT /sprints/{id}/status. It advances every running
+// story in the sprint to done|failed (goal-mode completion) and, when a run_id is
+// supplied, records it on all the sprint's stories so the UI can link them.
+func (s *Server) updateSprintStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req updateStatusReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.RunID != "" {
+		if err := s.Tickets.SetSprintRun(id, req.RunID); err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	switch req.Status {
+	case "": // run_id-only update (record the firing run on a still-running sprint)
+	case tickets.StatusDone:
+		if err := s.Tickets.MarkSprintDone(id); err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	case tickets.StatusFailed:
+		if err := s.Tickets.MarkSprintFailed(id); err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	default:
+		httpErr(w, http.StatusBadRequest, "sprint status must be done or failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // ---- Stories ----------------------------------------------------------------
 
 func (s *Server) createStory(w http.ResponseWriter, r *http.Request) {
@@ -206,11 +287,12 @@ func (s *Server) claimStory(w http.ResponseWriter, r *http.Request) {
 // ticketView is the shape the orchestrator's GET /tickets returns, so the
 // existing UI can read the native store without changes.
 type ticketView struct {
-	ID     string   `json:"id"`
-	Title  string   `json:"title"`
-	Status string   `json:"status"` // derived: backlog stories whose deps are done report "ready"
-	Deps   []string `json:"deps"`
-	RunID  string   `json:"run_id,omitempty"`
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Status   string   `json:"status"` // derived: backlog stories whose deps are done report "ready"
+	Deps     []string `json:"deps"`
+	RunID    string   `json:"run_id,omitempty"`
+	SprintID string   `json:"sprint_id,omitempty"` // lets the scheduler group running stories by sprint
 }
 
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
@@ -242,11 +324,12 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			deps = []string{}
 		}
 		views = append(views, ticketView{
-			ID:     st.ID,
-			Title:  st.Title,
-			Status: status,
-			Deps:   deps,
-			RunID:  st.RunID,
+			ID:       st.ID,
+			Title:    st.Title,
+			Status:   status,
+			Deps:     deps,
+			RunID:    st.RunID,
+			SprintID: st.SprintID,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": views})

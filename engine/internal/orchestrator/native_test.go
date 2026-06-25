@@ -13,17 +13,21 @@ import (
 // set of stories with optional deps and tracks status transitions so tests can
 // assert exactly which stories were fired or completed.
 type fakeStoryProvider struct {
-	mu     sync.Mutex
+	mu      sync.Mutex
 	stories map[string]*fakeStory
-	order  []string // insertion order for deterministic Ready/Running output
+	order   []string // insertion order for deterministic Ready/Running output
 }
 
 type fakeStory struct {
-	id     string
-	title  string
-	status string // "backlog" | "running" | "done"
-	runID  string
-	deps   []string
+	id       string
+	title    string
+	status   string // "backlog" | "running" | "done"
+	runID    string
+	deps     []string
+	sprintID string // "" in story-mode fakes; set for sprint-mode tests
+	repo     string
+	body     string
+	accept   string
 }
 
 func newFakeProvider(stories ...*fakeStory) *fakeStoryProvider {
@@ -63,7 +67,7 @@ func (p *fakeStoryProvider) Running(_ context.Context) ([]NativeTicket, error) {
 		if s.status != "running" {
 			continue
 		}
-		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status, RunID: s.runID, Deps: s.deps})
+		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status, RunID: s.runID, Deps: s.deps, SprintID: s.sprintID})
 	}
 	return out, nil
 }
@@ -127,7 +131,144 @@ func (p *fakeStoryProvider) GetStory(_ context.Context, id string) (NativeStory,
 	if !ok {
 		return NativeStory{}, fmt.Errorf("story %s not found", id)
 	}
-	return NativeStory{ID: id, Title: s.title}, nil
+	return NativeStory{ID: id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo}, nil
+}
+
+// ---- sprint-batched fake methods --------------------------------------------
+
+// ReadySprints returns the distinct sprints whose every story is backlog and
+// whose external deps are done (intra-sprint deps don't block).
+func (p *fakeStoryProvider) ReadySprints(_ context.Context) ([]NativeSprint, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// Collect sprint ids in deterministic insertion order.
+	var sprintOrder []string
+	seen := map[string]bool{}
+	members := map[string][]*fakeStory{}
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID == "" {
+			continue
+		}
+		if !seen[s.sprintID] {
+			seen[s.sprintID] = true
+			sprintOrder = append(sprintOrder, s.sprintID)
+		}
+		members[s.sprintID] = append(members[s.sprintID], s)
+	}
+	var out []NativeSprint
+	for _, sid := range sprintOrder {
+		ms := members[sid]
+		if len(ms) == 0 {
+			continue
+		}
+		ready := true
+		inSprint := map[string]bool{}
+		for _, s := range ms {
+			inSprint[s.id] = true
+		}
+		for _, s := range ms {
+			if s.status != "backlog" {
+				ready = false
+				break
+			}
+			for _, dep := range s.deps {
+				if inSprint[dep] {
+					continue
+				}
+				if d, ok := p.stories[dep]; !ok || d.status != "done" {
+					ready = false
+					break
+				}
+			}
+			if !ready {
+				break
+			}
+		}
+		if ready {
+			out = append(out, NativeSprint{ID: sid, Name: sid})
+		}
+	}
+	return out, nil
+}
+
+// SprintStories returns the sprint's stories in insertion order (good enough for
+// the fake; the real store does topological ordering, tested in tickets_test.go).
+func (p *fakeStoryProvider) SprintStories(_ context.Context, sprintID string) ([]NativeStory, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []NativeStory
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID != sprintID {
+			continue
+		}
+		out = append(out, NativeStory{ID: s.id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo})
+	}
+	return out, nil
+}
+
+// ClaimSprint atomically claims all the sprint's backlog stories. ok=false if any
+// story is not backlog (a concurrent claimer already moved one).
+func (p *fakeStoryProvider) ClaimSprint(_ context.Context, sprintID string) ([]string, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var ids []string
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID != sprintID {
+			continue
+		}
+		if s.status != "backlog" {
+			return nil, false, nil // already claimed by someone else
+		}
+		ids = append(ids, s.id)
+	}
+	if len(ids) == 0 {
+		return nil, false, nil
+	}
+	for _, id := range ids {
+		p.stories[id].status = "running"
+	}
+	return ids, true, nil
+}
+
+// MarkSprintRunning records runID on every story in the sprint.
+func (p *fakeStoryProvider) MarkSprintRunning(_ context.Context, sprintID, runID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, id := range p.order {
+		if p.stories[id].sprintID == sprintID {
+			p.stories[id].runID = runID
+		}
+	}
+	return nil
+}
+
+// MarkSprintDone flips every running story in the sprint to done.
+func (p *fakeStoryProvider) MarkSprintDone(_ context.Context, sprintID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID == sprintID && s.status == "running" {
+			s.status = "done"
+		}
+	}
+	return nil
+}
+
+// MarkSprintFailed flips every running story in the sprint to failed.
+func (p *fakeStoryProvider) MarkSprintFailed(_ context.Context, sprintID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID == sprintID && s.status == "running" {
+			s.status = "failed"
+		}
+	}
+	return nil
 }
 
 // statusOf returns a story's current status (test helper).
@@ -374,4 +515,164 @@ func TestNativeClaimPreventsDoubleFire(t *testing.T) {
 	if provider.statusOf("S1") != "running" {
 		t.Errorf("S1 status: want running, got %s", provider.statusOf("S1"))
 	}
+}
+
+// ---- Sprint mode (goal mode) ------------------------------------------------
+
+// sprintMode returns a control plane configured to report execution_unit=sprint.
+func sprintMode() *fakeControlPlane { return &fakeControlPlane{execUnit: "sprint"} }
+
+// payloadOf returns the payload of the n-th fired run (0-indexed) as a map.
+func (f *fakeControlPlane) payloadOf(n int) map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runs[n].payload.(map[string]any)
+}
+
+// TestSprintModeFiresOneRunForWholeSprint: in sprint mode a ready sprint claims
+// ALL its stories and fires exactly ONE run carrying a combined goal-mode ticket.
+func TestSprintModeFiresOneRunForWholeSprint(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "Story A", status: "backlog", sprintID: "SP1",
+			body: "do A", accept: "A works", repo: "github.com/acme/x"},
+		&fakeStory{id: "B", title: "Story B", status: "backlog", sprintID: "SP1",
+			body: "do B", accept: "B works", repo: "github.com/acme/x", deps: []string{"A"}},
+	)
+	cp := sprintMode()
+	sched := NewNativeScheduler(provider, cp, "factory")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exactly one run for the whole sprint.
+	if cp.firedCount() != 1 {
+		t.Fatalf("want 1 fired run for the sprint, got %d", cp.firedCount())
+	}
+	// Both stories claimed → running, sharing the run_id.
+	for _, id := range []string{"A", "B"} {
+		if provider.statusOf(id) != "running" {
+			t.Errorf("%s: want running, got %s", id, provider.statusOf(id))
+		}
+		if provider.runIDOf(id) == "" {
+			t.Errorf("%s: run_id should be recorded", id)
+		}
+	}
+	if provider.runIDOf("A") != provider.runIDOf("B") {
+		t.Errorf("both stories should share the sprint run_id: %s vs %s",
+			provider.runIDOf("A"), provider.runIDOf("B"))
+	}
+
+	// Payload carries sprint_id, story_ids, repo, and a combined goal-mode ticket.
+	p := cp.payloadOf(0)
+	if p["sprint_id"] != "SP1" {
+		t.Errorf("payload sprint_id: got %v, want SP1", p["sprint_id"])
+	}
+	ids, _ := p["story_ids"].([]string)
+	if len(ids) != 2 {
+		t.Errorf("payload story_ids: got %v, want 2 ids", p["story_ids"])
+	}
+	if p["repo"] != "github.com/acme/x" {
+		t.Errorf("payload repo: got %v", p["repo"])
+	}
+	ticket, _ := p["ticket"].(string)
+	for _, want := range []string{"Goal mode", "### A — Story A", "### B — Story B", "Acceptance criteria:", "A works", "B works"} {
+		if !contains2(ticket, want) {
+			t.Errorf("ticket missing %q\n---\n%s", want, ticket)
+		}
+	}
+}
+
+// TestSprintModeNoReadySprintFiresNothing: a sprint with a started story is not
+// ready, so nothing fires.
+func TestSprintModeNoReadySprintFiresNothing(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "running", sprintID: "SP1", runID: "r1"},
+		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1"},
+	)
+	cp := sprintMode()
+	sched := NewNativeScheduler(provider, cp, "factory")
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 0 {
+		t.Fatalf("want 0 fired (sprint not all-backlog), got %d", cp.firedCount())
+	}
+}
+
+// TestSprintModeDoneMarksAllStories: when the sprint's shared run reaches DONE,
+// ALL its stories are marked done in one cycle.
+func TestSprintModeDoneMarksAllStories(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "running", sprintID: "SP1", runID: "run-sp"},
+		&fakeStory{id: "B", title: "B", status: "running", sprintID: "SP1", runID: "run-sp"},
+	)
+	cp := sprintMode()
+	cp.setStatus("run-sp", "DONE")
+	sched := NewNativeScheduler(provider, cp, "factory")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if provider.statusOf(id) != "done" {
+			t.Errorf("%s: want done, got %s", id, provider.statusOf(id))
+		}
+	}
+}
+
+// TestSprintModeFailedMarksAllStories: a FAILED sprint run fails all its stories.
+func TestSprintModeFailedMarksAllStories(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "running", sprintID: "SP1", runID: "run-sp"},
+		&fakeStory{id: "B", title: "B", status: "running", sprintID: "SP1", runID: "run-sp"},
+	)
+	cp := sprintMode()
+	cp.setStatus("run-sp", "FAILED")
+	sched := NewNativeScheduler(provider, cp, "factory")
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if provider.statusOf(id) != "failed" {
+			t.Errorf("%s: want failed, got %s", id, provider.statusOf(id))
+		}
+	}
+}
+
+// TestSprintModeNoDoubleFire: a second cycle does not re-fire an already-running
+// sprint (its stories are no longer backlog → not ready).
+func TestSprintModeNoDoubleFire(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "backlog", sprintID: "SP1"},
+		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1"},
+	)
+	cp := sprintMode()
+	sched := NewNativeScheduler(provider, cp, "factory")
+	ctx := context.Background()
+
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("want exactly 1 fire across two cycles, got %d", cp.firedCount())
+	}
+}
+
+// contains2 is a tiny substring helper for ticket assertions.
+func contains2(haystack, needle string) bool {
+	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOfSub(haystack, needle) >= 0)
+}
+
+func indexOfSub(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
