@@ -20,20 +20,20 @@ type TicketsView = "tabla" | "kanban" | "grafo";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<TicketStatus, string> = {
-  open: "open",
-  blocked: "bloqueado",
+  backlog: "backlog",
   ready: "listo",
-  firing: "running",
+  running: "running",
+  in_review: "en revisión",
   done: "done",
   failed: "FALLIDO",
 };
 
 // Clase CSS para la pill de estado — reutiliza los mismos tokens del mockup.
 const STATUS_CLASS: Record<TicketStatus, string> = {
-  open: "queued",
-  blocked: "queued",
+  backlog: "queued",
   ready: "run_",
-  firing: "run_",
+  running: "run_",
+  in_review: "queued",
   done: "done",
   failed: "fail",
 };

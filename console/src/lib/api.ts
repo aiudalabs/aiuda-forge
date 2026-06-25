@@ -585,7 +585,7 @@ export async function createStory(input: CreateStoryInput): Promise<Orchestrator
     const story: OrchestratorTicket = {
       id: input.id,
       title: input.title,
-      status: "open",
+      status: "backlog",
       deps: input.deps ?? [],
     };
     mockOrchestratorTickets.push(story);

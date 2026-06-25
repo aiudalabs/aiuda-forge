@@ -539,7 +539,7 @@ export const mockOrchestratorTickets: OrchestratorTicket[] = [
   { id: "ENG-1", title: "is_valid_email(s) + tests", status: "done", deps: [], run_id: "run_f7932443" },
   { id: "ENG-2", title: "to_roman(n) 1..3999 + tests", status: "done", deps: [], run_id: "run_69c573fc" },
   { id: "ENG-3", title: "fib(n) + tests", status: "done", deps: ["ENG-1"], run_id: "run_e6bca38f" },
-  { id: "ENG-12", title: "reverse_words(s) — reordena palabras, colapsa espacios", status: "firing", deps: [], run_id: "run_76af79df" },
-  { id: "ENG-14", title: "Validador de cédula panameña + tests", status: "firing", deps: ["ENG-1"], run_id: "run_a91c20e1" },
-  { id: "ENG-15", title: "Formato de fecha panameño + tests", status: "blocked", deps: ["ENG-14"] },
+  { id: "ENG-12", title: "reverse_words(s) — reordena palabras, colapsa espacios", status: "running", deps: [], run_id: "run_76af79df" },
+  { id: "ENG-14", title: "Validador de cédula panameña + tests", status: "running", deps: ["ENG-1"], run_id: "run_a91c20e1" },
+  { id: "ENG-15", title: "Formato de fecha panameño + tests", status: "backlog", deps: ["ENG-14"] },
 ];

@@ -18,12 +18,12 @@ interface ColumnConfig {
 }
 
 const COLUMNS: ColumnConfig[] = [
-  { status: "open",    label: "Backlog",    pillClass: "queued", headerColor: "var(--ink4)" },
-  { status: "blocked", label: "Bloqueado",  pillClass: "queued", headerColor: "var(--ink3)" },
-  { status: "ready",   label: "Listo",      pillClass: "run_",   headerColor: "var(--accent)" },
-  { status: "firing",  label: "Running",    pillClass: "run_",   headerColor: "var(--navy)" },
-  { status: "done",    label: "Done",       pillClass: "done",   headerColor: "var(--emerald)" },
-  { status: "failed",  label: "Fallido",    pillClass: "fail",   headerColor: "#9a2020" },
+  { status: "backlog",   label: "Backlog",     pillClass: "queued", headerColor: "var(--ink4)" },
+  { status: "ready",     label: "Listo",       pillClass: "run_",   headerColor: "var(--accent)" },
+  { status: "running",   label: "Running",     pillClass: "run_",   headerColor: "var(--navy)" },
+  { status: "in_review", label: "En revisión", pillClass: "queued", headerColor: "#7a5d00" },
+  { status: "done",      label: "Done",        pillClass: "done",   headerColor: "var(--emerald)" },
+  { status: "failed",    label: "Fallido",     pillClass: "fail",   headerColor: "#9a2020" },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

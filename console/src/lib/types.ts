@@ -225,7 +225,9 @@ export interface Project {
 // GET /epics   → { epics: Epic[] }
 // POST /stories → OrchestratorTicket
 
-export type TicketStatus = "open" | "blocked" | "ready" | "firing" | "done" | "failed";
+// Estados del store nativo de stories (engine/internal/tickets): el orquestador
+// deriva "ready" de un "backlog" cuyas deps están "done".
+export type TicketStatus = "backlog" | "ready" | "running" | "in_review" | "done" | "failed";
 
 export interface Epic {
   id: string;

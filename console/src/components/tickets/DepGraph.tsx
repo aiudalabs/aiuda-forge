@@ -30,21 +30,21 @@ interface StatusStyle {
 }
 
 const STATUS_STYLE: Record<TicketStatus, StatusStyle> = {
-  open:    { background: "#fff",                          border: "1.5px solid rgba(13,13,15,0.14)", color: "#52525a" },
-  blocked: { background: "#fff",                          border: "1.5px solid rgba(13,13,15,0.14)", color: "#8a8a92" },
-  ready:   { background: "rgba(232,68,10,0.07)",          border: "1.5px solid rgba(232,68,10,0.24)", color: "#e8440a" },
-  firing:  { background: "rgba(20,40,80,0.07)",           border: "1.5px solid rgba(20,40,80,0.3)",  color: "#142850" },
-  done:    { background: "rgba(10,123,90,0.07)",          border: "1.5px solid #0a7b5a",             color: "#0a7b5a" },
-  failed:  { background: "rgba(180,30,30,0.08)",          border: "1.5px solid #c55",                color: "#9a2020" },
+  backlog:   { background: "#fff",                 border: "1.5px solid rgba(13,13,15,0.14)", color: "#8a8a92" },
+  ready:     { background: "rgba(232,68,10,0.07)", border: "1.5px solid rgba(232,68,10,0.24)", color: "#e8440a" },
+  running:   { background: "rgba(20,40,80,0.07)",  border: "1.5px solid rgba(20,40,80,0.3)",  color: "#142850" },
+  in_review: { background: "rgba(180,140,20,0.08)",border: "1.5px solid rgba(180,140,20,0.4)", color: "#7a5d00" },
+  done:      { background: "rgba(10,123,90,0.07)", border: "1.5px solid #0a7b5a",             color: "#0a7b5a" },
+  failed:    { background: "rgba(180,30,30,0.08)", border: "1.5px solid #c55",                color: "#9a2020" },
 };
 
 const STATUS_ICON: Record<TicketStatus, string> = {
-  open:    "",
-  blocked: " ⏳",
-  ready:   " ⟳",
-  firing:  " ⟳",
-  done:    " ✓",
-  failed:  " ✗",
+  backlog:   " ⏳",
+  ready:     " ⟳",
+  running:   " ⟳",
+  in_review: " ⌾",
+  done:      " ✓",
+  failed:    " ✗",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ interface StoryNodeData extends Record<string, unknown> {
 
 function StoryNode({ data }: NodeProps) {
   const d = data as StoryNodeData;
-  const style = STATUS_STYLE[d.status] ?? STATUS_STYLE.open;
+  const style = STATUS_STYLE[d.status] ?? STATUS_STYLE.backlog;
   return (
     <div
       style={{
@@ -199,7 +199,7 @@ function buildGraph(
         id: `${depId}->${t.id}`,
         source: depId,
         target: t.id,
-        animated: t.status === "firing",
+        animated: t.status === "running",
         style: { stroke: "var(--stroke-strong)", strokeWidth: 1.5 },
         markerEnd: { type: "arrowclosed", color: "var(--ink4)" },
       });
@@ -248,7 +248,7 @@ function DepGraphInner({ tickets, onOpenRun }: DepGraphProps) {
           }}
           nodeColor={(n) => {
             const status = (n.data as StoryNodeData).status;
-            const s = STATUS_STYLE[status] ?? STATUS_STYLE.open;
+            const s = STATUS_STYLE[status] ?? STATUS_STYLE.backlog;
             return s.border.replace("1.5px solid ", "");
           }}
         />
