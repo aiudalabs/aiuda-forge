@@ -644,6 +644,7 @@ const DESIGN_PHASE_MAP: { stepId: string; name: string; gateId: string }[] = [
   { stepId: "prd", name: "PRD", gateId: "prd_gate" },
   { stepId: "architecture", name: "Arquitectura", gateId: "arch_gate" },
   { stepId: "ui", name: "UI / Pantallas", gateId: "ui_gate" },
+  { stepId: "mockups", name: "Mockups", gateId: "mockups_gate" },
   { stepId: "backlog", name: "Backlog", gateId: "backlog_gate" },
   { stepId: "handoff", name: "Handoff → stories", gateId: "" },
 ];

@@ -6,6 +6,7 @@
 // GET /runs/{id}/artifacts/{stepId}, POST /runs/{id}/steps/{gateStepId}/approve|reject.
 
 import { useEffect, useRef, useState } from "react";
+import * as jsYaml from "js-yaml";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -66,7 +67,7 @@ function activePhaseIndex(phases: DesignPhase[]): number {
 }
 
 // Pasos con artefacto visible (los que producen un doc).
-const ARTIFACT_STEPS = new Set(["discovery", "prd", "architecture", "ui", "backlog", "handoff"]);
+const ARTIFACT_STEPS = new Set(["discovery", "prd", "architecture", "ui", "mockups", "backlog", "handoff"]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Raíz
@@ -372,7 +373,15 @@ function PhasePanel({
           </div>
         )}
 
-        {hasArtifact && artifactText && (
+        {hasArtifact && artifactText && phase.stepId === "mockups" && (
+          <MockupsArtifact html={artifactText} />
+        )}
+
+        {hasArtifact && artifactText && phase.stepId === "backlog" && (
+          <BacklogArtifact raw={artifactText} />
+        )}
+
+        {hasArtifact && artifactText && phase.stepId !== "mockups" && phase.stepId !== "backlog" && (
           <div className="artifact-md">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactText}</ReactMarkdown>
           </div>
@@ -476,6 +485,140 @@ function PhaseStatusBadge({
   };
   void designStatus; // se usa solo para derivar el label de running
   return <span className={`pill ${PILL_CLS[state]}`}>{LABELS[state]}</span>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Renderizador de artefacto: MOCKUPS — iframe sandboxed con HTML autocontenido
+// ─────────────────────────────────────────────────────────────────────────────
+
+function MockupsArtifact({ html }: { html: string }) {
+  function openInNewTab() {
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener,noreferrer");
+    // Revocar el URL después de un momento para liberar memoria.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <iframe
+        srcDoc={html}
+        sandbox="allow-same-origin"
+        title="Mockup preview"
+        style={{
+          width: "100%",
+          height: 480,
+          border: "1px solid var(--stroke)",
+          borderRadius: "var(--r)",
+          background: "#fff",
+        }}
+      />
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button className="btn ghost sm" onClick={openInNewTab}>
+          ↗ Abrir en pestaña nueva
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tipos internos para el parser YAML del backlog
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface BacklogStory {
+  id?: string;
+  title?: string;
+  body?: string;
+  acceptance?: string;
+  owner?: string;
+  deps?: string[];
+}
+
+interface BacklogYaml {
+  epic?: {
+    id?: string;
+    title?: string;
+    description?: string;
+  };
+  stories?: BacklogStory[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Renderizador de artefacto: BACKLOG — tarjetas de historia legibles desde YAML
+// ─────────────────────────────────────────────────────────────────────────────
+
+function BacklogArtifact({ raw }: { raw: string }) {
+  let parsed: BacklogYaml | null = null;
+  try {
+    parsed = jsYaml.load(raw) as BacklogYaml;
+  } catch {
+    /* YAML inválido — caemos al markdown */
+  }
+
+  // Si el parse falla o el doc no tiene la forma esperada, renderizamos como markdown.
+  if (!parsed || (!parsed.epic && !parsed.stories)) {
+    return (
+      <div className="artifact-md">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{raw}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  const { epic, stories = [] } = parsed;
+
+  return (
+    <div className="backlog-artifact">
+      {epic && (
+        <div className="backlog-epic">
+          <div className="backlog-epic-id">{epic.id}</div>
+          <h3 className="backlog-epic-title">{epic.title}</h3>
+          {epic.description && (
+            <p className="backlog-epic-desc">{epic.description}</p>
+          )}
+        </div>
+      )}
+
+      <div className="story-list">
+        {stories.map((s, i) => (
+          <div key={s.id ?? i} className="story-card">
+            <div className="story-card-header">
+              <span className="story-id">{s.id}</span>
+              <span className="story-title">{s.title}</span>
+            </div>
+            <div className="story-card-meta">
+              {s.owner && (
+                <span className="story-chip owner">{s.owner}</span>
+              )}
+              {(s.deps ?? []).map((d) => (
+                <span key={d} className="story-chip dep">
+                  dep: {d}
+                </span>
+              ))}
+            </div>
+            {(s.body || s.acceptance) && (
+              <div className="story-card-body">
+                {s.body && (
+                  <div className="artifact-md" style={{ padding: 0 }}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.body}</ReactMarkdown>
+                  </div>
+                )}
+                {s.acceptance && (
+                  <>
+                    <div className="story-acceptance-label">Criterios de aceptación</div>
+                    <div className="artifact-md" style={{ padding: 0 }}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.acceptance}</ReactMarkdown>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

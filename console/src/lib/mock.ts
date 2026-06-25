@@ -347,6 +347,7 @@ export const mockDesignRuns: DesignRun[] = [
       { stepId: "prd", name: "PRD", designStatus: "DONE", gateStatus: "DONE" },
       { stepId: "architecture", name: "Arquitectura", designStatus: "DONE", gateStatus: "AWAITING" },
       { stepId: "ui", name: "UI / Pantallas", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "mockups", name: "Mockups", gateId: "mockups_gate", designStatus: "QUEUED", gateStatus: "QUEUED" },
       { stepId: "backlog", name: "Backlog", designStatus: "QUEUED", gateStatus: "QUEUED" },
       { stepId: "handoff", name: "Handoff → stories", designStatus: "QUEUED", gateStatus: "QUEUED" },
     ],
@@ -364,6 +365,7 @@ export const mockDesignRuns: DesignRun[] = [
       { stepId: "prd", name: "PRD", gateId: "prd_gate", designStatus: "DONE", gateStatus: "DONE" },
       { stepId: "architecture", name: "Arquitectura", gateId: "arch_gate", designStatus: "DONE", gateStatus: "DONE" },
       { stepId: "ui", name: "UI / Pantallas", gateId: "ui_gate", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "mockups", name: "Mockups", gateId: "mockups_gate", designStatus: "DONE", gateStatus: "DONE" },
       { stepId: "backlog", name: "Backlog", gateId: "backlog_gate", designStatus: "DONE", gateStatus: "DONE" },
       { stepId: "handoff", name: "Handoff → stories", gateId: "", designStatus: "DONE", gateStatus: "DONE" },
     ],
@@ -381,6 +383,7 @@ export const mockDesignRuns: DesignRun[] = [
       { stepId: "prd", name: "PRD", gateId: "prd_gate", designStatus: "RUNNING", gateStatus: "QUEUED" },
       { stepId: "architecture", name: "Arquitectura", gateId: "arch_gate", designStatus: "QUEUED", gateStatus: "QUEUED" },
       { stepId: "ui", name: "UI / Pantallas", gateId: "ui_gate", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "mockups", name: "Mockups", gateId: "mockups_gate", designStatus: "QUEUED", gateStatus: "QUEUED" },
       { stepId: "backlog", name: "Backlog", gateId: "backlog_gate", designStatus: "QUEUED", gateStatus: "QUEUED" },
       { stepId: "handoff", name: "Handoff → stories", gateId: "", designStatus: "QUEUED", gateStatus: "QUEUED" },
     ],
@@ -500,18 +503,131 @@ Stack: Flutter (app docente + padre) · Firebase (Firestore, Cloud Functions, FC
 2. **Portal padres**: dashboard de asistencia del hijo · historial mensual.
 3. **Admin colegio**: gestión de cursos, docentes, alumnos.
 `,
-    backlog: `# Backlog — Asistencia escolar QR
-
-## Wave 1 (MVP — 3 semanas)
-- S1-01: Auth docente (Firebase Auth)
-- S1-02: Escáner QR (Flutter camera)
-- S1-03: Registro en Firestore
-- S1-04: Notificación FCM al padre
-- S1-05: Portal web padres (Next.js)
-
-## Wave 2
-- S2-01: Reportes mensuales PDF
-- S2-02: Integración con sistema de notas
+    backlog: `epic:
+  id: E1
+  title: "asistencia-escolar — MVP QR"
+  description: >
+    Registro de asistencia escolar por QR. El docente escanea el código del alumno
+    al inicio de clase; el sistema detecta ausencias y notifica al padre en tiempo real.
+stories:
+  - id: S1-01
+    title: "Auth docente — Firebase Auth email/password"
+    body: |
+      Implementar pantalla de login para docentes usando Firebase Auth.
+      La sesión persiste entre reinicios de la app.
+    acceptance: |
+      - Login con email/password funciona.
+      - Token persiste; la app no pide login al reiniciar.
+      - Error claro si credenciales incorrectas.
+    owner: flutter-dev
+    deps: []
+  - id: S1-02
+    title: "Escáner QR — Flutter camera plugin"
+    body: |
+      Pantalla de escaneo QR usando flutter_barcode_scanner.
+      Decodifica el id del alumno y llama al API de registro.
+    acceptance: |
+      - Abre la cámara al entrar a la pantalla.
+      - Detecta QR y muestra nombre del alumno en 1 s.
+      - Botón de confirmación antes de registrar.
+    owner: flutter-dev
+    deps: [S1-01]
+  - id: S1-03
+    title: "Registro en Firestore — colección attendance"
+    body: |
+      Cloud Function callable \`recordAttendance\` que escribe en
+      Firestore: colección attendance/{date}/records/{studentId}.
+    acceptance: |
+      - Registro se persiste en < 500 ms.
+      - Duplicados en el mismo día se ignoran (idempotente).
+      - Reglas de Firestore: solo la Cloud Function escribe.
+    owner: firebase-dev
+    deps: []
+  - id: S1-04
+    title: "Notificación FCM al padre cuando alumno ausente"
+    body: |
+      Cloud Function trigger on Firestore write: si el alumno no tiene registro
+      de asistencia a los 15 min de inicio de clase, enviar push FCM al padre.
+    acceptance: |
+      - Push llega al padre en < 30 s de la ausencia.
+      - El mensaje incluye nombre del alumno y hora.
+      - No se envía si el alumno ya fue marcado presente.
+    owner: firebase-dev
+    deps: [S1-03]
+  - id: S1-05
+    title: "Portal web padres — dashboard de asistencia"
+    body: |
+      Página web Next.js con auth de padres (Firebase Auth).
+      Muestra historial de asistencia del hijo por mes.
+    acceptance: |
+      - Tabla con fecha, hora y estado (presente/ausente).
+      - Filtro por mes.
+      - Funciona en móvil (responsive).
+    owner: react-dev
+    deps: [S1-03]
+`,
+    mockups: `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Asistencia Escolar — Mockup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f4f6f9; color: #1a1a2e; }
+  .screen { max-width: 390px; margin: 24px auto; background: #fff; border-radius: 20px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,.12); }
+  .statusbar { background: #1a1a2e; color: #fff; padding: 12px 20px; font-size: 12px; display: flex; justify-content: space-between; }
+  .header { background: #1a73e8; color: #fff; padding: 20px; }
+  .header h1 { font-size: 20px; font-weight: 700; }
+  .header p { font-size: 13px; opacity: .8; margin-top: 4px; }
+  .content { padding: 20px; }
+  .qr-box { border: 3px dashed #1a73e8; border-radius: 16px; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #1a73e8; margin-bottom: 20px; }
+  .qr-icon { font-size: 64px; }
+  .qr-label { font-size: 14px; font-weight: 600; }
+  .student-card { background: #e8f0fe; border-radius: 12px; padding: 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+  .avatar { width: 48px; height: 48px; border-radius: 50%; background: #1a73e8; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 18px; flex: none; }
+  .student-info h3 { font-size: 16px; font-weight: 700; }
+  .student-info p { font-size: 12px; color: #5f6368; }
+  .btn { width: 100%; padding: 14px; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; }
+  .btn.confirm { background: #34a853; color: #fff; }
+  .btn.skip { background: #f1f3f4; color: #5f6368; margin-top: 10px; }
+  .nav { display: grid; grid-template-columns: repeat(4,1fr); border-top: 1px solid #e8eaed; }
+  .nav-item { padding: 12px 8px; text-align: center; font-size: 10px; color: #5f6368; cursor: pointer; }
+  .nav-item .icon { font-size: 22px; display: block; margin-bottom: 2px; }
+  .nav-item.active { color: #1a73e8; }
+</style>
+</head>
+<body>
+<div class="screen">
+  <div class="statusbar"><span>9:41</span><span>●●● WiFi 100%</span></div>
+  <div class="header">
+    <h1>Registro de Asistencia</h1>
+    <p>Matemáticas · 7A · Lun 24 Jun, 9:00</p>
+  </div>
+  <div class="content">
+    <div class="qr-box">
+      <span class="qr-icon">⬛</span>
+      <span class="qr-label">Escanear código QR del alumno</span>
+    </div>
+    <div class="student-card">
+      <div class="avatar">AM</div>
+      <div class="student-info">
+        <h3>Ana Martínez</h3>
+        <p>ID: 2024-0312 · 7° Grado A</p>
+      </div>
+    </div>
+    <button class="btn confirm">Marcar Presente</button>
+    <button class="btn skip">Omitir / Ausente</button>
+  </div>
+  <div class="nav">
+    <div class="nav-item active"><span class="icon">📷</span>Escanear</div>
+    <div class="nav-item"><span class="icon">📋</span>Lista</div>
+    <div class="nav-item"><span class="icon">📊</span>Reporte</div>
+    <div class="nav-item"><span class="icon">⚙️</span>Config</div>
+  </div>
+</div>
+</body>
+</html>
 `,
     handoff: `# Handoff → stories
 
