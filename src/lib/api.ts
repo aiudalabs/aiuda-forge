@@ -678,8 +678,13 @@ export async function getArtifact(runId: string, stepId: string): Promise<string
     if (!text) throw new ApiError(404, `artifact ${runId}/${stepId} no encontrado (mock)`);
     return text;
   }
-  const res = await http<{ run?: unknown; kind?: string; result?: { text?: string } }>(
-    `/runs/${runId}/artifacts/${stepId}`
-  );
-  return res?.result?.text ?? "";
+  // El result del step trae el doc en result.output.text (el map Output del
+  // runner) o en result.detail; result.text no existe. Probamos en ese orden.
+  const res = await http<{
+    run?: unknown;
+    kind?: string;
+    result?: { text?: string; detail?: string; output?: { text?: string } };
+  }>(`/runs/${runId}/artifacts/${stepId}`);
+  const r = res?.result;
+  return r?.output?.text ?? r?.detail ?? r?.text ?? "";
 }
