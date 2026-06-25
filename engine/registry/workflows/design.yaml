@@ -96,3 +96,12 @@ steps:
     type: ticket_publish
     inputs:
       backlog: docs/backlog.yaml
+
+  # ── Phase 7: Publish docs — commit docs/ to a branch and open a PR to dev ─
+  # Requires the run's workdir to be a clone of the project repo (payload.repo).
+  # PR_MODE=github opens a real GitHub PR against the `dev` branch.
+  - id: docs_pr
+    type: pr
+    inputs:
+      base: dev
+      ticket: "design: publish docs for review"
