@@ -180,7 +180,31 @@ func (e *Engine) ExecuteOne(ctx context.Context, workerID string) (bool, error) 
 	if result.Park {
 		return true, e.parkTask(task, result)
 	}
+	if result.Retry {
+		return true, e.requeueTransient(wf, task, result)
+	}
 	return true, e.reportAndAdvance(wf, task, result)
+}
+
+// transientBackoff is how long a step deferred by a recognized transient error
+// (provider session/rate limit) waits before it is re-claimable. A provider limit
+// can take minutes to hours to clear, so we poll on this cadence rather than
+// busy-retrying; the step succeeds on the first attempt after the limit lifts.
+const transientBackoff = 5 * time.Minute
+
+// requeueTransient defers a step hit by a transient provider limit: it is requeued
+// (not failed) with available_at a backoff into the future so a worker re-claims
+// and re-runs it once the limit clears. The run stays RUNNING throughout.
+func (e *Engine) requeueTransient(wf *Workflow, task *store.Task, result StepResult) error {
+	availableAt := e.Store.Now().Add(transientBackoff).UnixMilli()
+	if err := e.Store.RequeueTransient(task.ID, task.Fence, availableAt); err != nil {
+		// Could not requeue (e.g. fence moved) — fall back to recording the failure
+		// so the task does not hang; the run's on_fail/retry policy then applies.
+		return e.reportAndAdvance(wf, task, StepResult{Success: false, Detail: result.Detail})
+	}
+	_, _ = e.Store.AppendEvent(task.RunID, task.ID, store.EventStepStatusChange,
+		map[string]any{"step": task.StepID, "transient": true, "detail": result.Detail, "available_at": availableAt})
+	return nil
 }
 
 // heartbeat pings the task's liveness on an interval until ctx is cancelled

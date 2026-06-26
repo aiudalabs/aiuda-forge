@@ -136,6 +136,12 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 
 	res, err := r.Backend.Run(ctx, prompt, opts, eventSink(ctx, r.Emit))
 	if err != nil {
+		// A provider session/rate limit is TRANSIENT — not a defect in the work.
+		// Signal Retry so the engine requeues the step with a backoff instead of
+		// failing the run; it re-runs once the limit clears.
+		if isTransientErr(err) {
+			return workflow.StepResult{Retry: true, Detail: "transient (will retry): " + err.Error()}, nil
+		}
 		return workflow.StepResult{Success: false, Detail: "agent error: " + err.Error()}, nil
 	}
 
@@ -228,4 +234,33 @@ func asString(v any) string {
 	default:
 		return fmt.Sprintf("%v", t)
 	}
+}
+
+// transientMarkers are substrings (lower-cased) that identify a provider-side
+// limit/overload — a TRANSIENT condition that clears on its own (the session
+// quota resets, the rate window passes). These must NOT fail the run; the engine
+// requeues and retries. Anything else (a real agent/tool error) fails normally.
+var transientMarkers = []string{
+	"session limit",      // "You've hit your session limit · resets ..."
+	"rate limit",         // generic rate limiting
+	"rate_limit",         // API error code form
+	"429",                // Too Many Requests
+	"overloaded",         // provider overloaded
+	"529",                // provider overloaded (Anthropic)
+	"usage limit",        // plan usage cap
+}
+
+// isTransientErr reports whether err looks like a provider limit/overload that
+// will clear without code changes — i.e. worth retrying rather than failing.
+func isTransientErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, m := range transientMarkers {
+		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
 }

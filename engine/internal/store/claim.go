@@ -23,7 +23,9 @@ func (s *Store) Claim(workerID string) (*Task, error) {
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.Query(taskCols + ` WHERE status='QUEUED' ORDER BY wave ASC, created_at ASC, id ASC`)
+	// available_at gates transient-retry backoff (R1): a step requeued after a
+	// provider limit is not re-claimable until its backoff elapses.
+	rows, err := tx.Query(taskCols+` WHERE status='QUEUED' AND available_at <= ? ORDER BY wave ASC, created_at ASC, id ASC`, s.now())
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +257,42 @@ func (s *Store) OwnsClaim(taskID string, fence int64) (bool, error) {
 		return false, err
 	}
 	return curFence == fence && st == StatusRunning, nil
+}
+
+// RequeueTransient requeues a single RUNNING task (RUNNING->QUEUED) after a
+// recognized transient failure (R1: provider session/rate limit), deferring its
+// re-claim until availableAt by gating the claim query on available_at. It rotates
+// the fence so the current worker's late report/heartbeat fails the fence check,
+// mirroring RequeueStale. The fence guard makes it a no-op if the caller no longer
+// owns the claim. Returns ErrStaleFence if the fence does not match.
+func (s *Store) RequeueTransient(taskID string, fence int64, availableAt int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var curFence int64
+	var runID, stepID, projectID string
+	err = tx.QueryRow(`SELECT fence, run_id, step_id, project_id FROM tasks WHERE id=?`, taskID).Scan(&curFence, &runID, &stepID, &projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if fence != curFence {
+		return fmt.Errorf("%w: requeue-transient task %s fence %d != %d", ErrStaleFence, taskID, fence, curFence)
+	}
+	now := s.now()
+	if _, err := tx.Exec(`UPDATE tasks SET status=?, fence=fence+1, claimed_by='', heartbeat_at=0, available_at=?, updated_at=? WHERE id=?`,
+		string(StatusQueued), availableAt, now, taskID); err != nil {
+		return err
+	}
+	if err := emitTx(tx, runID, taskID, projectID, EventStepStatusChange,
+		map[string]any{"step": stepID, "from": StatusRunning, "to": StatusQueued, "reason": "transient_retry", "available_at": availableAt}, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // RequeueStale finds RUNNING tasks whose heartbeat is older than staleMillis and

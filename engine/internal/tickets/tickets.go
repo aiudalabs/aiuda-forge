@@ -569,6 +569,69 @@ func (s *Store) MarkFailed(id string) error {
 	return s.transition(id, StatusFailed, "")
 }
 
+// RequeueSprint resurrects a whole sprint's terminal (failed) stories back to
+// backlog so the orchestrator re-fires the sprint fresh. This is the user-driven
+// "Reencolar" action (R2): it deliberately crosses the failed->backlog edge the
+// automatic state machine forbids, and clears run_id/pr_url so the next fire is
+// clean. Returns the number of stories requeued.
+func (s *Store) RequeueSprint(sprintID string) (int, error) {
+	res, err := s.db.Exec(
+		`UPDATE stories SET status='backlog', run_id='', pr_url='' WHERE sprint_id=? AND status='failed'`, sprintID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// RequeueByRun requeues the failed stories belonging to a run. Because a goal-mode
+// sprint's stories all share the run_id, it resolves each story's sprint and
+// requeues the WHOLE sprint (the user's "requeue the whole sprint in sprint mode");
+// story-mode stories (no sprint_id) are requeued individually by run_id. Returns
+// the total number of stories requeued.
+func (s *Store) RequeueByRun(runID string) (int, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT sprint_id FROM stories WHERE run_id=?`, runID)
+	if err != nil {
+		return 0, err
+	}
+	var sprints []string
+	looseStory := false
+	for rows.Next() {
+		var sp string
+		if err := rows.Scan(&sp); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if sp == "" {
+			looseStory = true
+		} else {
+			sprints = append(sprints, sp)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, sp := range sprints {
+		n, err := s.RequeueSprint(sp)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	if looseStory {
+		res, err := s.db.Exec(
+			`UPDATE stories SET status='backlog', run_id='', pr_url='' WHERE run_id=? AND sprint_id='' AND status='failed'`, runID)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += int(n)
+	}
+	return total, nil
+}
+
 // SetStoryRun records the run_id that is executing a story. It only writes the
 // run_id on a non-terminal story (M5) — recording a run on a done/failed story is
 // always a mistake (a stale completion path) and must be a no-op, surfaced as

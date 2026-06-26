@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   wave         INTEGER NOT NULL DEFAULT 0,
   claimed_by   TEXT NOT NULL DEFAULT '',
   heartbeat_at INTEGER NOT NULL DEFAULT 0,
+  available_at INTEGER NOT NULL DEFAULT 0,
   project_id   TEXT NOT NULL DEFAULT '',
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
@@ -88,6 +89,9 @@ var projectIDMigrations = []string{
 	`ALTER TABLE runs ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE events ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
+	// available_at gates the claim query so a transient-retry (R1: provider limit)
+	// can defer re-claim by a backoff. Pre-existing DBs predate the column.
+	`ALTER TABLE tasks ADD COLUMN available_at INTEGER NOT NULL DEFAULT 0`,
 }
 
 // DefaultProjectID is the project existing (pre-multi-tenant) rows are backfilled

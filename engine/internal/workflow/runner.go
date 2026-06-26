@@ -22,6 +22,13 @@ type StepResult struct {
 	// advancing until ApproveStep resolves it. Used by the human_gate step type.
 	Park bool `json:"-"`
 
+	// Retry signals a TRANSIENT failure (e.g. the agent hit a provider session/rate
+	// limit) that is not a logical step failure and must NOT fail the run. The engine
+	// requeues the task with a backoff (available_at) so a worker re-claims and
+	// re-runs it once the limit clears — the same recovery the stale reaper provides
+	// for a crashed worker, but driven by a recognized transient error.
+	Retry bool `json:"-"`
+
 	// Events are extra bus events the runner wants emitted (e.g. step.gate,
 	// step.verify). The engine forwards them generically — it does not interpret
 	// them, so this stays methodology-free.

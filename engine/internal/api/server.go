@@ -59,6 +59,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /runs/{id}/cancel", s.cancelRun)
 	m.HandleFunc("DELETE /runs/{id}", s.deleteRun)
 	m.HandleFunc("POST /runs/{id}/retry", s.retryRun)
+	// Requeue (R2): resurrect a failed run's stories back to backlog so the
+	// orchestrator re-fires. In sprint mode this requeues the WHOLE sprint.
+	m.HandleFunc("POST /runs/{id}/requeue", s.needTickets(s.requeueRun))
 	m.HandleFunc("GET /control/status", s.controlStatus)
 	m.HandleFunc("POST /control/pause", s.pause)
 	m.HandleFunc("POST /control/resume", s.resume)
@@ -121,6 +124,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /sprints/{id}/stories", s.needTickets(s.sprintStories))
 	m.HandleFunc("POST /sprints/{id}/claim", s.needTickets(s.claimSprint))
 	m.HandleFunc("PUT /sprints/{id}/status", s.needTickets(s.updateSprintStatus))
+	m.HandleFunc("POST /sprints/{id}/requeue", s.needTickets(s.requeueSprint))
 	m.HandleFunc("POST /stories", s.needTickets(s.createStory))
 	m.HandleFunc("GET /stories", s.needTickets(s.listStoriesHandler))
 	m.HandleFunc("GET /stories/{id}", s.needTickets(s.getStory))
@@ -232,6 +236,30 @@ func (s *Server) retryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run, _ := s.Store.GetRun(id)
 	writeJSON(w, http.StatusOK, run)
+}
+
+// requeueRun (R2) resurrects a failed run's stories back to backlog so the
+// orchestrator re-fires them. Because a goal-mode sprint's stories share the
+// run_id, this requeues the WHOLE sprint; in story mode it requeues the one story.
+func (s *Server) requeueRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	n, err := s.Tickets.RequeueByRun(id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requeued": n})
+}
+
+// requeueSprint (R2) resurrects all of a sprint's failed stories back to backlog.
+func (s *Server) requeueSprint(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	n, err := s.Tickets.RequeueSprint(id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requeued": n})
 }
 
 func (s *Server) controlStatus(w http.ResponseWriter, r *http.Request) {
