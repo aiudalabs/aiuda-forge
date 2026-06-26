@@ -146,11 +146,13 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 	}
 
 	out := map[string]any{
-		"text":      res.Text,
-		"cost_usd":  res.CostUSD,
-		"num_turns": res.NumTurns,
-		"agent":     manifest.ID,
-		"model":     model,
+		"text":       res.Text,
+		"cost_usd":   res.CostUSD,
+		"num_turns":  res.NumTurns,
+		"tokens_in":  res.TokensIn,
+		"tokens_out": res.TokensOut,
+		"agent":      manifest.ID,
+		"model":      model,
 	}
 
 	// If the step declares an output path (e.g. "docs/PRD.md"), capture the

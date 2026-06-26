@@ -72,11 +72,13 @@ type Event struct {
 
 // Result is the terminal outcome of an agent run.
 type Result struct {
-	Text     string  // final assistant text / result
-	Success  bool    // !is_error
-	CostUSD  float64 // total_cost_usd
-	NumTurns int
-	Raw      map[string]any
+	Text      string  // final assistant text / result
+	Success   bool    // !is_error
+	CostUSD   float64 // total_cost_usd
+	NumTurns  int
+	TokensIn  int // input tokens (incl. cache create/read) — usage.*input_tokens
+	TokensOut int // output tokens — usage.output_tokens
+	Raw       map[string]any
 }
 
 // Backend wraps an agent CLI. Run streams events via onEvent (may be nil) and

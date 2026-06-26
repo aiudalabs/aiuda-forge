@@ -332,28 +332,35 @@ func (s *Server) artifacts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
-	runs, _ := s.Store.ListRuns("")
+	// ?project=<id> scopes the metrics to one project (absent = all projects).
+	project := r.URL.Query().Get("project")
+	runs, _ := s.Store.ListRunsByProject("", project)
 	byStatus := map[string]int{}
 	costByWorkflow := map[string]float64{}
 	costByStep := map[string]float64{}
 	var totalCost float64
+	var tokensIn, tokensOut, turns, agentCalls int
 	done := 0
 	for _, run := range runs {
 		byStatus[string(run.Status)]++
 		if run.Status == store.StatusDone {
 			done++
 		}
-		// Cost lives in each step's Result (agent steps carry cost_usd). Aggregate
-		// by workflow and by step. No kernel change — read what's already stored.
+		// Usage lives in each agent step's Result.output (cost_usd / tokens / turns).
+		// Aggregate by workflow and by step. No kernel change — read what's stored.
 		tasks, _ := s.Store.TasksForRun(run.ID)
 		for _, t := range tasks {
-			c := costOf(t.Result)
-			if c == 0 {
+			u := usageOf(t.Result)
+			if u.cost == 0 && u.tokensIn == 0 && u.tokensOut == 0 {
 				continue
 			}
-			totalCost += c
-			costByWorkflow[run.WorkflowID] += c
-			costByStep[t.StepID] += c
+			agentCalls++
+			totalCost += u.cost
+			tokensIn += u.tokensIn
+			tokensOut += u.tokensOut
+			turns += u.turns
+			costByWorkflow[run.WorkflowID] += u.cost
+			costByStep[t.StepID] += u.cost
 		}
 	}
 	acceptance := 0.0
@@ -368,22 +375,46 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		"cost_by_workflow": costByWorkflow,
 		"cost_by_step":     costByStep,
 		"acceptance_rate":  acceptance,
+		"total_tokens_in":  tokensIn,
+		"total_tokens_out": tokensOut,
+		"total_turns":      turns,
+		"agent_calls":      agentCalls,
 	})
 }
 
-// costOf extracts cost_usd from a step's Result JSON (0 if absent/unparseable).
-func costOf(result string) float64 {
+// stepUsage is the per-step agent usage read from a stored Result.
+type stepUsage struct {
+	cost              float64
+	tokensIn, tokensOut, turns int
+}
+
+// usageOf extracts agent usage from a step's Result JSON. The agent runner stores
+// these under Result.output (cost_usd / tokens_in / tokens_out / num_turns); a
+// top-level fallback keeps older rows working.
+func usageOf(result string) stepUsage {
 	if result == "" {
-		return 0
+		return stepUsage{}
 	}
 	var m map[string]any
 	if json.Unmarshal([]byte(result), &m) != nil {
+		return stepUsage{}
+	}
+	src := m
+	if out, ok := m["output"].(map[string]any); ok {
+		src = out
+	}
+	f := func(k string) float64 {
+		if v, ok := src[k].(float64); ok {
+			return v
+		}
 		return 0
 	}
-	if c, ok := m["cost_usd"].(float64); ok {
-		return c
+	return stepUsage{
+		cost:      f("cost_usd"),
+		tokensIn:  int(f("tokens_in")),
+		tokensOut: int(f("tokens_out")),
+		turns:     int(f("num_turns")),
 	}
-	return 0
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

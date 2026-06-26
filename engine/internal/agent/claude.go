@@ -204,11 +204,26 @@ func parseStreamLine(obj map[string]any) (events []Event, result Result, isResul
 		if n, ok := obj["num_turns"].(float64); ok {
 			turns = int(n)
 		}
-		result = Result{Text: text, Success: !isErr, CostUSD: cost, NumTurns: turns, Raw: obj}
+		// Token usage is reported even on subscription billing (where cost may be 0),
+		// so it is the meaningful "spend" signal there. Input includes cache create/read.
+		var tin, tout int
+		if u, ok := obj["usage"].(map[string]any); ok {
+			tin = jsonInt(u["input_tokens"]) + jsonInt(u["cache_creation_input_tokens"]) + jsonInt(u["cache_read_input_tokens"])
+			tout = jsonInt(u["output_tokens"])
+		}
+		result = Result{Text: text, Success: !isErr, CostUSD: cost, NumTurns: turns, TokensIn: tin, TokensOut: tout, Raw: obj}
 		events = append(events, Event{Kind: KindResult, Text: text, Raw: obj})
 		isResult = true
 	}
 	return events, result, isResult
+}
+
+// jsonInt coerces a decoded JSON number (always float64) to int; 0 if absent.
+func jsonInt(v any) int {
+	if f, ok := v.(float64); ok {
+		return int(f)
+	}
+	return 0
 }
 
 // childEnv builds the environment for the agent process per the auth mode. The
