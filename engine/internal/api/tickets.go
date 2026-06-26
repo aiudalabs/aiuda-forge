@@ -339,15 +339,17 @@ func (s *Server) claimStory(w http.ResponseWriter, r *http.Request) {
 // ticketView is the shape the orchestrator's GET /tickets returns, so the
 // existing UI can read the native store without changes.
 type ticketView struct {
-	ID        string   `json:"id"`
-	Title     string   `json:"title"`
-	Status    string   `json:"status"` // derived: backlog stories whose deps are done report "ready"
-	Deps      []string `json:"deps"`
-	RunID     string   `json:"run_id,omitempty"`
-	SprintID  string   `json:"sprint_id,omitempty"`  // lets the scheduler group running stories by sprint
-	PRURL     string   `json:"pr_url,omitempty"`     // recorded in_review; the reconcile loop checks this PR
-	Repo      string   `json:"repo,omitempty"`       // the repo the PR lives in (needed to address it via gh)
-	ProjectID string   `json:"project_id,omitempty"` // lets the scheduler group work by project (audit A1)
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body,omitempty"`       // the skeleton user-story ("As a X, I want Y…") so the board can show what a story is
+	Acceptance string   `json:"acceptance,omitempty"` // the falsifiable AC lines
+	Status     string   `json:"status"`               // derived: backlog stories whose deps are done report "ready"
+	Deps       []string `json:"deps"`
+	RunID      string   `json:"run_id,omitempty"`
+	SprintID   string   `json:"sprint_id,omitempty"`  // lets the scheduler group running stories by sprint
+	PRURL      string   `json:"pr_url,omitempty"`     // recorded in_review; the reconcile loop checks this PR
+	Repo       string   `json:"repo,omitempty"`       // the repo the PR lives in (needed to address it via gh)
+	ProjectID  string   `json:"project_id,omitempty"` // lets the scheduler group work by project (audit A1)
 }
 
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
@@ -383,15 +385,17 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			deps = []string{}
 		}
 		views = append(views, ticketView{
-			ID:        st.ID,
-			Title:     st.Title,
-			Status:    status,
-			Deps:      deps,
-			RunID:     st.RunID,
-			SprintID:  st.SprintID,
-			PRURL:     st.PRURL,
-			Repo:      st.Repo,
-			ProjectID: st.ProjectID,
+			ID:         st.ID,
+			Title:      st.Title,
+			Body:       st.Body,
+			Acceptance: st.Accept,
+			Status:     status,
+			Deps:       deps,
+			RunID:      st.RunID,
+			SprintID:   st.SprintID,
+			PRURL:      st.PRURL,
+			Repo:       st.Repo,
+			ProjectID:  st.ProjectID,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": views})

@@ -57,6 +57,26 @@ function StoryCard({ ticket, onOpenRun }: StoryCardProps) {
       <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
         {ticket.title}
       </div>
+      {ticket.body && (
+        <div
+          title={
+            ticket.body +
+            (ticket.acceptance ? "\n\nAcceptance:\n" + ticket.acceptance : "")
+          }
+          style={{
+            marginTop: 5,
+            fontSize: 11.5,
+            color: "var(--ink3)",
+            lineHeight: 1.4,
+            display: "-webkit-box",
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {ticket.body}
+        </div>
+      )}
       {ticket.run_id && (
         <div style={{ marginTop: 6 }}>
           <span

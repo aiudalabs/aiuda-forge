@@ -243,6 +243,8 @@ export interface Epic {
 export interface OrchestratorTicket {
   id: string;
   title: string;
+  body?: string;        // skeleton user-story ("As a X, I want Y…") — what the story is
+  acceptance?: string;  // falsifiable acceptance-criteria lines
   status: TicketStatus;
   deps: string[];
   run_id?: string;

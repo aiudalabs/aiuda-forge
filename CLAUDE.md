@@ -103,3 +103,13 @@ Monorepo: `engine/` (Go, module `forge`) + `console/` (Next.js/TS).
     project_id="default" → the factory run got "default" → the project-scoped Board showed nothing. Added
     `project_id: $trigger.project_id` to the handoff step. (Wave-2 integration miss: registry/workflows
     wasn't in MTEngine's lane.)
+21. **"Ready" column is misleading in sprint mode (UX inconsistency).** The Kanban derives "ready" per-STORY
+    (deps satisfied), but in sprint mode the factory fires per-SPRINT. A no-dep story (e.g. S1-28 app shell in
+    SP6 frontend) shows "ready" even though its sprint can't run until earlier sprints are done+merged — so it
+    won't actually fire. Fix: in sprint mode, derive readiness at the sprint level (a story is "ready" only
+    when its whole sprint is ready), or visually indicate the story is gated by its sprint's ordering.
+22. **Ticket card/detail shows only the title — surface the description (body + acceptance).** Each story HAS
+    a user-story `body` ("As a X, I want Y, so that Z") + detailed `acceptance` criteria, but the Kanban card
+    only renders the title, so the user can't see what a story is. Show the body + ACs in the ticket card
+    (truncated) and full in the ticket detail/drawer. (The full build spec is generated just-in-time by
+    draft_story — that's separate; this is just surfacing the skeleton description that already exists.)
