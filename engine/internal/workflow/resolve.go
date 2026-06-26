@@ -30,6 +30,16 @@ func resolveValue(v any, ctx Context) any {
 		}
 		nxt, ok := m[key]
 		if !ok {
+			// Convenience + bug-guard: a step result is {output:{...}, detail, success}.
+			// Allow `$step.<k>` as shorthand for `$step.output.<k>` (e.g. $discovery.text
+			// → $discovery.output.text). Without this, design.yaml's `$prd.text` etc.
+			// resolved to "" silently and every design phase received the prior doc EMPTY.
+			if out, ok := m["output"].(map[string]any); ok {
+				if v, ok := out[key]; ok {
+					cur = v
+					continue
+				}
+			}
 			return ""
 		}
 		cur = nxt

@@ -58,6 +58,26 @@ func (d *DirLoader) Load(id string) (*Manifest, error) {
 	if persona, err := os.ReadFile(filepath.Join(d.Root, id+".md")); err == nil {
 		m.Persona = string(persona)
 	}
+	// Inject declared skills (registry/skills/<skill>.md) into the persona so the
+	// agent gets them as system-prompt context. Engine-agnostic by design: skills
+	// are plain markdown loaded by US and passed as a string, NOT a dependency on a
+	// host "skill" mechanism (which would couple us to one engine). Missing skill
+	// files are skipped (best-effort) rather than failing the agent.
+	if len(m.Skills) > 0 {
+		skillsDir := filepath.Join(filepath.Dir(d.Root), "skills")
+		persona := m.Persona
+		for _, sk := range m.Skills {
+			if sk == "" || !agentIDRe.MatchString(sk) {
+				continue // same anti-traversal guard as the agent id
+			}
+			b, err := os.ReadFile(filepath.Join(skillsDir, sk+".md"))
+			if err != nil {
+				continue
+			}
+			persona += "\n\n---\n\n## Skill: " + sk + "\n\n" + string(b)
+		}
+		m.Persona = persona
+	}
 	return &m, nil
 }
 
