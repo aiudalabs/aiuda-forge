@@ -188,6 +188,10 @@ export interface MetricsPayload {
   cost_by_step: Record<string, number>;
   acceptance_rate: number; // 0..1
   by_status: Record<string, number>;
+  total_tokens_in?: number; // populated for runs since the usage-capture change
+  total_tokens_out?: number;
+  total_turns?: number; // agent round-trips across all steps
+  agent_calls?: number; // number of agent steps that reported usage
 }
 
 // ── Studio / Design runs ──────────────────────────────────────────────────────

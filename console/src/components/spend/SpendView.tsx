@@ -19,6 +19,13 @@ function fmtPct(r: number) {
   return `${Math.round(r * 100)}%`;
 }
 
+// Compact integer format: 845 · 12.3K · 4.1M.
+function fmtNum(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return `${n}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Componente raíz
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,6 +68,8 @@ export function SpendView() {
   // cost-per-accepted-change: total / runs aceptados (done).
   const doneCount = data.by_status?.DONE ?? 0;
   const costPerAccepted = doneCount > 0 ? data.total_cost_usd / doneCount : 0;
+  const tokensIn = data.total_tokens_in ?? 0;
+  const tokensOut = data.total_tokens_out ?? 0;
 
   return (
     <div className="wrap">
@@ -90,6 +99,30 @@ export function SpendView() {
           <div className="eyebrow">Runs DONE</div>
           <div className="n serif">{doneCount}</div>
           <div className="sub">de {Object.values(data.by_status ?? {}).reduce((a, b) => a + b, 0)} totales</div>
+        </div>
+      </div>
+
+      {/* Uso del agente — significativo incluso en suscripción (donde el $ puede ser 0). */}
+      <div className="stats" style={{ marginTop: 0 }}>
+        <div className="stat">
+          <div className="eyebrow">Llamadas al agente</div>
+          <div className="n serif">{fmtNum(data.agent_calls ?? 0)}</div>
+          <div className="sub">pasos que invocaron un modelo</div>
+        </div>
+        <div className="stat">
+          <div className="eyebrow">Turns totales</div>
+          <div className="n serif">{fmtNum(data.total_turns ?? 0)}</div>
+          <div className="sub">round-trips del agente</div>
+        </div>
+        <div className="stat">
+          <div className="eyebrow">Tokens entrada</div>
+          <div className="n serif">{tokensIn > 0 ? fmtNum(tokensIn) : "—"}</div>
+          <div className="sub">{tokensIn > 0 ? "incl. caché" : "desde el próximo run"}</div>
+        </div>
+        <div className="stat">
+          <div className="eyebrow">Tokens salida</div>
+          <div className="n serif">{tokensOut > 0 ? fmtNum(tokensOut) : "—"}</div>
+          <div className="sub">{tokensOut > 0 ? "generados" : "desde el próximo run"}</div>
         </div>
       </div>
 
