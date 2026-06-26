@@ -83,3 +83,23 @@ Monorepo: `engine/` (Go, module `forge`) + `console/` (Next.js/TS).
     inputs are therefore latent no-ops — the design agents only work because each re-reads docs/ from the
     workdir. factory.yaml correctly uses `$draft_story.output.text`. Fix: promote output.text to a top-level
     `.text` in reportAndAdvance (or special-case it in resolve.go) and clean up design.yaml's inputs.
+17. **Suppress benign hydration warning** from browser extensions (Grammarly injects
+    `data-gr-ext-installed`/`data-new-gr-c-s-check-loaded` on `<body>`). Add `suppressHydrationWarning`
+    to the `<body>` in the root layout so the dev console isn't noisy.
+18. **Retry leaves duplicate steps → UI/artifact pick the stale FAILED one.** After POST /runs/{id}/retry,
+    a re-fired step appears twice (old FAILED + new DONE). `GET /runs/{id}/artifacts/{step}` and the Studio
+    phase logic return/pick the FIRST match (the failed one), so the doc won't render even though the phase
+    re-completed. Fix: artifact/status lookups should use the LATEST step instance (or RetryRun should
+    supersede, not duplicate). Found re-running serviciospty's backlog.
+19. **Factory fires before the design docs are merged to dev (ordering bug, HIGH).** handoff publishes the
+    stories and the orchestrator claims+fires SP1 immediately, racing the human merge of the docs_pr PR.
+    The factory clones `dev`, which lacks docs/ AND the architect's `.vibeforge-gate` until that PR is merged,
+    so draft_story has no PRD/architecture and the gate fails ("no .vibeforge-gate"). Fix options: publish
+    stories in a 'blocked' state until the docs PR is merged; or have the design COMMIT docs+gate to dev
+    directly (gated); or make the factory ensure docs+gate present (and the orchestrator not fire until the
+    project's design docs are on dev). Found re-running serviciospty.
+20. **design.yaml handoff didn't forward project_id (FIXED 2026-06-26).** publish.go reads
+    inputs["project_id"] but the handoff step only passed backlog+repo, so published stories/sprints got
+    project_id="default" → the factory run got "default" → the project-scoped Board showed nothing. Added
+    `project_id: $trigger.project_id` to the handoff step. (Wave-2 integration miss: registry/workflows
+    wasn't in MTEngine's lane.)

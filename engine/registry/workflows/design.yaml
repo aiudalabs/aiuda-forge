@@ -113,6 +113,7 @@ steps:
     inputs:
       backlog: docs/backlog.yaml
       repo: $trigger.repo
+      project_id: $trigger.project_id   # scope every published story/sprint to the project (audit A1)
 
   # ── Phase 8: Publish docs — commit docs/ to a branch and open a PR to dev ─
   # Requires the run's workdir to be a clone of the project repo (payload.repo).
