@@ -18,6 +18,7 @@ import {
   useDeleteRun,
   useLiveEvents,
   useReject,
+  useRequeue,
   useRetry,
   useRun,
 } from "@/lib/hooks";
@@ -99,6 +100,7 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
   const reject = useReject();
   const cancel = useCancel();
   const retry = useRetry();
+  const requeue = useRequeue();
   const del = useDeleteRun();
 
   const open = !!runId;
@@ -213,9 +215,21 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
 
               <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
                 {isFailed ? (
-                  <button className="btn ghost sm" onClick={() => retry.mutate([run.id])} disabled={retry.isPending}>
-                    ↻ Reintentar
-                  </button>
+                  <>
+                    <button className="btn ghost sm" onClick={() => retry.mutate([run.id])} disabled={retry.isPending}>
+                      ↻ Reintentar
+                    </button>
+                    {/* Reencolar: devuelve las stories al backlog para que el orquestador
+                        dispare un run NUEVO. En modo sprint reencola el sprint completo. */}
+                    <button
+                      className="btn ghost sm"
+                      onClick={() => requeue.mutate([run.id], { onSuccess: onClose })}
+                      disabled={requeue.isPending}
+                      title="Devuelve el sprint al backlog para re-ejecutarlo desde cero"
+                    >
+                      ⟲ Reencolar sprint
+                    </button>
+                  </>
                 ) : (
                   !isAwaiting &&
                   run.status !== "DONE" && (

@@ -448,6 +448,17 @@ export async function retryRun(id: string): Promise<void> {
   await http<void>(`/runs/${id}/retry`, { method: "POST" });
 }
 
+// Requeue (R2): resurrect a failed run's stories back to backlog so the
+// orchestrator re-fires them. In sprint mode this requeues the WHOLE sprint.
+export async function requeueRun(id: string): Promise<number> {
+  if (await isMock()) {
+    mutateMockStatus(id, "QUEUED");
+    return 0;
+  }
+  const res = await http<{ requeued: number }>(`/runs/${id}/requeue`, { method: "POST" });
+  return res.requeued;
+}
+
 export async function deleteRun(id: string): Promise<void> {
   if (await isMock()) {
     const i = mockRuns.findIndex((r) => r.id === id);

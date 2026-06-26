@@ -120,6 +120,9 @@ export function useCancel() {
 export function useRetry() {
   return useRunAction((id: string) => api.retryRun(id));
 }
+export function useRequeue() {
+  return useRunAction((id: string) => api.requeueRun(id));
+}
 export function useDeleteRun() {
   return useRunAction((id: string) => api.deleteRun(id));
 }
