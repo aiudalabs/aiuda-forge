@@ -61,16 +61,21 @@ export type ApiMode = "real" | "mock";
 let modePromise: Promise<ApiMode> | null = null;
 
 async function probe(): Promise<ApiMode> {
+  // Mock is OPT-IN ONLY (NEXT_PUBLIC_FORCE_MOCK=1). There is NO silent fallback to
+  // mock when the backend is unreachable: showing fake demo data that looks real is
+  // dangerous and confusing (it once masked a real project as a set of example
+  // tickets). If the API is down we STAY in "real" mode and surface real errors.
   if (FORCE_MOCK) return "mock";
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), HEALTH_TIMEOUT_MS);
     const res = await fetch(`${API_URL}/healthz`, { signal: ctrl.signal });
     clearTimeout(t);
-    return res.ok ? "real" : "mock";
-  } catch {
-    return "mock";
+    if (!res.ok) console.warn(`API /healthz returned ${res.status} — staying in real mode (no mock fallback)`);
+  } catch (e) {
+    console.warn("API unreachable — staying in real mode (no mock fallback):", e);
   }
+  return "real";
 }
 
 /** Modo activo (cacheado tras la primera prueba de salud). */
