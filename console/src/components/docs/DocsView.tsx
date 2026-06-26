@@ -23,6 +23,7 @@ const PAGES: DocPage[] = [
   { file: "04-orquestador.md", title: "Orquestador", icon: "⟳" },
   { file: "05-diseno-y-fabrica.md", title: "Diseño y Fábrica", icon: "▤" },
   { file: "06-seguridad-resiliencia.md", title: "Seguridad y Resiliencia", icon: "🛡" },
+  { file: "07-engines.md", title: "Engines y portabilidad", icon: "⇄" },
 ];
 
 export function DocsView() {
