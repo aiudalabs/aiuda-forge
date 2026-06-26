@@ -8,9 +8,13 @@
 import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { DocEntry } from "@/lib/types";
+import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
+import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
+import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
 import { useProjectDocs, useProjectDoc } from "@/lib/hooks";
+
+SyntaxHighlighter.registerLanguage("yaml", yaml);
 
 // Friendly titles + a logical reading order for the known design artifacts. Unknown
 // files fall back to their filename and sort after the known ones.
@@ -30,6 +34,39 @@ function meta(name: string) {
 
 function isMarkdown(path: string) {
   return path.toLowerCase().endsWith(".md");
+}
+
+function isHtml(path: string) {
+  const p = path.toLowerCase();
+  return p.endsWith(".html") || p.endsWith(".htm");
+}
+
+// MockupFrame renders an HTML mockup inline (sandboxed iframe) with a button to
+// open it full-screen in its own tab — "como una UI funcional".
+function MockupFrame({ content }: { content: string }) {
+  function openInTab() {
+    const blob = new Blob([content], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    // Revoke shortly after the tab has had time to load it.
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
+  return (
+    <div className="docs-mockup">
+      <div className="docs-mockup-bar">
+        <span className="docs-mockup-tag">Mockup interactivo</span>
+        <button className="btn ghost sm" onClick={openInTab}>
+          ⛶ Abrir a pantalla completa
+        </button>
+      </div>
+      <iframe
+        className="docs-mockup-frame"
+        srcDoc={content}
+        sandbox="allow-scripts allow-popups allow-forms"
+        title="Mockup"
+      />
+    </div>
+  );
 }
 
 export function StudioDocs() {
@@ -108,13 +145,21 @@ export function StudioDocs() {
                   <span className="docs-tree-label">{meta(d.name).title}</span>
                 </button>
               ))}
-              {dirs.map((d) => (
-                <div key={d.path} className="docs-tree-item dir" title="Carpeta — visor próximamente">
-                  <span className="docs-tree-ic">{meta(d.name).icon}</span>
-                  <span className="docs-tree-label">{meta(d.name).title}</span>
-                  <span className="docs-tree-badge">carpeta</span>
-                </div>
-              ))}
+              {dirs.map((d) => {
+                // Mockups live as <dir>/index.html; clicking the folder opens it.
+                const target = `${d.path}/index.html`;
+                return (
+                  <button
+                    key={d.path}
+                    className={`docs-tree-item${active === target ? " on" : ""}`}
+                    onClick={() => setSelected(target)}
+                  >
+                    <span className="docs-tree-ic">{meta(d.name).icon}</span>
+                    <span className="docs-tree-label">{meta(d.name).title}</span>
+                    <span className="docs-tree-badge">html</span>
+                  </button>
+                );
+              })}
             </nav>
           )}
         </aside>
@@ -129,12 +174,30 @@ export function StudioDocs() {
             <div className="placeholder">
               <span className="spin" /> cargando documento…
             </div>
+          ) : isHtml(active) ? (
+            <MockupFrame content={content ?? ""} />
           ) : isMarkdown(active) ? (
             <article className="docs-md artifact-md">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{content ?? ""}</ReactMarkdown>
             </article>
           ) : (
-            <pre className="docs-code">{content ?? ""}</pre>
+            <SyntaxHighlighter
+              language="yaml"
+              style={githubGist}
+              customStyle={{
+                background: "var(--bg2)",
+                border: "1px solid var(--stroke)",
+                borderRadius: "var(--r)",
+                fontSize: 12.5,
+                lineHeight: 1.6,
+                margin: 0,
+                padding: "16px 18px",
+                fontFamily: "var(--mono)",
+              }}
+              wrapLongLines={false}
+            >
+              {content ?? ""}
+            </SyntaxHighlighter>
           )}
         </section>
       </div>

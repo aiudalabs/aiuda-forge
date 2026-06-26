@@ -1903,3 +1903,32 @@ header.top .sp {
     position: static;
   }
 }
+
+/* Mockup viewer (U1) — render the HTML mockup inline + open full-screen in a tab. */
+.docs-mockup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.docs-mockup-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.docs-mockup-tag {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--ink4);
+}
+.docs-mockup-bar .btn {
+  margin-left: auto;
+}
+.docs-mockup-frame {
+  width: 100%;
+  height: 78vh;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  background: #fff;
+}
