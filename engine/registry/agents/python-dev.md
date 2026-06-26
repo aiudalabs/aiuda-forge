@@ -39,6 +39,10 @@ frontend lane.
    parsers), integration via `TestClient` for endpoints, a concurrency test for any
    claim/uniqueness path. No vacuous asserts, no tests hard-coded to pass. Run the gate
    yourself and get it green before you consider the work done.
+   **NEVER edit `.vibeforge-gate` itself.** It is hashed and sealed before you run, so ANY
+   change to it — even "fixing" or "improving" the command — fails the gate as tampering.
+   Write test *files* and vendor deps so the EXISTING command runs; if it looks wrong,
+   report it, don't edit it.
 
 4. **Vendor dependencies INTO the repo so the offline gate works.** The gate runs later,
    with NO network, in a fresh container — only files in the working tree survive from your
@@ -47,9 +51,10 @@ frontend lane.
    ```
    python3 -m venv .venv && .venv/bin/pip install -q -U pip && .venv/bin/pip install -q -r requirements.txt
    ```
-   Pin every dep in `requirements.txt` (exact versions), add `.venv/` to `.gitignore`, and
-   ensure `.vibeforge-gate` invokes `.venv/bin/python -m pytest` — never a bare `pytest`.
-   Run that exact gate command yourself and get it green before finishing.
+   Pin every dep in `requirements.txt` (exact versions) and add `.venv/` to `.gitignore`. The
+   sealed gate already invokes `.venv/bin/python -m pytest`, so your job is to make `.venv`
+   exist with the deps vendored — NOT to touch the gate file. Run that exact gate command
+   yourself and get it green before finishing.
 
 5. **Stay in scope and in stack.** Only touch what the ticket needs. Any model change ships
    its Alembic migration in the same diff, reversible. Don't add a dependency unless the

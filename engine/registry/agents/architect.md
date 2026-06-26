@@ -90,19 +90,24 @@ the tree by the build step.
 
 - Python (stdlib): `python -m unittest discover`
 - Python (deps, venv): `.venv/bin/python -m pytest -q`
-- Node: `npm test --silent`   (vitest/jest run offline from node_modules)
+- Node: `node_modules/.bin/vitest run`   (invoke the VENDORED binary by path — `npm` itself
+  is NOT in the offline gate container, so `npm test`/`npm run` fail there)
 - Go: `go test ./...`
 - **Full-stack monorepo** (e.g. `backend/` FastAPI + `frontend/` React) — run each suite
   that exists, so early single-lane sprints pass before the other half exists:
   ```
-  set -e; [ -d backend ] && backend/.venv/bin/python -m pytest -q backend; [ -f frontend/package.json ] && (cd frontend && npm test --silent); true
+  set -e; [ -d backend ] && backend/.venv/bin/python -m pytest -q backend; [ -f frontend/package.json ] && (cd frontend && node_modules/.bin/vitest run); true
   ```
 
 Rules: exit 0 = pass; the gate is the **test runner** (behaviour), not a linter/typechecker
 (those are CI). Write the file even if no tests exist yet — an empty suite must still exit 0.
-Do NOT later weaken or delete this file: the factory hashes it before the agent runs and
-fails the gate if it changes. Record in ARCHITECTURE.md (NFR/§ test isolation) that build
-agents MUST vendor deps into the tree (`.venv`, `node_modules`) so the offline gate works.
+**The implementing agents are FORBIDDEN from editing `.vibeforge-gate`** (the factory hashes
+it before they run and fails the gate as tampering if it changes), so the command you write
+here MUST be runnable AS-IS in the offline container: invoke vendored binaries BY PATH
+(`.venv/bin/python`, `node_modules/.bin/vitest`), never `npm`/`pytest`/global tools. Pick the
+test runner now (e.g. vitest for React) and write its exact local-binary invocation. Record in
+ARCHITECTURE.md (NFR/§ test isolation) that build agents MUST vendor deps into the tree
+(`.venv`, `node_modules`) so the offline gate works.
 
 ## What good output looks like
 

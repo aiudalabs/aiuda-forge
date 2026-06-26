@@ -41,6 +41,9 @@ the Firebase backend; do not touch a mobile or web client lane.
    returns the cached response), and a rules test for any modified rule. No vacuous asserts,
    no tests hard-coded to pass. Run the gate yourself and get it green before you consider
    the work done.
+   **NEVER edit `.vibeforge-gate` itself.** It is hashed and sealed before you run, so ANY
+   change to it — even "fixing" the command — fails the gate as tampering. Write test *files*
+   and vendor deps so the EXISTING command runs; if it looks wrong, report it, don't edit it.
 
 4. **Stay in scope and in stack.** Only touch what the ticket needs. When a CF changes a
    document or response shape, update the owned types and any rule/index it requires in the

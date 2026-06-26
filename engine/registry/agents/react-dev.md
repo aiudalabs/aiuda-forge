@@ -39,13 +39,17 @@ in the web frontend; do not touch a backend or mobile lane.
    tests for conditional rendering and form validation, integration tests (mocking the data
    SDK) for pages that fetch. No vacuous asserts, no tests hard-coded to pass. Run the gate
    yourself and get it green before you consider the work done.
+   **NEVER edit `.vibeforge-gate` itself.** It is hashed and sealed before you run, so ANY
+   change to it — even "fixing" the command — fails the gate as tampering. Write test *files*
+   and vendor deps so the EXISTING command runs; if it looks wrong, report it, don't edit it.
 
 4. **Install deps so the offline gate works.** The gate runs later with NO network in a
    fresh container — `npm install` writes `node_modules/` into the repo, which DOES survive
    into the gate, so run it during your step and get the test runner green offline. Add
-   `node_modules/` to `.gitignore`. The gate command must run the test runner directly
-   (e.g. `npm test --silent`, which vitest/jest serve from `node_modules`), not anything
-   that needs the network.
+   `node_modules/` to `.gitignore`. The sealed gate invokes the test runner by its vendored
+   binary path (e.g. `node_modules/.bin/vitest run`) — NOT `npm test`, because `npm` itself
+   is absent from the offline gate container. Use whatever runner `.vibeforge-gate` already
+   names, vendor it at that path, and make your tests pass under it. Do not change the gate.
 
 5. **Stay in scope and in stack.** Only touch what the ticket needs. Don't add a dependency
    unless the ticket allows it. Styling via the repo's convention (Tailwind utilities, not

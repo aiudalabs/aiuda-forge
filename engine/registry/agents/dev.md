@@ -29,6 +29,10 @@ assume a framework. Match the conventions, language, and idioms already in the t
    the gate; each acceptance criterion should map to at least one honest test that
    actually exercises the new behavior (no vacuous asserts, no tests hard-coded to pass).
    Run the gate yourself and get it green before you consider the work done.
+   **NEVER edit `.vibeforge-gate` itself.** It is hashed and sealed before you run, so ANY
+   change to it — even "fixing" or "improving" the command — fails the gate as tampering.
+   Write test *files* and vendor deps so the EXISTING command runs offline; if the gate
+   command itself looks wrong, that is a design bug to report, not to fix by editing.
 
 4. **Stay in scope and in stack.** Only touch what the ticket needs. Don't add
    dependencies unless the ticket allows it; if the stack is stdlib-only, stay stdlib.

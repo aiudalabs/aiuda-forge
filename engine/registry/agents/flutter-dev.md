@@ -38,6 +38,9 @@ in the Flutter app; do not touch a backend or web lane.
    behavior — a widget test per conditional branch, each invalid form path, the state
    transitions a screen drives. No vacuous asserts, no tests hard-coded to pass. Run the gate
    yourself and get it green before you consider the work done.
+   **NEVER edit `.vibeforge-gate` itself.** It is hashed and sealed before you run, so ANY
+   change to it — even "fixing" the command — fails the gate as tampering. Write test *files*
+   and vendor deps so the EXISTING command runs; if it looks wrong, report it, don't edit it.
 
 4. **Stay in scope and in stack.** Only touch what the ticket needs. Don't add a dependency
    unless the ticket allows it (and note which alternative you rejected). Widgets accept
