@@ -6,4 +6,4 @@ skills:
   - po-checklist
   - sharding-method
 tools: [read, write]
-role: "Shard the PRD and architecture into a wave-ordered backlog of stories, each with full context, acceptance criteria, depends_on, and owner."
+role: "Shard the PRD and architecture into a wave-ordered SKELETON backlog: each story carries a short user-story, acceptance criteria, depends_on, owner, and sprint — NOT the full implementation spec (the story-detailer expands that per-story at build time)."

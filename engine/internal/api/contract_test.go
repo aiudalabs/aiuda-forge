@@ -144,7 +144,7 @@ func TestContractPresence(t *testing.T) {
 		{"GET", "/runs?status=RUNNING", nil},
 		{"GET", "/runs/" + id, nil},
 		{"GET", "/runs/" + id + "/events", nil},
-		{"GET", "/runs/" + id + "/artifacts/implement", nil},
+		{"GET", "/runs/" + id + "/artifacts/draft_story", nil}, // draft_story is the factory's first step
 		{"POST", "/control/pause", nil},
 		{"POST", "/control/resume", nil},
 		{"POST", "/runs/" + id + "/steps/pr/approve", nil},

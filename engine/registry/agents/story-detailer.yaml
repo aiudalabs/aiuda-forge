@@ -1,0 +1,6 @@
+id: story-detailer
+version: 1.0.0
+model: claude-sonnet-4-6
+skills: []
+tools: [read]
+role: "Expand one backlog story into a full, dev-ready specification using the project's PRD + architecture, just before it is implemented."

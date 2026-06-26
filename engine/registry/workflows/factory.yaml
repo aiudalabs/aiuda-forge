@@ -4,11 +4,22 @@
 id: factory
 version: 1.0.0
 steps:
+  # BMAD two-level backlog, level 2 (`create-story`): the scrum-master published only
+  # a LIGHT skeleton (title + user-story + ACs). Here, just-in-time, the story-detailer
+  # reads docs/PRD.md + docs/ARCHITECTURE.md from the cloned `dev` worktree and expands
+  # THIS one story into the full dev-ready spec — one story per call, so it never times
+  # out even for a large project.
+  - id: draft_story
+    type: agent
+    agent: story-detailer
+    inputs:
+      skeleton: $trigger.ticket   # the light story (title + user-story + ACs) the scheduler passes
+
   - id: implement
     type: agent
     agent: dev                  # static fallback; the per-lane specialist below overrides it
     inputs:
-      ticket: $trigger.ticket
+      ticket: $draft_story.output.text   # the full dev-ready spec from draft_story (agent text is at .output.text)
       agent: $trigger.agent      # lane routing: the story's owner (python-dev, react-dev…); empty -> falls back to `dev`
 
   - id: gate
