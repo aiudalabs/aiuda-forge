@@ -1,10 +1,7 @@
-import { Suspense } from "react";
-import { BoardView } from "@/components/board/BoardView";
+import { Overview } from "@/components/overview/Overview";
 
-export default function BoardPage() {
-  return (
-    <Suspense fallback={<div className="wrap">Cargando board…</div>}>
-      <BoardView />
-    </Suspense>
-  );
+// The project home is the landing (U2/U6): specs + flow at a glance. The Board lives
+// at /board.
+export default function HomePage() {
+  return <Overview />;
 }

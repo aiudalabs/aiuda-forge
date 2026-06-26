@@ -3,10 +3,22 @@
 // Tarjeta de run en el board. RUNNING → live-log embebido (stream del bus). AWAITING → banner de
 // human_gate con Rechazar (con motivo) / Revisar diff y aprobar. Click → abre el drawer de detalle.
 
-import type { Run } from "@/lib/types";
+import type { Run, RunEvent } from "@/lib/types";
 import { StatusPill } from "./StatusPill";
-import { LiveLog } from "./LiveLog";
 import { useApprove, useReject, useLiveEvents } from "@/lib/hooks";
+
+// RunLive — a single scannable activity line (replaces the raw terminal dump on the
+// card): a pulsing dot, the current step, and the latest human-readable event.
+function RunLive({ events, step }: { events: RunEvent[]; step?: string }) {
+  const last = [...events].reverse().find((e) => e.message && e.message.trim());
+  return (
+    <div className="run-live">
+      <span className="run-live-dot" />
+      <span className="run-live-step">{step ? `paso: ${step}` : "trabajando…"}</span>
+      {last?.message && <span className="run-live-msg">{last.message}</span>}
+    </div>
+  );
+}
 
 export function RunCard({ run, onOpen }: { run: Run; onOpen: (id: string) => void }) {
   const approve = useApprove();
@@ -79,7 +91,7 @@ export function RunCard({ run, onOpen }: { run: Run; onOpen: (id: string) => voi
         </div>
       )}
 
-      {isRunning && <LiveLog events={events} />}
+      {isRunning && <RunLive events={events} step={run.currentStep} />}
     </div>
   );
 }
