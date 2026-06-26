@@ -7,6 +7,7 @@
 // modo activo para que la UI lo muestre y para que el WS sepa si conectarse.
 
 import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS } from "./config";
+import { authHeaders, handleUnauthorized } from "./auth";
 import {
   MOCK_PROJECT,
   mockArtifacts,
@@ -86,8 +87,14 @@ async function isMock() {
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    // El token Bearer va en cada llamada (audit C1). authHeaders() es {} cuando
+    // no hay token (modo loopback abierto), así que no rompe el dev sin auth.
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers || {}) },
   });
+  if (res.status === 401) {
+    handleUnauthorized(); // borra token + redirige a /login
+    throw new ApiError(401, `${init?.method || "GET"} ${path} → 401 unauthorized`);
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, `${init?.method || "GET"} ${path} → ${res.status} ${body}`);
@@ -101,6 +108,22 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+// rawFetch envuelve fetch para las llamadas que devuelven texto crudo (registry
+// YAML/markdown) o JSON no-mapeado: añade el header Bearer (audit C1) y maneja el
+// 401 (borra token + redirige a /login). Las cabeceras extra (p.ej.
+// Content-Type: application/yaml en PUT) se mezclan encima.
+async function rawFetch(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: { ...authHeaders(), ...(init?.headers || {}) },
+  });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new ApiError(401, `${init?.method || "GET"} ${path} → 401 unauthorized`);
+  }
+  return res;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -478,7 +501,7 @@ export async function getRegistryItem(kind: RegistryKind, id: string): Promise<s
     return content;
   }
   // La API devuelve texto crudo (application/yaml o text/markdown); no parseamos JSON.
-  const res = await fetch(`${API_URL}/registry/${kind}/${id}`);
+  const res = await rawFetch(`/registry/${kind}/${id}`);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, `GET /registry/${kind}/${id} → ${res.status} ${body}`);
@@ -494,7 +517,7 @@ export async function saveRegistryItem(kind: RegistryKind, id: string, body: str
     if (!mockRegistryIds[kind].includes(id)) mockRegistryIds[kind].push(id);
     return { saved: id };
   }
-  const res = await fetch(`${API_URL}/registry/${kind}/${id}`, {
+  const res = await rawFetch(`/registry/${kind}/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/yaml" },
     body,
@@ -513,7 +536,7 @@ export async function getAgentPersona(id: string): Promise<string> {
     // En modo mock no hay sidecars — devolvemos vacío para no bloquear la vista.
     return "";
   }
-  const res = await fetch(`${API_URL}/registry/agents/${encodeURIComponent(id)}/persona`);
+  const res = await rawFetch(`/registry/agents/${encodeURIComponent(id)}/persona`);
   if (res.status === 404) return "";
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -613,7 +636,7 @@ export async function listTickets(): Promise<OrchestratorTicket[]> {
   // no el orquestador. Así la UI es self-contained: lee epics/stories/deps del
   // store propio. El orquestador/GitHub pasan a ser sync opcional (B2).
   if (await isMock()) return [...mockOrchestratorTickets];
-  const res = await fetch(`${API_URL}/tickets`);
+  const res = await rawFetch(`/tickets`);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, `GET /tickets → ${res.status} ${body}`);
@@ -629,7 +652,7 @@ export async function listTickets(): Promise<OrchestratorTicket[]> {
 
 export async function listEpics(): Promise<Epic[]> {
   if (await isMock()) return [...mockEpics];
-  const res = await fetch(`${API_URL}/epics`);
+  const res = await rawFetch(`/epics`);
   if (!res.ok) return []; // el endpoint es opcional; fallamos silenciosamente
   const json = await res.json();
   return Array.isArray(json) ? json : (json as { epics?: Epic[] })?.epics ?? [];

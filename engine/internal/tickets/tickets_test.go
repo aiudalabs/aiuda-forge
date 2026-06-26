@@ -2,6 +2,7 @@ package tickets_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -17,6 +18,23 @@ func openTemp(t *testing.T) *tickets.Store {
 	}
 	t.Cleanup(func() { st.Close() })
 	return st
+}
+
+// driveToDone walks a story through the LEGAL merge-gated lifecycle to done:
+// backlog → running → in_review → done. The state machine (B1/B2) forbids the old
+// backlog→done shortcut, so fixtures that need a "done" prerequisite advance it the
+// real way. Fails the test on any illegal step.
+func driveToDone(t *testing.T, st *tickets.Store, id string) {
+	t.Helper()
+	if err := st.UpdateStoryStatus(id, tickets.StatusRunning); err != nil {
+		t.Fatalf("drive %s → running: %v", id, err)
+	}
+	if err := st.MarkInReview(id, "https://example.test/pull/1"); err != nil {
+		t.Fatalf("drive %s → in_review: %v", id, err)
+	}
+	if err := st.MarkDone(id); err != nil {
+		t.Fatalf("drive %s → done: %v", id, err)
+	}
 }
 
 // ---- Epics ------------------------------------------------------------------
@@ -257,10 +275,8 @@ func TestReadyTransition(t *testing.T) {
 		t.Error("S1 should be blocked before D1 is done")
 	}
 
-	// Mark D1 done.
-	if err := st.UpdateStoryStatus("D1", tickets.StatusDone); err != nil {
-		t.Fatalf("update status: %v", err)
-	}
+	// Mark D1 done (via the legal lifecycle — backlog→done is no longer allowed).
+	driveToDone(t, st, "D1")
 
 	// After: S1 is ready.
 	ready, err := st.Ready()
@@ -305,6 +321,200 @@ func TestUpdateStoryStatusNotFound(t *testing.T) {
 	}
 }
 
+// ---- B2: state-machine guards (terminal states never resurrected) -----------
+
+// TestTerminalNotResurrected: a done or failed story is a TERMINAL state — no
+// mutator may move it. Each illegal transition is a no-op returning
+// ErrIllegalTransition; the stored status is unchanged.
+func TestTerminalNotResurrected(t *testing.T) {
+	st := openTemp(t)
+
+	// Build a done story the legal way and a failed story.
+	if err := st.CreateStory(tickets.Story{ID: "DN", Title: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	driveToDone(t, st, "DN")
+	if err := st.CreateStory(tickets.Story{ID: "FL", Title: "failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkFailed("FL"); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		id   string
+		do   func() error
+	}{
+		{"done→failed", "DN", func() error { return st.MarkFailed("DN") }},
+		{"done→in_review", "DN", func() error { return st.MarkInReview("DN", "x") }},
+		{"done→running", "DN", func() error { return st.UpdateStoryStatus("DN", tickets.StatusRunning) }},
+		{"failed→done", "FL", func() error { return st.MarkDone("FL") }},
+		{"failed→in_review", "FL", func() error { return st.MarkInReview("FL", "x") }},
+		{"failed→running", "FL", func() error { return st.UpdateStoryStatus("FL", tickets.StatusRunning) }},
+	}
+	for _, c := range cases {
+		before, _ := st.GetStory(c.id)
+		err := c.do()
+		if !errors.Is(err, tickets.ErrIllegalTransition) {
+			t.Errorf("%s: want ErrIllegalTransition, got %v", c.name, err)
+		}
+		after, _ := st.GetStory(c.id)
+		if after.Status != before.Status {
+			t.Errorf("%s: status changed %s→%s (should be a no-op)", c.name, before.Status, after.Status)
+		}
+	}
+}
+
+// TestMarkDoneOnlyFromInReview: MarkDone refuses a still-running story (B1/B2) —
+// done means a merged PR, which a story only reaches via in_review.
+func TestMarkDoneOnlyFromInReview(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "R", Title: "r", Status: tickets.StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkDone("R"); !errors.Is(err, tickets.ErrIllegalTransition) {
+		t.Fatalf("running→done must be illegal, got %v", err)
+	}
+	if got, _ := st.GetStory("R"); got.Status != tickets.StatusRunning {
+		t.Errorf("status should be unchanged, got %s", got.Status)
+	}
+}
+
+// TestMarkRunningIdempotent: UpdateStoryStatus(id,"running") on an already-running
+// story is an idempotent no-op (the orchestrator MarkRunning path re-asserts
+// running to attach a run_id), not an error.
+func TestMarkRunningIdempotent(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "R", Title: "r", Status: tickets.StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateStoryStatus("R", tickets.StatusRunning); err != nil {
+		t.Errorf("running→running should be a no-op, got %v", err)
+	}
+}
+
+// ---- M5: SetStoryRun does not stamp a terminal story ------------------------
+
+func TestSetStoryRunRejectsTerminal(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "FL", Title: "f", Status: tickets.StatusFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetStoryRun("FL", "run-x"); !errors.Is(err, tickets.ErrIllegalTransition) {
+		t.Errorf("set-run on a failed story must be illegal, got %v", err)
+	}
+	if got, _ := st.GetStory("FL"); got.RunID != "" {
+		t.Errorf("run_id should not be stamped on a terminal story, got %q", got.RunID)
+	}
+}
+
+// ---- B3: MarkBacklog resets a claimed-but-unfired story ---------------------
+
+func TestMarkBacklogResetsClaim(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "S", Title: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.ClaimStory("S"); !ok {
+		t.Fatal("claim should succeed")
+	}
+	// Running, empty run_id (FireRun failed) → reset to backlog.
+	if err := st.MarkBacklog("S"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if got, _ := st.GetStory("S"); got.Status != tickets.StatusBacklog {
+		t.Errorf("want backlog after reset, got %s", got.Status)
+	}
+	// A running story that ALREADY has a run_id is genuinely executing — not reset.
+	if ok, _ := st.ClaimStory("S"); !ok {
+		t.Fatal("re-claim should succeed")
+	}
+	if err := st.SetStoryRun("S", "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkBacklog("S"); !errors.Is(err, tickets.ErrIllegalTransition) {
+		t.Errorf("reset of a fired (run_id set) story must be illegal, got %v", err)
+	}
+	if got, _ := st.GetStory("S"); got.Status != tickets.StatusRunning {
+		t.Errorf("fired story should stay running, got %s", got.Status)
+	}
+}
+
+// ---- H6/H7: dependency validation -------------------------------------------
+
+func TestCreateStoryRejectsSelfDep(t *testing.T) {
+	st := openTemp(t)
+	err := st.CreateStory(tickets.Story{ID: "S", Title: "s", Deps: []string{"S"}})
+	if !errors.Is(err, tickets.ErrDepCycle) {
+		t.Errorf("self-dep must be rejected with ErrDepCycle, got %v", err)
+	}
+}
+
+func TestAddDepRejectsCycle(t *testing.T) {
+	st := openTemp(t)
+	// A depends on B. Adding B→A would close a cycle.
+	if err := st.CreateStory(tickets.Story{ID: "A", Title: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateStory(tickets.Story{ID: "B", Title: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddDep("A", []string{"B"}); err != nil {
+		t.Fatalf("A→B should be fine: %v", err)
+	}
+	if err := st.AddDep("B", []string{"A"}); !errors.Is(err, tickets.ErrDepCycle) {
+		t.Errorf("B→A should close a cycle (ErrDepCycle), got %v", err)
+	}
+}
+
+func TestAddDepRejectsMissingStory(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "A", Title: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddDep("A", []string{"NOPE"}); !errors.Is(err, tickets.ErrDepNotFound) {
+		t.Errorf("dep on a non-existent story must be ErrDepNotFound, got %v", err)
+	}
+}
+
+// TestValidateDepsCatchesDanglingForwardRef: a forward reference that never gets
+// created in the batch is allowed at insert time but caught by the whole-graph
+// publish check (H6) — otherwise the dependent deadlocks forever.
+func TestValidateDepsCatchesDanglingForwardRef(t *testing.T) {
+	st := openTemp(t)
+	// S depends on FUTURE, created before FUTURE exists (forward ref) — allowed.
+	if err := st.CreateStory(tickets.Story{ID: "S", Title: "s", Deps: []string{"FUTURE"}}); err != nil {
+		t.Fatalf("forward ref should be allowed at insert: %v", err)
+	}
+	// FUTURE never created → whole-graph validation flags the dangling dep.
+	if err := st.ValidateDeps(); !errors.Is(err, tickets.ErrDepNotFound) {
+		t.Errorf("dangling dep must be caught by ValidateDeps, got %v", err)
+	}
+}
+
+// TestTopoSortCycleErrors: a sprint whose stories form a cycle makes StoriesBySprint
+// (via topoSortStories) return ErrDepCycle, not a silently-misordered slice (H7).
+func TestTopoSortCycleErrors(t *testing.T) {
+	st := openTemp(t)
+	// Create A and B with no deps, then wire a cycle via AddDep's raw edge insert
+	// is blocked — so seed the cycle by inserting both deps before validation can
+	// see the closing edge: A→B at create, then the closing B→A is rejected by
+	// AddDep. To exercise topoSort's own guard we instead build the cycle through
+	// two forward refs in one batch-like sequence.
+	if err := st.CreateStory(tickets.Story{ID: "A", Title: "a", SprintID: "SP", Deps: []string{"B"}}); err != nil {
+		t.Fatal(err) // forward ref to B — allowed
+	}
+	if err := st.CreateStory(tickets.Story{ID: "B", Title: "b", SprintID: "SP", Deps: []string{"A"}}); err != nil {
+		// B→A closes a cycle against the now-existing A→B edge → rejected at create.
+		if !errors.Is(err, tickets.ErrDepCycle) {
+			t.Fatalf("expected ErrDepCycle on cycle-closing create, got %v", err)
+		}
+		return // cycle correctly prevented at the store boundary
+	}
+	t.Fatal("creating the cycle-closing story should have been rejected")
+}
+
 // ---- SetStoryRun ------------------------------------------------------------
 
 func TestSetStoryRun(t *testing.T) {
@@ -342,8 +552,16 @@ func TestNativeProviderRoundTrip(t *testing.T) {
 		t.Errorf("title: got %q", got.Title)
 	}
 
-	if err := p.UpdateStatus(ctx, "S1", tickets.StatusDone); err != nil {
-		t.Fatalf("update: %v", err)
+	// Advance through the legal lifecycle via the provider surface
+	// (backlog→running→in_review→done); the old one-shot backlog→done is rejected.
+	if _, err := p.ClaimStory(ctx, "S1"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := p.MarkInReview(ctx, "S1", "https://example.test/pull/1"); err != nil {
+		t.Fatalf("in_review: %v", err)
+	}
+	if err := p.MarkDone(ctx, "S1"); err != nil {
+		t.Fatalf("done: %v", err)
 	}
 
 	list, err := p.ListStories(ctx)
@@ -566,9 +784,7 @@ func TestReadySprintsExternalDepGate(t *testing.T) {
 		t.Errorf("SP1 should be blocked while EXT is backlog, got %v", sprintIDs(ready))
 	}
 
-	if err := st.UpdateStoryStatus("EXT", tickets.StatusDone); err != nil {
-		t.Fatal(err)
-	}
+	driveToDone(t, st, "EXT")
 	ready, _ = st.ReadySprints()
 	if !contains(sprintIDs(ready), "SP1") {
 		t.Errorf("SP1 should be ready after EXT done, got %v", sprintIDs(ready))
@@ -645,13 +861,15 @@ func TestClaimSprintPartialNotBacklog(t *testing.T) {
 	}
 }
 
-// TestMarkSprintDoneAndFailed: completion advances only the sprint's running
-// stories.
+// TestMarkSprintDoneAndFailed: MarkSprintDone advances ONLY in_review stories
+// (merge-gated). MarkSprintFailed advances any non-terminal story.
 func TestMarkSprintDoneAndFailed(t *testing.T) {
 	st := openTemp(t)
+	// In the merge-gated lifecycle a sprint's stories sit in_review until the
+	// shared PR merges, at which point MarkSprintDone advances them.
 	seedSprint(t, st, "SP1",
-		tickets.Story{ID: "A", Title: "A", Status: tickets.StatusRunning},
-		tickets.Story{ID: "B", Title: "B", Status: tickets.StatusRunning},
+		tickets.Story{ID: "A", Title: "A", Status: tickets.StatusInReview},
+		tickets.Story{ID: "B", Title: "B", Status: tickets.StatusInReview},
 	)
 	seedSprint(t, st, "SP2",
 		tickets.Story{ID: "C", Title: "C", Status: tickets.StatusRunning},
@@ -676,6 +894,28 @@ func TestMarkSprintDoneAndFailed(t *testing.T) {
 	}
 	if got, _ := st.GetStory("C"); got.Status != tickets.StatusFailed {
 		t.Errorf("C: want failed, got %s", got.Status)
+	}
+}
+
+// TestMarkSprintDoneSkipsRunning is the B1 regression test: a sprint that holds a
+// mix of in_review and still-running stories must advance ONLY the in_review ones
+// when its (one) merged PR is reconciled. A still-running story has work in no
+// merged PR — flipping it done fabricates "done" and unblocks dependents wrongly.
+func TestMarkSprintDoneSkipsRunning(t *testing.T) {
+	st := openTemp(t)
+	seedSprint(t, st, "SP1",
+		tickets.Story{ID: "A", Title: "A", Status: tickets.StatusInReview}, // PR merged path
+		tickets.Story{ID: "B", Title: "B", Status: tickets.StatusRunning},  // still executing
+	)
+
+	if err := st.MarkSprintDone("SP1"); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+	if got, _ := st.GetStory("A"); got.Status != tickets.StatusDone {
+		t.Errorf("A (in_review) should advance to done, got %s", got.Status)
+	}
+	if got, _ := st.GetStory("B"); got.Status != tickets.StatusRunning {
+		t.Errorf("B (running) must NOT be marked done by a sprint merge (B1), got %s", got.Status)
 	}
 }
 

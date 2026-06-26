@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -37,6 +38,7 @@ func main() {
 		DBPath:         envOr("VIBEFORGE_DB", "vibeforge.db"),
 		TicketsDB:      envOr("VIBEFORGE_TICKETS_DB", "tickets.db"),
 		ProjectsDB:     envOr("VIBEFORGE_PROJECTS_DB", "projects.db"),
+		AuthDB:         envOr("VIBEFORGE_AUTH_DB", "auth.db"),
 		RegistryRoot:   envOr("VIBEFORGE_REGISTRY", "registry"),
 		WorkdirRoot:    envOr("VIBEFORGE_WORKDIR", ".vibeforge-runs"),
 		EngineMode:     envOr("VIBEFORGE_ENGINE", "echo"),
@@ -96,16 +98,50 @@ func main() {
 	defer stop()
 	a.StartBackground(ctx)
 
+	// ---- mandatory auth (audit C1) -----------------------------------------
+	// Auth is active when EITHER a service token is set OR at least one user
+	// exists in the auth store. When active, every request needs a session token
+	// or the service token (httpx.Auth), and CORS reflects a single origin with
+	// credentials (httpx.CORS, never "*"). When NEITHER is configured the server
+	// is auth-less and MUST bind to loopback only — we rewrite a non-loopback
+	// addr down to 127.0.0.1 and log loudly rather than serving open to the world.
 	apiToken := os.Getenv("VIBEFORGE_API_TOKEN")
-	if apiToken != "" {
-		log.Printf("vibeforge control auth: ENABLED (Bearer token required)")
+	userCount := 0
+	if a.Auth != nil {
+		if n, cErr := a.Auth.CountUsers(); cErr == nil {
+			userCount = n
+		}
+	}
+	var sessions httpx.SessionValidator
+	if a.Auth != nil {
+		sessions = a.Auth
+	}
+	authCfg := httpx.AuthConfig{ServiceToken: apiToken, Sessions: sessions}
+	authActive := apiToken != "" || userCount > 0
+
+	if authActive {
+		log.Printf("vibeforge control auth: ENABLED (session token or VIBEFORGE_API_TOKEN required; %d user(s))", userCount)
 	} else {
-		log.Printf("vibeforge control auth: OPEN (no VIBEFORGE_API_TOKEN set)")
+		log.Printf("vibeforge control auth: OPEN — no users and no VIBEFORGE_API_TOKEN. Binding to loopback ONLY.")
+		addr = loopbackAddr(addr)
+		// Force the open-mode middleware to truly open (no session/token configured
+		// means cfg.Enabled() is already false, so Auth is a pass-through).
+		authCfg = httpx.AuthConfig{}
+	}
+
+	// CORS posture: locked to a single origin (with credentials) when auth is
+	// active; "*" only when explicitly opted into open dev mode (VIBEFORGE_CORS=open).
+	corsCfg := httpx.CORSConfig{
+		Origin:   os.Getenv("VIBEFORGE_CORS_ORIGIN"),
+		AllowAny: os.Getenv("VIBEFORGE_CORS") == "open",
+	}
+	if corsCfg.AllowAny && authActive {
+		log.Printf("vibeforge control: WARNING VIBEFORGE_CORS=open with auth active — credentials disabled for cross-origin requests")
 	}
 
 	// CORS outermost (handles OPTIONS preflight before Auth sees it), then Auth,
-	// then the mux. Auth is a no-op when apiToken is empty — demo works unchanged.
-	handler := httpx.CORS(os.Getenv("VIBEFORGE_CORS_ORIGIN"), httpx.Auth(apiToken, a.Server))
+	// then the mux.
+	handler := httpx.CORS(corsCfg, httpx.Auth(authCfg, a.Server))
 	srv := &http.Server{Addr: addr, Handler: handler}
 	go func() {
 		<-ctx.Done()
@@ -138,6 +174,22 @@ func exitText(out []byte, err error) string {
 		return err.Error()
 	}
 	return s
+}
+
+// loopbackAddr rewrites a bind address to loopback so an auth-less server is
+// never reachable off-host. ":8080" or "0.0.0.0:8080" → "127.0.0.1:8080"; an
+// addr already on 127.0.0.1/localhost is returned unchanged.
+func loopbackAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		// No host part (shouldn't happen for ":8080" which splits fine) — be safe.
+		return "127.0.0.1" + addr
+	}
+	switch host {
+	case "127.0.0.1", "localhost", "::1":
+		return addr // already loopback
+	}
+	return net.JoinHostPort("127.0.0.1", port)
 }
 
 func envOr(key, def string) string {

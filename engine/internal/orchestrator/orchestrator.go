@@ -73,6 +73,14 @@ type ControlPlane interface {
 	// detail, "pr(github): opened <url>"). Empty (with nil error) when the run has
 	// no GitHub PR yet — e.g. a local-mode pr step that only pushed a branch.
 	RunPRURL(ctx context.Context, runID string) (string, error)
+	// RunPRResult inspects a run's pr STEP (not just the run's top-level DONE) so a
+	// DONE run whose pr step FAILED can be told apart from one that opened a PR. It
+	// returns the PR url and whether the pr step reached a successful terminal state.
+	// prStepOK is false when the run has a pr step that failed, OR has a pr step that
+	// succeeded but recorded no GitHub URL (local mode is reported via hasPR=false
+	// with prStepOK=true so the caller can distinguish "no PR expected" from "PR
+	// failed"). hasPR reports whether a pr step exists at all.
+	RunPRResult(ctx context.Context, runID string) (url string, prStepOK bool, hasPR bool, err error)
 }
 
 // Config holds tunables for the orchestrator loop.

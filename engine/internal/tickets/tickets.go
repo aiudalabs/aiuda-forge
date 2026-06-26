@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -28,6 +29,54 @@ const (
 
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
+
+// ErrIllegalTransition is returned when a mutator is asked to move a story from a
+// state that is not a legal source for the requested target (e.g. resurrecting a
+// terminal done/failed story). It mirrors the kernel store's legalTransitions
+// discipline (internal/store/types.go): the set of stored states a transition may
+// legally start from is the single source of truth, and any other transition is a
+// no-op that surfaces this typed error rather than silently corrupting state.
+var ErrIllegalTransition = errors.New("illegal status transition")
+
+// ErrDepCycle is returned when adding a dependency would create a cycle (or a
+// self-dependency), which would deadlock readiness forever.
+var ErrDepCycle = errors.New("dependency cycle")
+
+// ErrDepNotFound is returned when a story declares a dependency on an id that does
+// not resolve to an existing story — that dep can never reach "done", so the
+// dependent would deadlock silently. Caught at CreateStory/AddDep instead.
+var ErrDepNotFound = errors.New("dependency story not found")
+
+// legalSources maps each writable target status to the set of stored statuses a
+// transition into it may legally start from. "ready" is derived (never stored) and
+// has no row. This is the tickets-store analogue of the kernel store's
+// legalTransitions table. A mutator whose UPDATE carries the matching
+// `AND status IN (...)` predicate makes an illegal transition a 0-row no-op, which
+// the mutators translate into ErrIllegalTransition (vs ErrNotFound for a missing id).
+var legalSources = map[Status][]Status{
+	// A claim takes backlog → running (handled by ClaimStory directly).
+	StatusRunning: {StatusBacklog},
+	// A run finishing parks running → in_review (PR opened, not yet merged).
+	StatusInReview: {StatusRunning},
+	// A merge advances in_review → done. The legacy non-merge-gated direct path
+	// (running → done) is intentionally NOT permitted here: only a merged PR (which
+	// first parks the story in_review) may reach done, so a still-running story can
+	// never be flipped done by another story's merge.
+	StatusDone: {StatusInReview},
+	// A failure may strike any non-terminal state (backlog/running/in_review).
+	StatusFailed: {StatusBacklog, StatusRunning, StatusInReview},
+}
+
+// inClause renders a SQL `status IN ('a','b',...)` fragment from a status set. The
+// values are a fixed internal vocabulary (never user input), so inlining them is
+// safe and keeps the guarded UPDATEs readable.
+func inClause(states []Status) string {
+	quoted := make([]string, len(states))
+	for i, s := range states {
+		quoted[i] = "'" + string(s) + "'"
+	}
+	return "status IN (" + strings.Join(quoted, ",") + ")"
+}
 
 // Epic is a high-level grouping of Stories.
 type Epic struct {
@@ -120,11 +169,16 @@ type Store struct {
 // For databases predating the repo column, a guarded ALTER TABLE is applied so
 // an existing DB upgrades without error on restart.
 func Open(path string) (*Store, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)", path)
+	// _txlock=immediate forces BEGIN IMMEDIATE on every tx so a claimer takes the
+	// write lock before any read (matching the kernel store, internal/store/store.go).
+	// SetMaxOpenConns(1) serializes writers through a single connection so concurrent
+	// claims queue on the busy_timeout instead of failing with "database is locked".
+	dsn := fmt.Sprintf("file:%s?_txlock=immediate&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
@@ -227,6 +281,20 @@ func (s *Store) CreateStory(st Story) error {
 	if st.Status == "" {
 		st.Status = StatusBacklog
 	}
+	// Reject a self-dependency up front: it never resolves (a story can't be its own
+	// "done" prerequisite) and would deadlock readiness forever (H7).
+	for _, dep := range st.Deps {
+		if dep == st.ID {
+			return fmt.Errorf("%w: %s depends on itself", ErrDepCycle, st.ID)
+		}
+	}
+	// Cycle check against the CURRENT store graph plus this story's new edges. Deps
+	// pointing at stories not yet created (a forward reference in the same publish
+	// batch) are left for publish-time whole-graph validation (H6); an edge to an
+	// existing story that closes a cycle is rejected here (H7).
+	if err := s.checkNoCycle(st.ID, st.Deps); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -296,17 +364,85 @@ func (s *Store) ListStories() ([]Story, error) {
 	return out, nil
 }
 
-// UpdateStoryStatus sets the status column of a Story. Does not affect deps.
-func (s *Store) UpdateStoryStatus(id string, status Status) error {
-	res, err := s.db.Exec(`UPDATE stories SET status=? WHERE id=?`, string(status), id)
+// transition performs a guarded status change: it moves story id to target only
+// if its current stored status is one of the legal sources for that target. It
+// returns ErrNotFound when the id does not exist, ErrIllegalTransition when the id
+// exists but its current state is not a legal source (a no-op — terminal states are
+// never resurrected, illegal jumps never applied), and nil on a successful 1-row
+// update. extraSet applies additional column assignments (e.g. pr_url) atomically
+// with the status flip. Distinguishing "missing" from "illegal" requires a probe
+// read, done only when the guarded UPDATE affects 0 rows.
+func (s *Store) transition(id string, target Status, extraSet string, extraArgs ...any) error {
+	sources, ok := legalSources[target]
+	if !ok {
+		return fmt.Errorf("%w: no legal sources for target %q", ErrIllegalTransition, target)
+	}
+	set := "status=?"
+	args := []any{string(target)}
+	if extraSet != "" {
+		set += ", " + extraSet
+		args = append(args, extraArgs...)
+	}
+	args = append(args, id)
+	q := fmt.Sprintf(`UPDATE stories SET %s WHERE id=? AND %s`, set, inClause(sources))
+	res, err := s.db.Exec(q, args...)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
-	if n == 0 {
+	if n > 0 {
+		return nil
+	}
+	// 0 rows: either the id is missing or its current state is an illegal source.
+	var cur Status
+	err = s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, id).Scan(&cur)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %s %s→%s", ErrIllegalTransition, id, cur, target)
+}
+
+// UpdateStoryStatus sets the status column of a Story via the guarded state
+// machine. Does not affect deps. It is the provider-facing generic setter; it
+// rejects illegal transitions (e.g. resurrecting a terminal story) with
+// ErrIllegalTransition rather than blindly overwriting the column.
+//
+// Two cases are handled specially so the generic setter stays usable by the HTTP
+// status endpoint without it knowing the transition vocabulary:
+//   - target == current status: an idempotent no-op success. The orchestrator's
+//     MarkRunning re-asserts status=running on an already-running (just-claimed)
+//     story purely to attach the run_id; that must not error.
+//   - target == backlog: routes to MarkBacklog (the compensating reset, B3) — only
+//     a claimed-but-unfired story (running, empty run_id) is reset; everything else
+//     is a no-op illegal transition.
+func (s *Store) UpdateStoryStatus(id string, status Status) error {
+	cur, err := s.statusOf(id)
+	if err != nil {
+		return err
+	}
+	if cur == status {
+		return nil // idempotent: already in the requested state
+	}
+	if status == StatusBacklog {
+		return s.MarkBacklog(id)
+	}
+	return s.transition(id, status, "")
+}
+
+// statusOf returns a story's current stored status, or ErrNotFound.
+func (s *Store) statusOf(id string) (Status, error) {
+	var cur Status
+	err := s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, id).Scan(&cur)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return cur, nil
 }
 
 // ClaimStory atomically transitions a story from backlog → running.
@@ -320,36 +456,95 @@ func (s *Store) ClaimStory(id string) (bool, error) {
 	return n > 0, nil
 }
 
+// MarkBacklog resets a claimed-but-not-fired story from running back to backlog so
+// it becomes Ready again next cycle. It is the compensating action for a FireRun
+// that failed AFTER a successful claim (B3): the story is running with an empty
+// run_id and would otherwise be stranded forever (the completion loop skips
+// empty-run_id stories). Only a running story with NO recorded run_id is reset —
+// a running story that already has a run_id is genuinely executing and must not be
+// clawed back. Returns ErrIllegalTransition (no-op) if the story is not in that
+// reset-eligible state, ErrNotFound if it does not exist.
+func (s *Store) MarkBacklog(id string) error {
+	res, err := s.db.Exec(`UPDATE stories SET status='backlog', run_id='' WHERE id=? AND status='running' AND run_id=''`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	var cur Status
+	err = s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, id).Scan(&cur)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %s reset-claim from %s (run_id may be set)", ErrIllegalTransition, id, cur)
+}
+
+// MarkSprintBacklog resets a sprint's just-claimed stories (running, empty run_id)
+// back to backlog — the sprint-wide compensating action for a FireRun that failed
+// after ClaimSprint (B3). Stories that already carry a run_id are left running.
+func (s *Store) MarkSprintBacklog(sprintID string) error {
+	_, err := s.db.Exec(
+		`UPDATE stories SET status='backlog' WHERE sprint_id=? AND status='running' AND run_id=''`, sprintID)
+	return err
+}
+
 // MarkFailed sets a story's status to failed. Used when the run driving it
 // reaches a terminal non-DONE state (FAILED, CANCELLED) so the story is not
-// stuck in "running" forever.
+// stuck in "running" forever. Guarded: a failure may strike any non-terminal
+// state (backlog/running/in_review) but never re-fails a done/failed story.
 func (s *Store) MarkFailed(id string) error {
-	res, err := s.db.Exec(`UPDATE stories SET status='failed' WHERE id=?`, id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.transition(id, StatusFailed, "")
 }
 
-// SetStoryRun records the run_id that is executing a story.
+// SetStoryRun records the run_id that is executing a story. It only writes the
+// run_id on a non-terminal story (M5) — recording a run on a done/failed story is
+// always a mistake (a stale completion path) and must be a no-op, surfaced as
+// ErrIllegalTransition rather than silently stamping a finished story.
 func (s *Store) SetStoryRun(id, runID string) error {
-	res, err := s.db.Exec(`UPDATE stories SET run_id=? WHERE id=?`, runID, id)
+	res, err := s.db.Exec(
+		`UPDATE stories SET run_id=? WHERE id=? AND status IN ('backlog','running','in_review')`, runID, id)
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	var cur Status
+	err = s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, id).Scan(&cur)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %s set_run on terminal %s", ErrIllegalTransition, id, cur)
 }
 
-// AddDep adds dep story IDs to a story. Silently skips duplicates.
+// AddDep adds dep story IDs to a story. Silently skips duplicates. It is a
+// mutation on an EXISTING graph, so it validates strictly (H6/H7): every dep must
+// resolve to an existing story (ErrDepNotFound), a self-dep is rejected, and a dep
+// that would close a cycle is rejected (ErrDepCycle). All-or-nothing — no edge is
+// written if any dep is invalid.
 func (s *Store) AddDep(storyID string, deps []string) error {
+	for _, dep := range deps {
+		if dep == storyID {
+			return fmt.Errorf("%w: %s depends on itself", ErrDepCycle, storyID)
+		}
+		ok, err := s.storyExists(dep)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: %s -> %s", ErrDepNotFound, storyID, dep)
+		}
+	}
+	if err := s.checkNoCycle(storyID, deps); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -361,6 +556,124 @@ func (s *Store) AddDep(storyID string, deps []string) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// ValidateDeps checks the WHOLE stored dependency graph for two malformations a
+// publish can introduce (H6/H7): a dep pointing at an id that is no story (it can
+// never reach "done" → silent permanent deadlock), and a cycle (deadlock + wrong
+// fire order). It is the publish-level whole-graph check that backstops the
+// per-edge checks in CreateStory/AddDep, catching forward references that resolved
+// to nothing after the batch completed. Returns ErrDepNotFound or ErrDepCycle.
+func (s *Store) ValidateDeps() error {
+	adj, err := s.loadAllDeps()
+	if err != nil {
+		return err
+	}
+	// Every dep_id must resolve to an existing story.
+	for sid, deps := range adj {
+		for _, dep := range deps {
+			ok, err := s.storyExists(dep)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("%w: %s -> %s", ErrDepNotFound, sid, dep)
+			}
+		}
+	}
+	// No cycle: a node from which it can reach itself along dep-edges is on a cycle.
+	for sid := range adj {
+		for _, dep := range adj[sid] {
+			if reaches(adj, dep, sid) {
+				return fmt.Errorf("%w: through %s -> %s", ErrDepCycle, sid, dep)
+			}
+		}
+	}
+	return nil
+}
+
+// storyExists reports whether a story id is present in the store.
+func (s *Store) storyExists(id string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM stories WHERE id=?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// checkNoCycle reports whether adding edges from→dep (for each dep in deps) would
+// create a dependency cycle in the stored graph. An edge from→dep means "from
+// depends on dep". A cycle exists iff `from` is already reachable from some dep by
+// following dep-edges — adding from→dep would then close the loop. Forward refs to
+// not-yet-stored stories contribute no reachable edges, so they pass here and are
+// validated whole-graph at publish time. Returns ErrDepCycle naming the offending
+// dep, or nil.
+func (s *Store) checkNoCycle(from string, deps []string) error {
+	if len(deps) == 0 {
+		return nil
+	}
+	// adjacency: story_id -> its dep_ids (the existing graph).
+	adj, err := s.loadAllDeps()
+	if err != nil {
+		return err
+	}
+	for _, dep := range deps {
+		// Is `from` reachable from `dep` along existing dep-edges? If so, dep already
+		// (transitively) depends on from, and from→dep closes a cycle.
+		if reaches(adj, dep, from) {
+			return fmt.Errorf("%w: %s -> %s closes a cycle", ErrDepCycle, from, dep)
+		}
+	}
+	return nil
+}
+
+// loadAllDeps returns the full story_deps adjacency map (story_id -> dep_ids).
+func (s *Store) loadAllDeps() (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT story_id, dep_id FROM story_deps`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	adj := map[string][]string{}
+	for rows.Next() {
+		var sid, did string
+		if err := rows.Scan(&sid, &did); err != nil {
+			return nil, err
+		}
+		adj[sid] = append(adj[sid], did)
+	}
+	return adj, rows.Err()
+}
+
+// reaches reports whether target is reachable from start by following dep-edges in
+// adj (iterative DFS; cycle-safe via a visited set).
+func reaches(adj map[string][]string, start, target string) bool {
+	if start == target {
+		return true
+	}
+	visited := map[string]bool{}
+	stack := []string{start}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if visited[n] {
+			continue
+		}
+		visited[n] = true
+		for _, next := range adj[n] {
+			if next == target {
+				return true
+			}
+			if !visited[next] {
+				stack = append(stack, next)
+			}
+		}
+	}
+	return false
 }
 
 // Ready returns all stories in StatusBacklog whose every dep has StatusDone.
@@ -439,14 +752,15 @@ func (s *Store) StoriesBySprint(sprintID string) ([]Story, error) {
 		}
 		stories[i].Deps = deps
 	}
-	return topoSortStories(stories), nil
+	return topoSortStories(stories)
 }
 
-// topoSortStories returns stories ordered so every story follows the deps it has
-// that are present in the same set. Ties are broken by id (stable, deterministic).
-// A dependency cycle (which the backlog should never contain) degrades gracefully
-// to id order for the stories it cannot place, rather than dropping them.
-func topoSortStories(stories []Story) []Story {
+// topoSortStories returns stories ordered so every story follows the intra-sprint
+// deps it has. Ties are broken by id (stable, deterministic). A dependency cycle
+// among the stories is a HARD ERROR (ErrDepCycle) — the previous behavior of
+// "degrade to id order" silently fired stories before their deps (H7); a cycle is
+// a malformed backlog and must surface, not be papered over.
+func topoSortStories(stories []Story) ([]Story, error) {
 	inSet := make(map[string]bool, len(stories))
 	for _, st := range stories {
 		inSet[st.ID] = true
@@ -479,19 +793,20 @@ func topoSortStories(stories []Story) []Story {
 			}
 		}
 		if next == nil {
-			// Cycle / unresolvable: append the rest in id order to avoid dropping work.
+			// No placeable story remains but some are unplaced → a cycle. Name the
+			// stuck stories so the malformed backlog is diagnosable.
+			var stuck []string
 			for i := range stories {
 				if !placed[stories[i].ID] {
-					out = append(out, stories[i])
-					placed[stories[i].ID] = true
+					stuck = append(stuck, stories[i].ID)
 				}
 			}
-			break
+			return nil, fmt.Errorf("%w: among stories %s", ErrDepCycle, strings.Join(stuck, ","))
 		}
 		out = append(out, *next)
 		placed[next.ID] = true
 	}
-	return out
+	return out, nil
 }
 
 // depsPlaced reports whether every dep in need has already been placed.
@@ -576,6 +891,11 @@ func (s *Store) ClaimSprint(sprintID string) (claimed []string, ok bool, err err
 		return nil, false, nil
 	}
 
+	// BEGIN IMMEDIATE (via _txlock=immediate DSN) takes the write lock NOW, before
+	// the COUNT below — so two concurrent claimers serialize: the winner commits the
+	// running flip, the loser then reads the post-commit COUNT, sees the mismatch,
+	// and returns ok=false. Without the immediate lock both could pass the COUNT and
+	// the loser would hit a hard "database is locked" on its UPDATE instead (H5).
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, false, err
@@ -611,25 +931,36 @@ func (s *Store) ClaimSprint(sprintID string) (claimed []string, ok bool, err err
 	return ids, true, nil
 }
 
-// MarkSprintDone advances all of a sprint's running OR in_review stories to done.
-// In the merge-gated lifecycle a sprint's stories sit in in_review until their PR
-// merges, at which point this advances them; the running-state clause keeps the
-// pre-lifecycle direct path working too.
+// MarkSprintDone advances a sprint's in_review stories to done. ONLY in_review
+// stories advance: in the merge-gated lifecycle a sprint's stories sit in_review
+// until their shared PR merges, at which point this advances them. The previous
+// `IN ('running','in_review')` clause was a correctness bug (B1) — it flipped
+// every still-running story to done on another story's merge, fabricating "done"
+// on work that was in no merged PR. A running story must never be marked done by a
+// sprint-wide merge; it waits for its own in_review parking first.
 func (s *Store) MarkSprintDone(sprintID string) error {
-	_, err := s.db.Exec(`UPDATE stories SET status='done' WHERE sprint_id=? AND status IN ('running','in_review')`, sprintID)
+	_, err := s.db.Exec(`UPDATE stories SET status='done' WHERE sprint_id=? AND status='in_review'`, sprintID)
 	return err
 }
 
-// MarkSprintFailed advances all of a sprint's running stories to failed.
+// MarkSprintFailed advances all of a sprint's non-terminal stories to failed. A
+// failure may strike backlog/running/in_review but never re-fails a done/failed
+// story (B2 — terminal states are not resurrected).
 func (s *Store) MarkSprintFailed(sprintID string) error {
-	_, err := s.db.Exec(`UPDATE stories SET status='failed' WHERE sprint_id=? AND status='running'`, sprintID)
+	_, err := s.db.Exec(
+		`UPDATE stories SET status='failed' WHERE sprint_id=? AND status IN ('backlog','running','in_review')`,
+		sprintID)
 	return err
 }
 
-// SetSprintRun records runID on every story in the sprint so the UI can link the
-// stories of a goal-mode sprint back to the single run that implemented them.
+// SetSprintRun records runID on the sprint's non-terminal stories so the UI can
+// link a goal-mode sprint's stories back to the single run that implemented them.
+// Terminal (done/failed) stories are left untouched (M5) — recording a run_id is a
+// status-adjacent write and must not silently revive a finished story's linkage.
 func (s *Store) SetSprintRun(sprintID, runID string) error {
-	_, err := s.db.Exec(`UPDATE stories SET run_id=? WHERE sprint_id=?`, runID, sprintID)
+	_, err := s.db.Exec(
+		`UPDATE stories SET run_id=? WHERE sprint_id=? AND status IN ('backlog','running','in_review')`,
+		runID, sprintID)
 	return err
 }
 
@@ -643,33 +974,23 @@ func (s *Store) SetSprintRun(sprintID, runID string) error {
 
 // MarkInReview moves a single running story to in_review and records the PR URL
 // its run opened. A blank prURL is allowed (the loop will skip it until set).
+// Guarded: only a running story may move to in_review, so a stale completion path
+// cannot drag a done/failed story back into the reconcile loop (B2).
 func (s *Store) MarkInReview(id, prURL string) error {
-	res, err := s.db.Exec(`UPDATE stories SET status='in_review', pr_url=? WHERE id=?`, prURL, id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.transition(id, StatusInReview, "pr_url=?", prURL)
 }
 
 // MarkDone advances a single story to done (used when its in_review PR merges).
+// Guarded: only an in_review story may reach done — a still-running story is never
+// flipped done, so "done" always means a merged PR (B1/B2).
 func (s *Store) MarkDone(id string) error {
-	res, err := s.db.Exec(`UPDATE stories SET status='done' WHERE id=?`, id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.transition(id, StatusDone, "")
 }
 
-// MarkSprintInReview moves all of a sprint's running stories to in_review and
-// records the shared PR URL on every story in the sprint.
+// MarkSprintInReview moves all of a sprint's RUNNING stories to in_review and
+// records the shared PR URL on the stories it moves. Only running stories are
+// touched (the guarded source), so a story already done/failed in the sprint is
+// not pulled back into the reconcile loop.
 func (s *Store) MarkSprintInReview(sprintID, prURL string) error {
 	_, err := s.db.Exec(`UPDATE stories SET status='in_review', pr_url=? WHERE sprint_id=? AND status='running'`,
 		prURL, sprintID)

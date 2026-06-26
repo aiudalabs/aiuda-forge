@@ -54,6 +54,26 @@ func TestWrapAgentDockerArgs(t *testing.T) {
 	}
 }
 
+// TestWrapAgentCIDFile (M1): when Config.CIDFile is set the docker argv carries
+// `--cidfile <path>` so the container id can be captured and killed by id on
+// cancel/timeout (otherwise the orphaned container holds the egress net + mount).
+func TestWrapAgentCIDFile(t *testing.T) {
+	d := &DockerSandbox{cfg: Config{Workdir: t.TempDir(), Network: "vibeforge-egress", CIDFile: "/tmp/run_x.cid"}}
+	hostArgv, _ := d.WrapAgent([]string{"claude", "-p"}, nil)
+	if !hasPair(hostArgv, "--cidfile", "/tmp/run_x.cid") {
+		t.Fatalf("expected --cidfile in docker argv, got %v", hostArgv)
+	}
+
+	// Absent CIDFile -> no --cidfile flag.
+	d2 := &DockerSandbox{cfg: Config{Workdir: t.TempDir(), Network: "vibeforge-egress"}}
+	argv2, _ := d2.WrapAgent([]string{"claude", "-p"}, nil)
+	for _, a := range argv2 {
+		if a == "--cidfile" {
+			t.Fatalf("did not expect --cidfile when CIDFile unset, got %v", argv2)
+		}
+	}
+}
+
 // TestAgentNetworkDiffersFromGate: the agent gets an egress-allowlist network;
 // the gate gets --network none. Different policies, by design.
 func TestAgentNetworkDiffersFromGate(t *testing.T) {

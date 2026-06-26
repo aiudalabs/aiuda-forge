@@ -1,5 +1,7 @@
 package store
 
+import "encoding/json"
+
 // Control-plane operations exposed to the API. These mutate state ONLY through
 // the same transition path (single emit point), so cancel/delete/retry all show
 // up on the event bus — there is no privileged backdoor.
@@ -86,6 +88,33 @@ func (s *Store) ReopenRun(runID string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// LastRetryAt returns the created_at (ms) of the most recent retry boundary for
+// a run — the run.status_changed event ReopenRun emits with reason "retry" — or
+// 0 if the run has never been retried. The engine uses it as a watermark so a
+// retry gets a fresh on_fail budget instead of inheriting prior FAILED tasks.
+func (s *Store) LastRetryAt(runID string) (int64, error) {
+	rows, err := s.db.Query(`SELECT data, created_at FROM events
+		WHERE run_id=? AND type=? ORDER BY seq DESC`, runID, EventRunStatusChanged)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var data string
+		var createdAt int64
+		if err := rows.Scan(&data, &createdAt); err != nil {
+			return 0, err
+		}
+		var d map[string]any
+		if json.Unmarshal([]byte(data), &d) == nil {
+			if reason, _ := d["reason"].(string); reason == "retry" {
+				return createdAt, nil
+			}
+		}
+	}
+	return 0, rows.Err()
 }
 
 // LastFailedTask returns the most recent FAILED task of a run, or nil.

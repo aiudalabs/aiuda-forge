@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,6 +33,105 @@ func (s slowRunner) Run(ctx context.Context, _ Step, _ map[string]any, _ string)
 	case <-ctx.Done():
 	}
 	return StepResult{Success: true, Output: map[string]any{"slept": true}}, nil
+}
+
+// parkRunner stands in for a human_gate: it parks (AWAITING) so a test can
+// drive ApproveStep/RejectStep against a real parked task.
+type parkRunner struct{}
+
+func (parkRunner) Run(_ context.Context, _ Step, _ map[string]any, _ string) (StepResult, error) {
+	return StepResult{Park: true, Detail: "awaiting human"}, nil
+}
+
+// TestConcurrentApproveResolvesOnce (M3): a parked human_gate approved by two
+// callers concurrently must resolve exactly once — one wins, the other gets the
+// typed ErrNoAwaitingStep (not a 500/illegal-transition, not a misleading
+// success), and the gate's next step is enqueued exactly once.
+func TestConcurrentApproveResolvesOnce(t *testing.T) {
+	src := []byte(`
+id: gateflow
+version: 1.0.0
+steps:
+  - id: review
+    type: human_gate
+  - id: ship
+    type: echo
+`)
+	wf, _ := Parse(src)
+	e := newEngine(t, MapLoader{"gateflow": wf})
+	e.Register("human_gate", parkRunner{})
+
+	runID, _ := e.StartRun("gateflow", nil)
+	// Drive the review step until it parks (AWAITING).
+	if _, err := e.ExecuteOne(context.Background(), "w"); err != nil {
+		t.Fatalf("execute review: %v", err)
+	}
+	tasks, _ := e.Store.TasksForRun(runID)
+	if len(tasks) != 1 || tasks[0].Status != store.StatusAwaiting {
+		t.Fatalf("expected review AWAITING, got %+v", tasks)
+	}
+
+	// Two concurrent approves: exactly one succeeds, the other is ErrNoAwaitingStep.
+	type res struct{ err error }
+	ch := make(chan res, 2)
+	for i := 0; i < 2; i++ {
+		go func() { ch <- res{e.ApproveStep(runID, "review")} }()
+	}
+	var wins, noAwait int
+	for i := 0; i < 2; i++ {
+		r := <-ch
+		switch {
+		case r.err == nil:
+			wins++
+		case errors.Is(r.err, ErrNoAwaitingStep):
+			noAwait++
+		default:
+			t.Fatalf("unexpected approve error: %v", r.err)
+		}
+	}
+	if wins != 1 || noAwait != 1 {
+		t.Fatalf("expected exactly one winner + one no-awaiting, got wins=%d noAwait=%d", wins, noAwait)
+	}
+
+	// The ship step was enqueued exactly once (no double-advance).
+	tasks, _ = e.Store.TasksForRun(runID)
+	ship := 0
+	for _, tk := range tasks {
+		if tk.StepID == "ship" {
+			ship++
+		}
+	}
+	if ship != 1 {
+		t.Fatalf("expected ship enqueued exactly once, got %d", ship)
+	}
+}
+
+// TestRejectRacingCancelIsTyped (M3): rejecting a gate that was already cancelled
+// returns ErrNoAwaitingStep, not a misleading nil success.
+func TestRejectRacingCancelIsTyped(t *testing.T) {
+	src := []byte(`
+id: gatecancel
+version: 1.0.0
+steps:
+  - id: review
+    type: human_gate
+  - id: ship
+    type: echo
+`)
+	wf, _ := Parse(src)
+	e := newEngine(t, MapLoader{"gatecancel": wf})
+	e.Register("human_gate", parkRunner{})
+
+	runID, _ := e.StartRun("gatecancel", nil)
+	if _, err := e.ExecuteOne(context.Background(), "w"); err != nil {
+		t.Fatalf("execute review: %v", err)
+	}
+	if err := e.Store.CancelRun(runID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := e.RejectStep(runID, "review", "too late"); !errors.Is(err, ErrNoAwaitingStep) {
+		t.Fatalf("expected ErrNoAwaitingStep after cancel, got %v", err)
+	}
 }
 
 // TestHeartbeatKeepsLongStepAlive: a step that runs longer than the reaper's
@@ -259,6 +359,71 @@ steps:
 	}
 	if gateAttempts != 3 { // max=2 => 3 total attempts
 		t.Fatalf("expected 3 gate attempts (max+1), got %d", gateAttempts)
+	}
+}
+
+// TestRetryGivesFreshOnFailBudget (H3): a run that exhausts on_fail.max ends
+// FAILED with max+1 attempts; RetryRun must then give the SAME step a fresh
+// budget, not fail immediately because the prior FAILED tasks still exist.
+// countFailures is scoped to the retry watermark, so the retry produces another
+// full max+1 attempts before failing again.
+func TestRetryGivesFreshOnFailBudget(t *testing.T) {
+	src := []byte(`
+id: retrybudget
+version: 1.0.0
+steps:
+  - id: implement
+    type: echo
+  - id: gate
+    type: gate
+    command: "false"
+    on_fail:
+      goto: implement
+      max: 2
+`)
+	wf, _ := Parse(src)
+	e := newEngine(t, MapLoader{"retrybudget": wf})
+	// Monotonic clock: every now() call advances 1ms so the retry boundary lands
+	// strictly after the first run's FAILED tasks (deterministic watermark).
+	var ms int64 = 1_000_000
+	e.Store.Now = func() time.Time { ms++; return time.UnixMilli(ms) }
+
+	runID, _ := e.StartRun("retrybudget", nil)
+	status, err := e.RunToCompletion(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if status != store.StatusFailed {
+		t.Fatalf("expected FAILED after cap, got %s", status)
+	}
+	countGate := func() int {
+		tasks, _ := e.Store.TasksForRun(runID)
+		n := 0
+		for _, tk := range tasks {
+			if tk.StepID == "gate" {
+				n++
+			}
+		}
+		return n
+	}
+	if got := countGate(); got != 3 {
+		t.Fatalf("expected 3 gate attempts before retry, got %d", got)
+	}
+
+	// Retry: the gate still always fails. A fresh budget => 3 MORE attempts, not
+	// an immediate failure with zero retries. Total gate attempts becomes 6.
+	if err := e.RetryRun(runID); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	status, err = e.RunToCompletion(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("retried run: %v", err)
+	}
+	if status != store.StatusFailed {
+		t.Fatalf("expected FAILED after retry cap, got %s", status)
+	}
+	if got := countGate(); got != 6 {
+		t.Fatalf("expected 6 gate attempts after retry (3 + a fresh 3), got %d", got)
 	}
 }
 

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // ClaudeBackend runs Anthropic's `claude` CLI in headless print mode. It ports
@@ -86,6 +88,10 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	}
 
 	// Kill the process group when runCtx is done (timeout or external cancel).
+	// Killing the host docker CLIENT process group alone leaves the container
+	// (a child of dockerd, not of our process group) orphaned, holding the egress
+	// net + /work mount. So we ALSO remove the container by id (M1) when a cidfile
+	// was requested — `--rm` only cleans up on a normal exit.
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -95,6 +101,7 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 				// Negative pid = the whole process group.
 				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
+			killContainer(opts.CIDFile)
 		case <-done:
 		}
 	}()
@@ -123,12 +130,19 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 			sawResult = true
 		}
 	}
+	scanErr := scanner.Err()
 	waitErr := cmd.Wait()
 
 	if err := runCtx.Err(); err == context.DeadlineExceeded {
 		return result, fmt.Errorf("claude timed out after %s", opts.Timeout)
 	} else if err == context.Canceled {
 		return result, context.Canceled
+	}
+	// A scan error (e.g. bufio.ErrTooLong on a >16 MB tool payload) means the
+	// stream was truncated: any result we did or did not see is unreliable. Fail
+	// hard rather than silently truncating to SUCCESS or misreporting "no result".
+	if scanErr != nil {
+		return result, fmt.Errorf("claude stream scan failed: %w", scanErr)
 	}
 	if !sawResult {
 		if waitErr != nil {
@@ -137,6 +151,28 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 		return result, fmt.Errorf("claude produced no result line")
 	}
 	return result, nil
+}
+
+// killContainer force-removes the docker container whose id was written to
+// cidFile (by `docker run --cidfile`). It is a no-op when cidFile is empty (no
+// docker sandbox) or unreadable. docker writes the id at container start, which
+// may lag our kill slightly, so we retry a few times before giving up. Best
+// effort: an already-gone container is fine, the goal is to never orphan one.
+func killContainer(cidFile string) {
+	if cidFile == "" {
+		return
+	}
+	for i := 0; i < 10; i++ {
+		b, err := os.ReadFile(cidFile)
+		id := strings.TrimSpace(string(b))
+		if err == nil && id != "" {
+			cmd := exec.Command("docker", "rm", "-f", id)
+			cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+			_ = cmd.Run()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // parseStreamLine converts one NDJSON object into events + (maybe) the result.

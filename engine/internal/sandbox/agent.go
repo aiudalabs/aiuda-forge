@@ -41,6 +41,11 @@ func (d *DockerSandbox) WrapAgent(argv []string, containerEnv []string) ([]strin
 		abs = d.cfg.Workdir
 	}
 	hostArgv := []string{"docker", "run", "--rm", "-i"}
+	if d.cfg.CIDFile != "" {
+		// Record the container id so the agent backend can `docker rm -f` it by id on
+		// cancel/timeout (killing the host docker client alone orphans it — M1).
+		hostArgv = append(hostArgv, "--cidfile", d.cfg.CIDFile)
+	}
 	if d.cfg.OCIRuntime != "" {
 		hostArgv = append(hostArgv, "--runtime", d.cfg.OCIRuntime)
 	}

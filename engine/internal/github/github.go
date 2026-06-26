@@ -126,6 +126,32 @@ func (c *Client) PRMerged(ctx context.Context, repoURL string, number int) (bool
 	return v.State == "MERGED" || (v.MergedAt != "" && v.MergedAt != "null"), nil
 }
 
+// PRClosed reports whether PR number is CLOSED and NOT merged — i.e. a human
+// rejected it. The merge-reconcile loop uses this (H2) to treat a closed-unmerged
+// PR as terminal (mark the story failed) instead of polling it forever. `gh pr
+// view` reports state OPEN | CLOSED | MERGED; only CLOSED (with no mergedAt) is a
+// rejection. This satisfies the orchestrator's optional PRStateChecker interface.
+func (c *Client) PRClosed(ctx context.Context, repoURL string, number int) (bool, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return false, err
+	}
+	out, err := c.runner(ctx, "", "gh", "pr", "view", strconv.Itoa(number),
+		"--repo", slug, "--json", "state,mergedAt")
+	if err != nil {
+		return false, fmt.Errorf("gh pr view %d (%s): %w: %s", number, slug, err, strings.TrimSpace(out))
+	}
+	var v struct {
+		State    string `json:"state"`
+		MergedAt string `json:"mergedAt"`
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		return false, fmt.Errorf("decode gh pr view %d: %w", number, err)
+	}
+	merged := v.MergedAt != "" && v.MergedAt != "null"
+	return v.State == "CLOSED" && !merged, nil
+}
+
 // MergePR squash-merges PR number in repoURL and deletes its head branch via
 // `gh pr merge <number> --repo <owner/repo> --squash --delete-branch`. Merging an
 // already-merged PR is reported by gh as an error; callers should PRMerged-check

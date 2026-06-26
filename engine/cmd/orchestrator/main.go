@@ -122,8 +122,11 @@ func runGitHub(cp orchestrator.ControlPlane, repo, workflow, stateFile string, i
 
 	// Start the tickets HTTP server.
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: httpx.CORS(os.Getenv("VIBEFORGE_CORS_ORIGIN"), orchestrator.NewHTTPServer(orch)),
+		Addr: addr,
+		Handler: httpx.CORS(httpx.CORSConfig{
+			Origin:   os.Getenv("VIBEFORGE_CORS_ORIGIN"),
+			AllowAny: os.Getenv("VIBEFORGE_CORS") == "open",
+		}, orchestrator.NewHTTPServer(orch)),
 	}
 	go func() {
 		log.Printf("orchestrator: serving /tickets on %s", addr)

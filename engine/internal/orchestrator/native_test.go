@@ -99,6 +99,36 @@ func (p *fakeStoryProvider) MarkRunning(_ context.Context, id, runID string) err
 	return nil
 }
 
+// ResetClaim returns a claimed-but-unfired story (running, no run_id) to backlog.
+// Mirrors the store's MarkBacklog guard: a story that already has a run_id is left
+// running (it is genuinely executing).
+func (p *fakeStoryProvider) ResetClaim(_ context.Context, id string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.stories[id]
+	if !ok {
+		return nil
+	}
+	if s.status == "running" && s.runID == "" {
+		s.status = "backlog"
+	}
+	return nil
+}
+
+// ResetSprintClaim returns a sprint's just-claimed (running, no run_id) stories to
+// backlog.
+func (p *fakeStoryProvider) ResetSprintClaim(_ context.Context, sprintID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID == sprintID && s.status == "running" && s.runID == "" {
+			s.status = "backlog"
+		}
+	}
+	return nil
+}
+
 // MarkDone flips a story to done.
 func (p *fakeStoryProvider) MarkDone(_ context.Context, id string) error {
 	p.mu.Lock()
@@ -357,13 +387,22 @@ func (p *fakeStoryProvider) depsAllDoneLocked(deps []string) bool {
 type fakeMergeChecker struct {
 	mu            sync.Mutex
 	merged        map[int]bool
+	closed        map[int]bool // PR number → closed-unmerged (H2 terminal)
 	mergeCalls    int
 	mergedNumbers []int
 	failMerge     bool // when true, MergePR returns an error (auto-merge failure path)
 }
 
 func newFakeMergeChecker() *fakeMergeChecker {
-	return &fakeMergeChecker{merged: map[int]bool{}}
+	return &fakeMergeChecker{merged: map[int]bool{}, closed: map[int]bool{}}
+}
+
+// PRClosed implements the optional PRStateChecker interface: reports a PR closed
+// without merging so the scheduler can detect it as terminal (H2).
+func (m *fakeMergeChecker) PRClosed(_ context.Context, _ string, number int) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closed[number], nil
 }
 
 func (m *fakeMergeChecker) PRMerged(_ context.Context, _ string, number int) (bool, error) {
@@ -931,6 +970,226 @@ func TestSprintModeMixedOwnersFallsBackToEmpty(t *testing.T) {
 	}
 	if got := cp.payloadOf(0)["agent"]; got != "" {
 		t.Errorf("payload agent: got %v, want empty (mixed owners → default dev)", got)
+	}
+}
+
+// ---- B3: FireRun failure after Claim resets to backlog ----------------------
+
+// failFireCP is a control plane whose FireRun always errors — to exercise the B3
+// compensation path (Claim succeeded, FireRun failed → reset to backlog).
+type failFireCP struct {
+	fakeControlPlane
+}
+
+func (f *failFireCP) FireRun(_ context.Context, _ string, _ any) (string, error) {
+	return "", fmt.Errorf("fire boom")
+}
+
+// TestStoryFireFailResetsToBacklog: in story mode, a claimed story whose FireRun
+// fails must be reset to backlog (not stranded running with empty run_id), so it
+// becomes Ready again next cycle.
+func TestStoryFireFailResetsToBacklog(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "s", status: "backlog"},
+	)
+	cp := &failFireCP{}
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.statusOf("S1"); got != "backlog" {
+		t.Errorf("S1 should be reset to backlog after FireRun failure (B3), got %s", got)
+	}
+}
+
+// TestSprintFireFailResetsToBacklog: in sprint mode, a FireRun failure after
+// ClaimSprint resets the whole sprint to backlog.
+func TestSprintFireFailResetsToBacklog(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "backlog", sprintID: "SP1"},
+		&fakeStory{id: "B", title: "B", status: "backlog", sprintID: "SP1"},
+	)
+	cp := &failFireCP{fakeControlPlane{execUnit: "sprint"}}
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if got := provider.statusOf(id); got != "backlog" {
+			t.Errorf("%s should be reset to backlog after sprint FireRun failure (B3), got %s", id, got)
+		}
+	}
+}
+
+// ---- B4: a running story stranded with empty run_id is recovered ------------
+
+// TestStrandedRunningStoryRecovered: a story left running with NO run_id (a fire
+// that slipped past compensation) must not be skipped forever. The completion loop
+// resets it to backlog, after which the SAME cycle re-fires it — so it ends up
+// running again WITH a run_id (recovered), never stuck running with an empty one.
+func TestStrandedRunningStoryRecovered(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "s", status: "running", runID: ""}, // stranded
+	)
+	cp := &fakeControlPlane{}
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Recovered: it was reset then re-fired in the same cycle → running with a run_id.
+	if got := provider.statusOf("S1"); got == "running" && provider.runIDOf("S1") == "" {
+		t.Errorf("S1 still stranded (running, empty run_id) — B4 recovery failed")
+	}
+	if provider.runIDOf("S1") == "" {
+		t.Errorf("S1 should have been re-fired with a run_id after recovery, got empty")
+	}
+}
+
+// TestStrandedRunningSprintRecovered: a sprint whose stories are running with no
+// run_id is reset to backlog and re-fired (B4) — ending running WITH a run_id.
+func TestStrandedRunningSprintRecovered(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "A", title: "A", status: "running", sprintID: "SP1", runID: ""},
+		&fakeStory{id: "B", title: "B", status: "running", sprintID: "SP1", runID: ""},
+	)
+	cp := sprintMode()
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if provider.statusOf(id) == "running" && provider.runIDOf(id) == "" {
+			t.Errorf("%s still stranded (running, empty run_id) — B4 recovery failed", id)
+		}
+		if provider.runIDOf(id) == "" {
+			t.Errorf("%s should have been re-fired with a run_id after recovery, got empty", id)
+		}
+	}
+}
+
+// ---- H1: DONE run whose pr step failed is marked failed, not parked ----------
+
+// TestDoneWithFailedPRStepMarksFailed: a story whose run is DONE but whose pr step
+// FAILED (no usable PR) must be marked failed — NOT parked in_review with an empty
+// PR (which would hang forever). Requires a gh client (merge loop enabled).
+func TestDoneWithFailedPRStepMarksFailed(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "s", status: "running", runID: "run-1", repo: "https://github.com/acme/x"},
+	)
+	cp := &fakeControlPlane{}
+	cp.setStatus("run-1", "DONE")
+	cp.setPRStepFailed("run-1") // DONE run, pr step failed → no usable PR
+	gh := newFakeMergeChecker()
+	sched := NewNativeScheduler(provider, cp, "dev", gh)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.statusOf("S1"); got != "failed" {
+		t.Errorf("DONE-with-failed-pr-step should be failed (H1), got %s", got)
+	}
+}
+
+// TestDoneWithNoPRMarksFailedWhenMergeEnabled: a DONE run that produced no PR at
+// all, with the merge loop enabled, can never be merged → mark failed (H1).
+func TestDoneWithNoPRMarksFailedWhenMergeEnabled(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "s", status: "running", runID: "run-1", repo: "https://github.com/acme/x"},
+	)
+	cp := &fakeControlPlane{}
+	cp.setStatus("run-1", "DONE") // no PR URL, no pr step recorded
+	gh := newFakeMergeChecker()
+	sched := NewNativeScheduler(provider, cp, "dev", gh)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.statusOf("S1"); got != "failed" {
+		t.Errorf("DONE-with-no-PR (merge enabled) should be failed (H1), got %s", got)
+	}
+}
+
+// TestDoneWithNoPRParksInReviewWhenLocal: with NO gh client (local mode), a DONE
+// run with no PR is the expected terminal — park it in_review (pre-existing
+// behavior preserved; H1 only fails when a merge was actually expected).
+func TestDoneWithNoPRParksInReviewWhenLocal(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "s", status: "running", runID: "run-1"},
+	)
+	cp := &fakeControlPlane{}
+	cp.setStatus("run-1", "DONE")
+	sched := NewNativeScheduler(provider, cp, "dev", nil) // no merge loop
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.statusOf("S1"); got != "in_review" {
+		t.Errorf("local DONE-with-no-PR should park in_review, got %s", got)
+	}
+}
+
+// ---- H2: closed PR is terminal; auto-merge failures are bounded -------------
+
+// TestClosedPRMarksFailed: a PR a human CLOSED without merging is terminal — the
+// reconcile loop marks the story failed and stops polling it.
+func TestClosedPRMarksFailed(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "s", status: "in_review", runID: "run-1",
+			repo: "https://github.com/acme/x", prURL: "https://github.com/acme/x/pull/7"},
+	)
+	cp := &fakeControlPlane{mergeMode: "auto"}
+	gh := newFakeMergeChecker()
+	gh.closed[7] = true // human closed PR #7 without merging
+	sched := NewNativeScheduler(provider, cp, "dev", gh)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.statusOf("S1"); got != "failed" {
+		t.Errorf("closed-unmerged PR should mark story failed (H2), got %s", got)
+	}
+	if gh.mergeCalls != 0 {
+		t.Errorf("a closed PR must not be auto-merged, got %d merge calls", gh.mergeCalls)
+	}
+}
+
+// TestAutoMergeFailureBounded: repeated auto-merge failures (conflict /
+// branch-protection) are bounded — after maxMergeFails cycles the story is marked
+// failed instead of retrying forever.
+func TestAutoMergeFailureBounded(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "s", status: "in_review", runID: "run-1",
+			repo: "https://github.com/acme/x", prURL: "https://github.com/acme/x/pull/7"},
+	)
+	cp := &fakeControlPlane{mergeMode: "auto"}
+	gh := newFakeMergeChecker()
+	gh.failMerge = true // every MergePR fails (e.g. conflict)
+	sched := NewNativeScheduler(provider, cp, "dev", gh)
+	ctx := context.Background()
+
+	// Drive cycles until the bound is hit. The story should NOT be failed before the
+	// threshold, and SHOULD be failed at/after it.
+	for i := 0; i < maxMergeFails-1; i++ {
+		if _, err := sched.RunOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := provider.statusOf("S1"); got != "in_review" {
+			t.Fatalf("before bound (cycle %d) story should still be in_review, got %s", i+1, got)
+		}
+	}
+	// The maxMergeFails-th failing attempt trips the bound.
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.statusOf("S1"); got != "failed" {
+		t.Errorf("after %d failed auto-merges the story should be failed (H2), got %s", maxMergeFails, got)
+	}
+	if gh.mergeCalls != maxMergeFails {
+		t.Errorf("auto-merge should be attempted exactly %d times, got %d", maxMergeFails, gh.mergeCalls)
 	}
 }
 

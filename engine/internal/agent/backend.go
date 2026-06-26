@@ -43,6 +43,13 @@ type Options struct {
 	// reaches the agent process (proxy + LLM credential; never daemon secrets).
 	Sandbox      sandbox.Sandbox
 	ContainerEnv []string
+
+	// CIDFile, when set with a docker sandbox, is the path `docker run --cidfile`
+	// writes the container id to. On cancel/timeout the backend reads it and runs
+	// `docker rm -f <id>` so the container is killed by id, not just the host
+	// docker client process group — otherwise the orphaned container keeps the
+	// egress net + /work mount (M1). Must NOT exist before the run (docker errors).
+	CIDFile string
 }
 
 // EventKind classifies a streamed event from the agent.

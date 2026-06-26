@@ -33,6 +33,11 @@ type Config struct {
 	EgressDeny bool     // gate: true -> --network none (default-deny egress)
 	Workdir    string   // host path mounted as the sandbox working tree
 
+	// CIDFile, when set, is passed to `docker run --cidfile` so the caller can read
+	// the started container's id and kill it by id on cancel/timeout (M1). The file
+	// must not already exist (docker refuses otherwise); the caller owns cleanup.
+	CIDFile string
+
 	// Network names the docker network for steps that DO need egress (the agent):
 	// a network with NO internet gateway whose only exit is the egress-proxy
 	// (allowlist, default-deny). It must NOT be "none" (the agent needs the LLM
@@ -40,6 +45,33 @@ type Config struct {
 	Network string
 	// UID runs the container as a non-root user "uid:gid" (defense in depth).
 	UID string
+
+	// RequireDocker hard-fails (no LocalSandbox fallback) when real docker
+	// isolation is unavailable. The agent and gate run untrusted repo code, so in
+	// any non-dev deployment this MUST be set: a silent host fallback runs that
+	// code on the host with the operator's creds and no egress proxy (audit
+	// C2/C2b). When false, LocalSandbox is permitted (explicit dev/test only).
+	RequireDocker bool
+}
+
+// MustDocker reports an error when cfg requires real docker isolation but sb
+// resolved to a non-docker executor (LocalSandbox). Callers (the agent and gate
+// runners) use this to FAIL the step rather than silently run untrusted code on
+// the host. Returns nil when docker is not required or sb is the docker executor.
+func (c Config) MustDocker(sb Sandbox) error {
+	if c.RequireDocker && sb.Kind() != "docker" {
+		return ErrDockerRequired
+	}
+	return nil
+}
+
+// ErrDockerRequired is returned when isolation is mandatory but unavailable.
+var ErrDockerRequired = errDockerRequired{}
+
+type errDockerRequired struct{}
+
+func (errDockerRequired) Error() string {
+	return "docker isolation required but unavailable (RequireDocker set, no docker runtime); refusing to run untrusted code on the host"
 }
 
 // DefaultEgressNetwork is the per-task agent network (no gateway; only the

@@ -156,6 +156,15 @@ func (e *Engine) ExecuteOne(ctx context.Context, workerID string) (bool, error) 
 	stepCtx := WithEmitter(ctx, func(eventType string, data map[string]any) {
 		_, _ = e.Store.AppendEvent(runID, taskID, eventType, data)
 	})
+	// Ownership check bound to this claim (B5): a runner with an irreversible
+	// filesystem side effect (the agent's SyncBack) consults this before acting,
+	// so a reaped-then-re-claimed task does not let the stale worker clobber the
+	// workdir a live worker now owns. Errors fall closed (treated as "lost").
+	claimFence := task.Fence
+	stepCtx = WithOwnershipCheck(stepCtx, func() bool {
+		ok, err := e.Store.OwnsClaim(taskID, claimFence)
+		return err == nil && ok
+	})
 
 	result, runErr := runner.Run(stepCtx, step, inputs, e.Workdir(task.RunID))
 	stopHeartbeat()
@@ -307,14 +316,24 @@ func (e *Engine) buildContext(runID string) (Context, error) {
 }
 
 // countFailures counts FAILED tasks for a step id in a run (drives on_fail.max).
+// It is scoped to the CURRENT attempt window: FAILED tasks created before the
+// most recent retry boundary are ignored, so RetryRun (which re-enqueues without
+// clearing prior FAILED tasks) gets a fresh on_fail budget instead of inheriting
+// an already-exhausted count (H3). The watermark is the run's last retry event;
+// 0 (never retried) counts everything, preserving the original semantics + the
+// intentional off-by-one (max=2 → 3 attempts).
 func (e *Engine) countFailures(runID, stepID string) (int, error) {
+	watermark, err := e.Store.LastRetryAt(runID)
+	if err != nil {
+		return 0, err
+	}
 	tasks, err := e.Store.TasksForRun(runID)
 	if err != nil {
 		return 0, err
 	}
 	n := 0
 	for _, t := range tasks {
-		if t.StepID == stepID && t.Status == store.StatusFailed {
+		if t.StepID == stepID && t.Status == store.StatusFailed && t.CreatedAt >= watermark {
 			n++
 		}
 	}

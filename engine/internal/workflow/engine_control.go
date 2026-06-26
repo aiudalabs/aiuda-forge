@@ -2,10 +2,17 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"forge/internal/store"
 )
+
+// ErrNoAwaitingStep is returned by ApproveStep/RejectStep when no task for the
+// (run, step) is AWAITING — already resolved, cancelled, or the loser of a
+// concurrent approve/reject. A typed result so the API can report a clear 409
+// instead of a misleading 200-success on a silent no-op (M3).
+var ErrNoAwaitingStep = errors.New("no step awaiting approval")
 
 // ReportStep records a worker's result for a claimed task (enforcing its fence)
 // and advances the workflow. This is what the API's POST /steps/{id}/report
@@ -56,24 +63,9 @@ func (e *Engine) RetryRun(runID string) error {
 // awaiting approval it is a no-op (idempotent). Full human_gate semantics land
 // in Wave 6; the operation and its endpoint exist now.
 func (e *Engine) ApproveStep(runID, stepID string) error {
-	tasks, err := e.Store.TasksForRun(runID)
-	if err != nil {
-		return err
-	}
-	for _, t := range tasks {
-		if t.StepID != stepID || t.Status != store.StatusAwaiting {
-			continue
-		}
-		// Approval is a control action (unfenced): complete the parked gate as a
-		// successful step so advance() enqueues the next step.
-		wf, err := e.Loader.Load(t.WorkflowID)
-		if err != nil {
-			return err
-		}
-		t.Fence = -1
-		return e.reportAndAdvance(wf, t, StepResult{Success: true, Output: map[string]any{"approved": true}, Detail: "approved by human"})
-	}
-	return nil
+	return e.resolveAwaiting(runID, stepID, store.StatusDone, StepResult{
+		Success: true, Output: map[string]any{"approved": true}, Detail: "approved by human",
+	}, "")
 }
 
 // RejectStep rejects a human_gate that is awaiting approval: it completes the
@@ -82,26 +74,33 @@ func (e *Engine) ApproveStep(runID, stepID string) error {
 // the workflow declares none, the run fails. Behavior is in DATA (the workflow),
 // not here. The reason is recorded for audit. No-op if nothing is awaiting.
 func (e *Engine) RejectStep(runID, stepID, reason string) error {
-	tasks, err := e.Store.TasksForRun(runID)
+	return e.resolveAwaiting(runID, stepID, store.StatusFailed, StepResult{
+		Success: false, Output: map[string]any{"rejected": true, "reason": reason}, Detail: reason,
+	}, reason)
+}
+
+// resolveAwaiting atomically transitions the AWAITING (run, step) task to `to`
+// (DONE for approve, FAILED for reject) via the store, then advances the flow —
+// but only for the WINNER. The store does the find+transition under one write
+// lock (M3), so a concurrent approve/reject or a racing cancel can never double-
+// transition or double-advance: the loser gets ok=false → ErrNoAwaitingStep.
+// The result is carried on the transitioned task so advance() resolves the next
+// step's inputs (or on_fail feedback for a reject) from it.
+func (e *Engine) resolveAwaiting(runID, stepID string, to store.Status, result StepResult, errMsg string) error {
+	resMap := map[string]any{"success": result.Success, "output": result.Output, "detail": result.Detail}
+	task, ok, err := e.Store.ResolveAwaiting(runID, stepID, to, resMap, errMsg)
 	if err != nil {
 		return err
 	}
-	for _, t := range tasks {
-		if t.StepID != stepID || t.Status != store.StatusAwaiting {
-			continue
-		}
-		wf, err := e.Loader.Load(t.WorkflowID)
-		if err != nil {
-			return err
-		}
-		t.Fence = -1 // control action, unfenced
-		return e.reportAndAdvance(wf, t, StepResult{
-			Success: false,
-			Output:  map[string]any{"rejected": true, "reason": reason},
-			Detail:  reason,
-		})
+	if !ok {
+		return ErrNoAwaitingStep
 	}
-	return nil
+	wf, err := e.Loader.Load(task.WorkflowID)
+	if err != nil {
+		return err
+	}
+	// The store already transitioned + emitted; advance only (no second transition).
+	return e.advance(wf, task, result)
 }
 
 // ---- pause / resume ----------------------------------------------------------

@@ -77,6 +77,11 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 		Auth:         r.Auth,
 	}
 
+	// agentWorkdir is where the agent's edits actually land — agentDir in
+	// sandboxed mode (synced back to workdir on return), or workdir directly. The
+	// output-doc capture below writes here so SyncBack carries the artifact (M4).
+	agentWorkdir := workdir
+
 	// Sandbox the agent: it works on a .git-less copy; edits sync back to the run
 	// worktree (so the gate sees them) but the agent never touches .git / the remote.
 	if r.Sandboxed {
@@ -86,16 +91,42 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 			return workflow.StepResult{Success: false, Detail: "stage agent worktree: " + err.Error()}, nil
 		}
 		defer os.RemoveAll(agentDir)
-		defer func() { _ = sandbox.SyncBack(agentDir, workdir) }() // propagate edits, keep .git
+		// Fence-guard the SyncBack (B5): a multi-minute agent step can be reaped
+		// (RequeueStale bumps the fence; a second worker re-claims and re-runs on the
+		// SAME workdir). The fence correctly discards this stale worker's DB result,
+		// but SyncBack is a filesystem side effect the fence cannot undo — an
+		// unconditional RemoveAll+recopy here would clobber the worktree the live
+		// worker now owns mid-write. Skip it unless we still own the claim.
+		defer func() {
+			if !workflow.StillOwnsWorkdir(ctx) {
+				return // reaped + re-claimed: another worker owns workdir — do not touch it
+			}
+			_ = sandbox.SyncBack(agentDir, workdir) // propagate edits, keep .git
+		}()
 
 		cfg := r.SandboxTemplate
 		cfg.Workdir = agentDir
 		if cfg.Network == "" {
 			cfg.Network = sandbox.DefaultEgressNetwork
 		}
+		// Container-id sink (outside the /work mount): lets the backend kill the
+		// container by id on cancel/timeout (M1). docker refuses a pre-existing
+		// cidfile, so clear any stale one from a prior reaped attempt first.
+		cidFile := agentDir + ".cid"
+		_ = os.Remove(cidFile)
+		cfg.CIDFile = cidFile
+		opts.CIDFile = cidFile
+		defer os.Remove(cidFile)
 		sb := sandbox.New(cfg)
+		// Hard-fail rather than silently run the agent on the host (audit C2b):
+		// in docker-required mode an unavailable runtime must FAIL the step, not
+		// degrade to LocalSandbox with the operator's creds and no egress proxy.
+		if err := cfg.MustDocker(sb); err != nil {
+			return workflow.StepResult{Success: false, Detail: "agent step: " + err.Error()}, nil
+		}
 		opts.Sandbox = sb
 		opts.Workdir = agentDir
+		agentWorkdir = agentDir
 		if sb.Kind() == "docker" {
 			opts.ContainerEnv = EgressEnv(r.Auth, r.Egress) // sentinel/oauth + HTTPS_PROXY allowlist
 		} else {
@@ -123,13 +154,18 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 	// (b) return the document as its response text — persist that. We prefer the
 	// agent-written file so the artifact is the full document, not a summary.
 	if outRel := asString(inputs["output"]); outRel != "" {
-		outAbs := filepath.Join(workdir, outRel)
-		if existing, rerr := os.ReadFile(outAbs); rerr == nil && len(strings.TrimSpace(string(existing))) > 0 {
+		// Read/write against the agent's own working dir (agentDir in sandboxed
+		// mode). Writing the fallback doc here — BEFORE the deferred SyncBack runs —
+		// lets SyncBack carry it into workdir; writing to workdir directly would be
+		// clobbered by that same SyncBack (M4). out["output"] still points at the
+		// final workdir location the gate/pr will read after SyncBack.
+		agentAbs := filepath.Join(agentWorkdir, outRel)
+		if existing, rerr := os.ReadFile(agentAbs); rerr == nil && len(strings.TrimSpace(string(existing))) > 0 {
 			out["text"] = string(existing) // the agent wrote the full doc — use it
-		} else if mkErr := os.MkdirAll(filepath.Dir(outAbs), 0o755); mkErr == nil {
-			_ = os.WriteFile(outAbs, []byte(res.Text), 0o644)
+		} else if mkErr := os.MkdirAll(filepath.Dir(agentAbs), 0o755); mkErr == nil {
+			_ = os.WriteFile(agentAbs, []byte(res.Text), 0o644)
 		}
-		out["output"] = outAbs
+		out["output"] = filepath.Join(workdir, outRel)
 	}
 
 	return workflow.StepResult{

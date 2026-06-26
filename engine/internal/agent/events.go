@@ -55,9 +55,11 @@ func eventPayload(e Event) (map[string]any, bool) {
 		if e.Text == "" {
 			return nil, false
 		}
+		// Redact secrets BEFORE truncation/persistence (audit C4): the live-log is
+		// served via GET /runs/{id}/events and must never carry a real token.
 		return map[string]any{
 			"kind": "text",
-			"text": truncate(e.Text, maxTextLen),
+			"text": truncate(redactSecrets(e.Text), maxTextLen),
 		}, true
 	case KindSystem:
 		// Minimal: enough to mark a system notice on the timeline without the
@@ -84,13 +86,13 @@ func toolInputSummary(raw map[string]any) string {
 		return ""
 	}
 	if s, isStr := in.(string); isStr {
-		return truncate(s, maxToolInputLen)
+		return truncate(redactSecrets(s), maxToolInputLen)
 	}
 	b, err := json.Marshal(in)
 	if err != nil {
-		return truncate(fmt.Sprintf("%v", in), maxToolInputLen)
+		return truncate(redactSecrets(fmt.Sprintf("%v", in)), maxToolInputLen)
 	}
-	return truncate(string(b), maxToolInputLen)
+	return truncate(redactSecrets(string(b)), maxToolInputLen)
 }
 
 func truncate(s string, max int) string {

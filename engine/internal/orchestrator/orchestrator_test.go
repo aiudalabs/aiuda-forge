@@ -42,12 +42,13 @@ func (f *fakeGitHub) setIssue(issue Issue) {
 
 // fakeControlPlane records fired runs. Thread-safe.
 type fakeControlPlane struct {
-	mu        sync.Mutex
-	runs      []firedRun
-	statuses  map[string]string // runID → status; absent → "RUNNING"
-	execUnit  string            // execution_unit reported to RunOnce; "" → "story"
-	mergeMode string            // merge_mode reported to RunOnce; "" → "manual"
-	prURLs    map[string]string // runID → PR URL the run "opened"
+	mu           sync.Mutex
+	runs         []firedRun
+	statuses     map[string]string // runID → status; absent → "RUNNING"
+	execUnit     string            // execution_unit reported to RunOnce; "" → "story"
+	mergeMode    string            // merge_mode reported to RunOnce; "" → "manual"
+	prURLs       map[string]string // runID → PR URL the run "opened"
+	prStepFailed map[string]bool   // runID → pr step FAILED (H1: DONE run, no usable PR)
 }
 
 type firedRun struct {
@@ -99,6 +100,32 @@ func (f *fakeControlPlane) RunPRURL(_ context.Context, runID string) (string, er
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.prURLs[runID], nil
+}
+
+// RunPRResult models the run's pr STEP (H1). A run with a recorded PR URL has a
+// successful pr step; a run marked via setPRStepFailed has a pr step that FAILED
+// (DONE run, no usable PR). A run with neither has no pr step (hasPR=false), which
+// in gh-enabled mode the scheduler treats as the no-PR hang.
+func (f *fakeControlPlane) RunPRResult(_ context.Context, runID string) (string, bool, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prStepFailed[runID] {
+		return "", false, true, nil // pr step exists but failed
+	}
+	if url := f.prURLs[runID]; url != "" {
+		return url, true, true, nil // pr step succeeded, opened a PR
+	}
+	return "", false, false, nil // no pr step
+}
+
+// setPRStepFailed marks a run's pr step as FAILED so a DONE run yields no usable PR.
+func (f *fakeControlPlane) setPRStepFailed(runID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prStepFailed == nil {
+		f.prStepFailed = map[string]bool{}
+	}
+	f.prStepFailed[runID] = true
 }
 
 // setPRURL records the PR URL a run "opened" so a DONE run moves to in_review

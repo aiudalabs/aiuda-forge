@@ -2,8 +2,6 @@ package tickets
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -158,6 +156,18 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		created++
 	}
 
+	// Whole-graph validation (H6/H7): now that every story in the batch exists,
+	// reject a backlog whose deps point at non-existent stories or form a cycle —
+	// both deadlock readiness silently and forever. Surfaced as a failed step (not
+	// an error) so the run reports the malformed backlog instead of silently
+	// publishing a wedged dep graph.
+	if err := r.Store.ValidateDeps(); err != nil {
+		return workflow.StepResult{
+			Success: false,
+			Detail:  fmt.Sprintf("ticket_publish: invalid dependency graph: %v", err),
+		}, nil
+	}
+
 	return workflow.StepResult{
 		Success: true,
 		Output: map[string]any{
@@ -182,8 +192,11 @@ func (r *PublishRunner) createSprint(id, name, goal string) error {
 	return nil
 }
 
-// isSQLiteConflict reports whether err is a SQLite UNIQUE constraint violation
-// (error code 1555 or 2067), which signals the row already exists.
+// isSQLiteConflict reports whether err is a SQLite UNIQUE/PRIMARY KEY constraint
+// violation — the "row already exists" signal that makes republishing a backlog
+// idempotent. It must NOT match CHECK or FOREIGN KEY violations (M6): those are
+// real malformed-data errors, and swallowing them as "skipped" silently drops bad
+// rows. Matching is restricted to the UNIQUE / PRIMARY KEY substrings only.
 func isSQLiteConflict(err error) bool {
 	if err == nil {
 		return false
@@ -192,8 +205,7 @@ func isSQLiteConflict(err error) bool {
 	// because modernc.org/sqlite error types are not exported.
 	msg := err.Error()
 	return contains(msg, "UNIQUE constraint failed") ||
-		contains(msg, "constraint failed") ||
-		errors.Is(err, sql.ErrNoRows) // never true, but keeps the logic explicit
+		contains(msg, "PRIMARY KEY constraint failed")
 }
 
 func contains(s, sub string) bool {

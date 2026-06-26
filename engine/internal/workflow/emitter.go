@@ -27,3 +27,30 @@ func EmitterFrom(ctx context.Context) StepEmitter {
 	fn, _ := ctx.Value(emitterKey{}).(StepEmitter)
 	return fn
 }
+
+// OwnershipCheck reports whether THIS worker still owns the task's live claim —
+// its fence is current and the task is still RUNNING under it. It is threaded
+// through ctx (like the emitter) so a runner with an irreversible filesystem
+// side effect can skip it when the worker was reaped and the task re-claimed by
+// another worker. Returns true when no check was installed (unit tests, or a
+// step with no such side effect): the absence of a guard must not block work.
+type OwnershipCheck func() bool
+
+type ownershipKey struct{}
+
+// WithOwnershipCheck returns a child context carrying fn as the active ownership
+// check. The engine sets this just before runner.Run, bound to (task.ID, fence).
+func WithOwnershipCheck(ctx context.Context, fn OwnershipCheck) context.Context {
+	return context.WithValue(ctx, ownershipKey{}, fn)
+}
+
+// StillOwnsWorkdir reports whether the worker still owns the workdir per the
+// ownership check on ctx. It returns true when no check is installed (so unit
+// tests and side-effect-free steps are unaffected — the guard is opt-in).
+func StillOwnsWorkdir(ctx context.Context) bool {
+	fn, _ := ctx.Value(ownershipKey{}).(OwnershipCheck)
+	if fn == nil {
+		return true
+	}
+	return fn()
+}

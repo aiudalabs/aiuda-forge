@@ -12,6 +12,7 @@ import (
 
 	"forge/internal/agent"
 	"forge/internal/api"
+	"forge/internal/auth"
 	"forge/internal/gate"
 	"forge/internal/pr"
 	"forge/internal/projects"
@@ -26,6 +27,7 @@ type Config struct {
 	DBPath         string        // sqlite path
 	TicketsDB      string        // tickets sqlite path; "" disables the ticket store
 	ProjectsDB     string        // projects sqlite path; "" disables the project store
+	AuthDB         string        // auth sqlite path; "" disables local auth
 	RegistryRoot   string        // registry/
 	WorkdirRoot    string        // where per-run working trees live
 	EngineMode     string        // "echo" (FakeBackend) | "claude" (real)
@@ -41,6 +43,7 @@ type App struct {
 	Store    *store.Store
 	Tickets  *tickets.Store  // nil when TicketsDB is not configured
 	Projects *projects.Store // nil when ProjectsDB is not configured
+	Auth     *auth.Store     // nil when AuthDB is not configured
 	Engine   *workflow.Engine
 	Bus      *api.Bus
 	Server   *api.Server
@@ -62,12 +65,20 @@ func Build(cfg Config) (*App, error) {
 	// Step runners — registered by type, the only place runners are wired.
 	eng.Register("echo", workflow.EchoRunner{})
 
+	// requireDocker: when set, the agent and gate hard-fail (no LocalSandbox
+	// fallback) if real docker isolation is unavailable (audit C2/C2b). It is ON
+	// whenever the operator asked for docker (VIBEFORGE_SANDBOX=docker) or set
+	// VIBEFORGE_REQUIRE_SANDBOX=1, UNLESS explicitly opted out for dev/test with
+	// VIBEFORGE_ALLOW_LOCAL_SANDBOX=1. Untrusted repo code must never run on the host.
+	requireDocker := dockerRequired(cfg.SandboxRuntime)
+
 	hardGate := gate.NewHardenedRunner()
 	hardGate.SandboxTemplate = sandbox.Config{
-		Runtime:    cfg.SandboxRuntime,
-		OCIRuntime: os.Getenv("VIBEFORGE_SANDBOX_RUNTIME"),
-		Image:      os.Getenv("VIBEFORGE_SANDBOX_IMAGE"), // "" -> alpine; set to e.g. python:3.12-slim for a real gate
-		EgressDeny: true,
+		Runtime:       cfg.SandboxRuntime,
+		OCIRuntime:    os.Getenv("VIBEFORGE_SANDBOX_RUNTIME"),
+		Image:         os.Getenv("VIBEFORGE_SANDBOX_IMAGE"), // "" -> alpine; set to e.g. python:3.12-slim for a real gate
+		EgressDeny:    true,
+		RequireDocker: requireDocker,
 	}
 	eng.Register("gate", hardGate)
 
@@ -79,6 +90,12 @@ func Build(cfg Config) (*App, error) {
 			backend = agent.FakeBackend{Reply: "stub: implemented"}
 		}
 	}
+	// Register configured secrets for live-log redaction (audit C4): the agent's
+	// auth token and the control-plane service token must never surface in a
+	// persisted step.event. Token-prefix shapes are handled by the redactor itself.
+	agent.RegisterSecret(cfg.AgentAuth.Token)
+	agent.RegisterSecret(os.Getenv("VIBEFORGE_API_TOKEN"))
+
 	agentRunner := agent.NewStepRunner(backend, agentLoader)
 	agentRunner.Auth = cfg.AgentAuth
 	if cfg.AgentTimeout > 0 {
@@ -90,11 +107,12 @@ func Build(cfg Config) (*App, error) {
 	// has no internet gateway — only the egress-proxy is reachable.
 	agentRunner.Sandboxed = true
 	agentRunner.SandboxTemplate = sandbox.Config{
-		Runtime:    cfg.SandboxRuntime,
-		OCIRuntime: os.Getenv("VIBEFORGE_SANDBOX_RUNTIME"),
-		Image:      os.Getenv("VIBEFORGE_AGENT_IMAGE"),
-		Network:    envOr("VIBEFORGE_SANDBOX_NETWORK", sandbox.DefaultEgressNetwork),
-		UID:        os.Getenv("VIBEFORGE_SANDBOX_UID"),
+		Runtime:       cfg.SandboxRuntime,
+		OCIRuntime:    os.Getenv("VIBEFORGE_SANDBOX_RUNTIME"),
+		Image:         os.Getenv("VIBEFORGE_AGENT_IMAGE"),
+		Network:       envOr("VIBEFORGE_SANDBOX_NETWORK", sandbox.DefaultEgressNetwork),
+		UID:           os.Getenv("VIBEFORGE_SANDBOX_UID"),
+		RequireDocker: requireDocker,
 		// EgressDeny stays false: the agent NEEDS the LLM API (via the proxy).
 	}
 	agentRunner.Egress = agent.EgressConfig{
@@ -155,15 +173,46 @@ func Build(cfg Config) (*App, error) {
 		}
 	}
 
+	// Auth store — optional. When AuthDB is set, open it and seed the first admin
+	// from VIBEFORGE_ADMIN_EMAIL/PASSWORD if the users table is empty. The store
+	// is passed to the API server so /auth/* routes activate and to the
+	// mandatory-auth middleware (wired in cmd/control).
+	var au *auth.Store
+	if cfg.AuthDB != "" {
+		var auErr error
+		au, auErr = auth.Open(cfg.AuthDB)
+		if auErr != nil {
+			_ = st.Close()
+			if tix != nil {
+				_ = tix.Close()
+			}
+			if proj != nil {
+				_ = proj.Close()
+			}
+			return nil, fmt.Errorf("open auth db: %w", auErr)
+		}
+		if _, seedErr := auth.SeedAdmin(au); seedErr != nil {
+			_ = au.Close()
+			_ = st.Close()
+			if tix != nil {
+				_ = tix.Close()
+			}
+			if proj != nil {
+				_ = proj.Close()
+			}
+			return nil, fmt.Errorf("seed admin: %w", seedErr)
+		}
+	}
+
 	bus := api.NewBus(st)
 	reg := api.NewRegistry(cfg.RegistryRoot)
-	srv := api.NewServer(st, eng, bus, reg, tix, proj)
+	srv := api.NewServer(st, eng, bus, reg, tix, proj, au)
 
 	workers := cfg.Workers
 	if workers <= 0 {
 		workers = 1
 	}
-	return &App{Store: st, Tickets: tix, Projects: proj, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
+	return &App{Store: st, Tickets: tix, Projects: proj, Auth: au, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
 }
 
 // ClaudeBackend builds the real claude -p backend.
@@ -174,6 +223,22 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// dockerRequired decides whether the agent/gate must hard-fail when docker
+// isolation is unavailable (audit C2/C2b). It is true when the operator selected
+// the docker sandbox runtime or set VIBEFORGE_REQUIRE_SANDBOX=1 — UNLESS they
+// explicitly opted into the host fallback with VIBEFORGE_ALLOW_LOCAL_SANDBOX=1
+// (dev/test only). The result is the secure default: an unconfigured docker-mode
+// deployment refuses to degrade to the host.
+func dockerRequired(sandboxRuntime string) bool {
+	if os.Getenv("VIBEFORGE_ALLOW_LOCAL_SANDBOX") == "1" {
+		return false // explicit dev/test opt-out
+	}
+	if os.Getenv("VIBEFORGE_REQUIRE_SANDBOX") == "1" {
+		return true
+	}
+	return sandboxRuntime == "docker"
 }
 
 // StartBackground launches the in-process worker POOL, reaper and event bus.
@@ -196,6 +261,9 @@ func (a *App) Close() error {
 	}
 	if a.Projects != nil {
 		_ = a.Projects.Close()
+	}
+	if a.Auth != nil {
+		_ = a.Auth.Close()
 	}
 	return a.Store.Close()
 }

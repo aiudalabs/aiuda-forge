@@ -7,6 +7,7 @@
 
 import { mapEvent, type KernelEvent } from "./api";
 import { wsUrl } from "./config";
+import { getToken } from "./auth";
 import type { RunEvent } from "./types";
 
 type Listener = (ev: RunEvent) => void;
@@ -21,7 +22,11 @@ function connect() {
   if (typeof window === "undefined" || connecting || socket) return;
   connecting = true;
   try {
-    const ws = new WebSocket(wsUrl());
+    // El navegador no puede poner cabecera Authorization en un WebSocket, así que
+    // el token va como query param ?token= (el middleware lo valida igual, audit C1).
+    const token = getToken();
+    const url = token ? `${wsUrl()}?token=${encodeURIComponent(token)}` : wsUrl();
+    const ws = new WebSocket(url);
     ws.onopen = () => {
       connecting = false;
       backoff = 1000;

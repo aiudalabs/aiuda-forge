@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"forge/internal/sandbox"
 	"forge/internal/workflow"
@@ -122,6 +123,94 @@ func TestAgentEditsVisibleToGate(t *testing.T) {
 	}
 	if _, err := os.Stat(run + ".agent"); !os.IsNotExist(err) {
 		t.Fatalf("the .git-less agent staging dir must be cleaned up")
+	}
+}
+
+// blockingBackend blocks in Run until release is closed, after signaling started.
+// It writes a marker into the agent's sandbox worktree so a test can detect
+// whether that worktree was synced back to the run worktree.
+type blockingBackend struct {
+	started chan struct{}
+	release chan struct{}
+	marker  string
+}
+
+func (b *blockingBackend) Run(_ context.Context, _ string, opts Options, onEvent func(Event)) (Result, error) {
+	// Stage a "stale" edit inside the agent worktree, then block as a long step.
+	_ = os.WriteFile(filepath.Join(opts.Workdir, b.marker), []byte("stale-worker-A"), 0o644)
+	close(b.started)
+	<-b.release
+	if onEvent != nil {
+		onEvent(Event{Kind: KindResult, Text: "late"})
+	}
+	return Result{Text: "late", Success: true}, nil
+}
+
+// TestSyncBackSkippedAfterReap (B5): a sandboxed agent step that is reaped
+// mid-run (RequeueStale bumps the fence; a second worker re-claims) must NOT run
+// its deferred SyncBack when the stale worker finally returns — otherwise it
+// RemoveAll+recopies the run worktree that the live worker now owns. The fence
+// discards the stale DB result; the ownership guard must likewise skip the
+// filesystem side effect.
+func TestSyncBackSkippedAfterReap(t *testing.T) {
+	wfSrc := []byte(`
+id: longstep
+version: 1.0.0
+steps:
+  - id: implement
+    type: agent
+    agent: dev
+`)
+	wf, err := workflow.Parse(wfSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents := MapLoader{"dev": &Manifest{ID: "dev"}}
+	be := &blockingBackend{started: make(chan struct{}), release: make(chan struct{}), marker: "stale.txt"}
+
+	e := newEngineWithAgent(t, be, agents)
+	e.Loader = workflow.MapLoader{"longstep": wf}
+	runner := NewStepRunnerWith(be, agents)
+	runner.Sandboxed = true
+	runner.SandboxTemplate = sandbox.Config{Runtime: "local"} // no docker needed
+	e.Register("agent", runner)
+	e.HeartbeatInterval = time.Hour // keep the heartbeat out of the way
+
+	runID, err := e.StartRun("longstep", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Run worker A in the background; it claims + blocks inside the agent backend.
+	aDone := make(chan struct{})
+	go func() {
+		_, _ = e.ExecuteOne(context.Background(), "worker-A")
+		close(aDone)
+	}()
+	<-be.started
+
+	// Seed the LIVE run worktree with content the live worker "owns". If A's stale
+	// SyncBack fires it will RemoveAll this and recopy A's (stale) staging.
+	workdir := e.Workdir(runID)
+	if err := os.WriteFile(filepath.Join(workdir, "live.txt"), []byte("worker-B-owns-this"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reap: bump the fence so A's claim is stale (staleMillis=0 requeues regardless
+	// of heartbeat). A second worker would re-claim the now-QUEUED task.
+	if n, err := e.Store.RequeueStale(0); err != nil || n != 1 {
+		t.Fatalf("expected to requeue 1 stale task, got n=%d err=%v", n, err)
+	}
+
+	// Let stale worker A return; its deferred SyncBack must be skipped.
+	close(be.release)
+	<-aDone
+
+	// The live worktree content survives, and A's stale staging was NOT synced in.
+	if got, err := os.ReadFile(filepath.Join(workdir, "live.txt")); err != nil || string(got) != "worker-B-owns-this" {
+		t.Fatalf("live worktree was clobbered by stale SyncBack: got %q err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(workdir, "stale.txt")); !os.IsNotExist(err) {
+		t.Fatalf("stale worker A's edit leaked into the live worktree via SyncBack")
 	}
 }
 

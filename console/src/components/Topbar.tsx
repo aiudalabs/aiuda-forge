@@ -7,6 +7,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useState } from "react";
 import { sectionForPath } from "@/lib/sections";
 import { useApiMode, useNotifications, useSpendToday } from "@/lib/hooks";
+import { logout } from "@/lib/auth";
 
 export function Topbar() {
   const path = usePathname();
@@ -75,7 +76,16 @@ export function Topbar() {
         </div>
       )}
 
-      <div className="ava">NM</div>
+      <button
+        className="ava"
+        title="Cerrar sesión"
+        onClick={async () => {
+          await logout();
+          window.location.href = "/login";
+        }}
+      >
+        NM
+      </button>
     </header>
   );
 }

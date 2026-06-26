@@ -43,6 +43,12 @@ func (h *HardenedRunner) Run(ctx context.Context, step workflow.Step, _ map[stri
 	cfg := h.SandboxTemplate
 	cfg.Workdir = workdir
 	sb := sandbox.New(cfg)
+	// Hard-fail rather than run a born-malicious .vibeforge-gate on the host
+	// (audit C2): in docker-required mode an unavailable runtime must FAIL the
+	// gate, never degrade to LocalSandbox (NOT a security boundary).
+	if err := cfg.MustDocker(sb); err != nil {
+		return workflow.StepResult{Success: false, Detail: "gate: " + err.Error()}, nil
+	}
 
 	res, err := Run(ctx, sb, workdir, MetaRootFor(workdir), RunIDFromWorkdir(workdir), command)
 	if err != nil {

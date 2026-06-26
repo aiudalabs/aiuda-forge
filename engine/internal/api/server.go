@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"forge/internal/auth"
 	"forge/internal/projects"
 	"forge/internal/settings"
 	"forge/internal/store"
@@ -31,6 +32,7 @@ type Server struct {
 	Settings *settings.Store
 	Tickets  *tickets.Store
 	Projects *projects.Store // nil when ProjectsDB is not configured
+	Auth     *auth.Store     // nil when AuthDB is not configured
 	mux      *http.ServeMux
 }
 
@@ -38,9 +40,9 @@ type Server struct {
 // registry (registry/../settings.json) — config in the control plane, not the kernel.
 // tix and proj may be nil; their routes return 503 until they are set
 // (needTickets / needProjects guards).
-func NewServer(st *store.Store, eng *workflow.Engine, bus *Bus, reg *Registry, tix *tickets.Store, proj *projects.Store) *Server {
+func NewServer(st *store.Store, eng *workflow.Engine, bus *Bus, reg *Registry, tix *tickets.Store, proj *projects.Store, au *auth.Store) *Server {
 	set, _ := settings.Open(filepath.Join(filepath.Dir(reg.Root), "settings.json"))
-	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, Tickets: tix, Projects: proj, mux: http.NewServeMux()}
+	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, Tickets: tix, Projects: proj, Auth: au, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -68,6 +70,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /analytics", s.metrics)
 	m.HandleFunc("GET /healthz", s.health)
 	m.HandleFunc("GET /readyz", s.health)
+	// Local auth (email+password). POST /auth/login is the one unauthenticated
+	// endpoint (exempted in the httpx.Auth middleware); logout/me require a token.
+	m.HandleFunc("POST /auth/login", s.needAuth(s.login))
+	m.HandleFunc("POST /auth/logout", s.needAuth(s.logout))
+	m.HandleFunc("GET /auth/me", s.needAuth(s.me))
 	// registry CRUD (compose/edit/list/delete agents, skills, workflows — no-code).
 	// Generic by {kind}: workflows|agents|skills. PUT/POST validate against the
 	// SAME parser the kernel uses, so a saved manifest is always runnable.

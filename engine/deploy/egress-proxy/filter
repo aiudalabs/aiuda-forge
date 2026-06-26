@@ -1,4 +1,9 @@
-\.?api\.anthropic\.com$
-\.?registry\.npmjs\.org$
-\.?pypi\.org$
-\.?files\.pythonhosted\.org$
+# Egress allowlist (tinyproxy FilterExtended, default-deny). Each line is a POSIX
+# extended regex matched against the CONNECT host. Anchored at BOTH ends so a
+# domain can only match itself or a subdomain — NOT a suffix-attached lookalike
+# (audit M7): "^(.*\.)?pypi\.org$" matches pypi.org and files.pypi.org but
+# rejects evilpypi.org, which the old unanchored "\.?pypi\.org$" let through.
+^(.*\.)?api\.anthropic\.com$
+^(.*\.)?registry\.npmjs\.org$
+^(.*\.)?pypi\.org$
+^(.*\.)?files\.pythonhosted\.org$

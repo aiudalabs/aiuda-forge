@@ -1,10 +1,22 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
+	"forge/internal/httpx"
 	"forge/internal/tickets"
 )
+
+// depError maps tickets dep-graph validation errors (self-dep, cycle, missing
+// dep) to a 400 and reports whether it handled the error (H6/H7).
+func depError(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, tickets.ErrDepCycle) || errors.Is(err, tickets.ErrDepNotFound) {
+		httpErr(w, http.StatusBadRequest, err.Error())
+		return true
+	}
+	return false
+}
 
 // ---- Epics ------------------------------------------------------------------
 
@@ -145,6 +157,13 @@ func (s *Server) updateSprintStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.Status {
 	case "": // run_id-only update (record the firing run on a still-running sprint)
+	case tickets.StatusBacklog:
+		// B3 sprint compensation: ResetSprintClaim sends status=backlog when a
+		// FireRun failed after the sprint was claimed, so the sprint re-fires.
+		if err := s.Tickets.MarkSprintBacklog(id); err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	case tickets.StatusInReview:
 		if err := s.Tickets.MarkSprintInReview(id, req.PRURL); err != nil {
 			httpErr(w, http.StatusInternalServerError, err.Error())
@@ -161,7 +180,7 @@ func (s *Server) updateSprintStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		httpErr(w, http.StatusBadRequest, "sprint status must be in_review, done or failed")
+		httpErr(w, http.StatusBadRequest, "sprint status must be backlog, in_review, done or failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -178,7 +197,19 @@ func (s *Server) createStory(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "id is required")
 		return
 	}
+	// Validate the repo URL at the API boundary (audit C5): a story's repo flows
+	// into `gh pr merge` under auto-merge, so an unvalidated repo is RCE-adjacent.
+	// Empty repo is allowed (local/echo flows); a non-empty one must pass.
+	if st.Repo != "" {
+		if err := httpx.ValidateRemote(st.Repo); err != nil {
+			httpErr(w, http.StatusBadRequest, "invalid repo: "+err.Error())
+			return
+		}
+	}
 	if err := s.Tickets.CreateStory(st); err != nil {
+		if depError(w, err) {
+			return
+		}
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -269,6 +300,9 @@ func (s *Server) addStoryDeps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Tickets.AddDep(id, req.Deps); err != nil {
+		if depError(w, err) {
+			return
+		}
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

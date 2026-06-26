@@ -152,6 +152,63 @@ func (s *Store) Transition(taskID string, fence int64, to Status, result map[str
 	return tx.Commit()
 }
 
+// ResolveAwaiting atomically finds the AWAITING task for (runID, stepID) and
+// transitions it to `to` with result/errMsg, in ONE transaction. It returns the
+// resolved task (so the caller can advance the flow) and ok=true on success, or
+// (nil, false, nil) when no task is AWAITING — the loser of a concurrent
+// approve/reject, or an approve racing a cancel. This closes the find-then-act
+// window of the old engine path (M3): the read and the write share the write
+// lock, so two concurrent resolvers can never both transition the same gate.
+func (s *Store) ResolveAwaiting(runID, stepID string, to Status, result map[string]any, errMsg string) (*Task, bool, error) {
+	tx, err := s.db.Begin() // BEGIN IMMEDIATE — write lock before the read
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+
+	t, err := scanTaskCore(tx.QueryRow(taskCols+` WHERE run_id=? AND step_id=? AND status=? ORDER BY created_at DESC LIMIT 1`,
+		runID, stepID, string(StatusAwaiting)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil // nothing awaiting (already resolved / cancelled / lost the race)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !transitionAllowed(StatusAwaiting, to) {
+		return nil, false, fmt.Errorf("%w: task %s %s->%s", ErrIllegalTransition, t.ID, StatusAwaiting, to)
+	}
+
+	now := s.now()
+	resultJSON := "{}"
+	if result != nil {
+		b, err := json.Marshal(result)
+		if err != nil {
+			return nil, false, err
+		}
+		resultJSON = string(b)
+	}
+	if _, err := tx.Exec(`UPDATE tasks SET status=?, result=?, error=?, updated_at=? WHERE id=?`,
+		string(to), resultJSON, errMsg, now, t.ID); err != nil {
+		return nil, false, err
+	}
+	data := map[string]any{"step": stepID, "from": StatusAwaiting, "to": to}
+	if errMsg != "" {
+		data["error"] = errMsg
+	}
+	if err := emitTx(tx, runID, t.ID, EventStepStatusChange, data, now); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	// Reflect the applied transition on the returned task so advance() sees it.
+	t.Status = to
+	t.Result = resultJSON
+	t.Error = errMsg
+	t.UpdatedAt = now
+	return t, true, nil
+}
+
 // Heartbeat updates a RUNNING task's liveness, rejecting a stale fence (a worker
 // whose claim was superseded by requeue_stale). Returns ErrStaleFence if so.
 func (s *Store) Heartbeat(taskID string, fence int64) error {
@@ -179,6 +236,25 @@ func (s *Store) Heartbeat(taskID string, fence int64) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// OwnsClaim reports whether the worker holding `fence` still owns taskID's live
+// claim: the stored fence matches AND the task is still RUNNING. A reaper requeue
+// (RUNNING->QUEUED, fence bumped) or a re-claim by a second worker (fence bumped
+// again) both flip this to false. It is the read-side guard for side effects that
+// the fence cannot undo — e.g. the agent's filesystem SyncBack (B5): a reaped
+// worker that returns late must NOT clobber the worktree a live worker now owns.
+func (s *Store) OwnsClaim(taskID string, fence int64) (bool, error) {
+	var curFence int64
+	var st Status
+	err := s.db.QueryRow(`SELECT fence, status FROM tasks WHERE id=?`, taskID).Scan(&curFence, &st)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return curFence == fence && st == StatusRunning, nil
 }
 
 // RequeueStale finds RUNNING tasks whose heartbeat is older than staleMillis and
