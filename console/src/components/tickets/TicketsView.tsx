@@ -12,6 +12,7 @@ import { ApiError } from "@/lib/api";
 import { RunDrawer } from "@/components/board/RunDrawer";
 import { DepGraph } from "@/components/tickets/DepGraph";
 import { KanbanBoard } from "@/components/tickets/KanbanBoard";
+import { TicketDetail } from "@/components/tickets/TicketDetail";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
 
 type TicketsView = "tabla" | "kanban" | "grafo";
@@ -47,10 +48,12 @@ export function TicketsView() {
   const projectId = useActiveProjectId();
   const { data: tickets, isLoading, isError, refetch } = useTickets(projectId);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
+  const [openTicketId, setOpenTicketId] = useState<string | null>(null);
   const [showNewStory, setShowNewStory] = useState(false);
   const [view, setView] = useState<TicketsView>("tabla");
 
   const list = tickets ?? [];
+  const openTicket = openTicketId ? list.find((t) => t.id === openTicketId) ?? null : null;
 
   return (
     <div className="wrap">
@@ -119,7 +122,7 @@ export function TicketsView() {
             <TicketRow
               key={t.id}
               ticket={t}
-              onOpenRun={setOpenRunId}
+              onOpenTicket={setOpenTicketId}
             />
           ))}
         </div>
@@ -129,7 +132,7 @@ export function TicketsView() {
             <h2>Kanban</h2>
             <span className="c">agrupado por estado</span>
           </div>
-          <KanbanBoard tickets={list} onOpenRun={setOpenRunId} />
+          <KanbanBoard tickets={list} onOpenTicket={setOpenTicketId} />
         </>
       ) : (
         <>
@@ -137,7 +140,7 @@ export function TicketsView() {
             <h2>Grafo DAG</h2>
             <span className="c">dependencias · niveles topológicos</span>
           </div>
-          <DepGraph tickets={list} onOpenRun={setOpenRunId} />
+          <DepGraph tickets={list} onOpenTicket={setOpenTicketId} />
         </>
       )}
 
@@ -153,6 +156,17 @@ export function TicketsView() {
         />
       )}
 
+      {/* Detalle del ticket (la story en sí) — abre para cualquier ticket. Desde
+          aquí se baja a la ejecución si la story tiene run. */}
+      <TicketDetail
+        ticket={openTicket}
+        onClose={() => setOpenTicketId(null)}
+        onOpenRun={(rid) => {
+          setOpenTicketId(null);
+          setOpenRunId(rid);
+        }}
+      />
+
       {/* Drawer del Board para ver el run asociado */}
       <RunDrawer runId={openRunId} onClose={() => setOpenRunId(null)} />
     </div>
@@ -165,13 +179,13 @@ export function TicketsView() {
 
 function TicketRow({
   ticket,
-  onOpenRun,
+  onOpenTicket,
 }: {
   ticket: OrchestratorTicket;
-  onOpenRun: (runId: string) => void;
+  onOpenTicket: (id: string) => void;
 }) {
   return (
-    <div className="trow">
+    <div className="trow click" onClick={() => onOpenTicket(ticket.id)} title="Ver detalle del ticket">
       <span className="id">{ticket.id}</span>
       <span className="ttl">{ticket.title}</span>
       <span className="dep">{ticket.deps && ticket.deps.length > 0 ? ticket.deps.join(", ") : "—"}</span>
@@ -182,13 +196,9 @@ function TicketRow({
       </span>
       <span>
         {ticket.run_id ? (
-          <button
-            className="btn ghost sm"
-            style={{ fontSize: 11 }}
-            onClick={() => onOpenRun(ticket.run_id as string)}
-          >
+          <span className="mono" style={{ fontSize: 11, color: "var(--ink4)" }}>
             {ticket.run_id.slice(0, 12)}…
-          </button>
+          </span>
         ) : (
           <span style={{ color: "var(--ink4)", fontSize: 12 }}>—</span>
         )}

@@ -59,7 +59,7 @@ interface StoryNodeData extends Record<string, unknown> {
   status: TicketStatus;
   sprint?: string;
   runId?: string;
-  onOpenRun: (runId: string) => void;
+  onOpenTicket: (id: string) => void;
 }
 
 function StoryNode({ data }: NodeProps) {
@@ -74,14 +74,14 @@ function StoryNode({ data }: NodeProps) {
         fontSize: 12,
         fontWeight: 600,
         fontFamily: "var(--display)",
-        cursor: d.runId ? "pointer" : "default",
+        cursor: "pointer",
         width: NODE_W,
         boxShadow: "0 2px 8px rgba(13,13,15,0.06)",
         lineHeight: 1.35,
         userSelect: "none",
       }}
-      onClick={d.runId ? () => d.onOpenRun(d.runId as string) : undefined}
-      title={d.runId ? `Ver run ${d.runId}` : d.title}
+      onClick={() => d.onOpenTicket(d.id)}
+      title="Ver detalle del ticket"
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
@@ -119,7 +119,7 @@ const LAYOUTS: { kind: LayoutKind; label: string }[] = [
 
 function buildElements(
   tickets: OrchestratorTicket[],
-  onOpenRun: (runId: string) => void,
+  onOpenTicket: (id: string) => void,
 ): { nodes: Node[]; edges: Edge[] } {
   const byId = new Map(tickets.map((t) => [t.id, t]));
   const nodes: Node[] = tickets.map((t) => ({
@@ -132,7 +132,7 @@ function buildElements(
       status: t.status,
       sprint: (t as { sprint_id?: string }).sprint_id,
       runId: t.run_id,
-      onOpenRun,
+      onOpenTicket,
     } satisfies StoryNodeData,
   }));
 
@@ -304,11 +304,11 @@ function applyLayout(kind: LayoutKind, nodes: Node[], edges: Edge[]): Node[] {
 
 interface DepGraphProps {
   tickets: OrchestratorTicket[];
-  onOpenRun: (runId: string) => void;
+  onOpenTicket: (id: string) => void;
 }
 
-function DepGraphInner({ tickets, onOpenRun }: DepGraphProps) {
-  const base = useMemo(() => buildElements(tickets, onOpenRun), [tickets, onOpenRun]);
+function DepGraphInner({ tickets, onOpenTicket }: DepGraphProps) {
+  const base = useMemo(() => buildElements(tickets, onOpenTicket), [tickets, onOpenTicket]);
   const [layout, setLayout] = useState<LayoutKind>("hier-lr");
   const [fullscreen, setFullscreen] = useState(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);

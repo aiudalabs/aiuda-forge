@@ -32,17 +32,16 @@ const COLUMNS: ColumnConfig[] = [
 
 interface StoryCardProps {
   ticket: OrchestratorTicket;
-  onOpenRun: (runId: string) => void;
+  onOpenTicket: (id: string) => void;
 }
 
-function StoryCard({ ticket, onOpenRun }: StoryCardProps) {
-  const clickable = !!ticket.run_id;
+function StoryCard({ ticket, onOpenTicket }: StoryCardProps) {
   return (
     <div
-      className={`card${clickable ? " click" : ""}`}
+      className="card click"
       style={{ padding: "11px 13px", boxShadow: "none" }}
-      onClick={clickable ? () => onOpenRun(ticket.run_id as string) : undefined}
-      title={clickable ? `Ver run ${ticket.run_id}` : ticket.title}
+      onClick={() => onOpenTicket(ticket.id)}
+      title="Ver detalle del ticket"
     >
       <div
         style={{
@@ -106,10 +105,10 @@ function StoryCard({ ticket, onOpenRun }: StoryCardProps) {
 interface KanbanColumnProps {
   config: ColumnConfig;
   tickets: OrchestratorTicket[];
-  onOpenRun: (runId: string) => void;
+  onOpenTicket: (id: string) => void;
 }
 
-function KanbanColumn({ config, tickets, onOpenRun }: KanbanColumnProps) {
+function KanbanColumn({ config, tickets, onOpenTicket }: KanbanColumnProps) {
   return (
     <div
       style={{
@@ -174,7 +173,7 @@ function KanbanColumn({ config, tickets, onOpenRun }: KanbanColumnProps) {
           </div>
         ) : (
           tickets.map((t) => (
-            <StoryCard key={t.id} ticket={t} onOpenRun={onOpenRun} />
+            <StoryCard key={t.id} ticket={t} onOpenTicket={onOpenTicket} />
           ))
         )}
       </div>
@@ -188,10 +187,10 @@ function KanbanColumn({ config, tickets, onOpenRun }: KanbanColumnProps) {
 
 interface KanbanBoardProps {
   tickets: OrchestratorTicket[];
-  onOpenRun: (runId: string) => void;
+  onOpenTicket: (id: string) => void;
 }
 
-export function KanbanBoard({ tickets, onOpenRun }: KanbanBoardProps) {
+export function KanbanBoard({ tickets, onOpenTicket }: KanbanBoardProps) {
   // Agrupar tickets por estado
   const byStatus = new Map<TicketStatus, OrchestratorTicket[]>();
   for (const col of COLUMNS) byStatus.set(col.status, []);
@@ -217,7 +216,7 @@ export function KanbanBoard({ tickets, onOpenRun }: KanbanBoardProps) {
             key={col.status}
             config={col}
             tickets={byStatus.get(col.status) ?? []}
-            onOpenRun={onOpenRun}
+            onOpenTicket={onOpenTicket}
           />
         ))}
       </div>
