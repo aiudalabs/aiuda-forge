@@ -17,6 +17,7 @@ export const SECTIONS: SectionMeta[] = [
   { key: "tickets", href: "/tickets", icon: "☰", label: "Tickets", eyebrow: "Backlog · MCP", title: "Tickets" },
   { key: "registry", href: "/registry", icon: "◆", label: "Registry", eyebrow: "Configuración · no-code", title: "Registry" },
   { key: "spend", href: "/spend", icon: "◷", label: "Gasto", eyebrow: "Observabilidad", title: "Gasto" },
+  { key: "docs", href: "/docs", icon: "❏", label: "Docs", eyebrow: "Cómo funciona", title: "Docs" },
   { key: "settings", href: "/settings", icon: "⚙", label: "Settings", eyebrow: "Configuración", title: "Settings" },
 ];
 
