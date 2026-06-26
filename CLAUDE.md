@@ -130,3 +130,34 @@ R3. **Story `failed` con run que se recupera (RUNNING) queda desalineada y el PR
     de step stale) no re-sincroniza el estado de la story. → Al recuperar un step/run, reconciliar el estado
     de las stories del run. (Incidente 2026-06-26: SP3+SP6, 10 stories, realineadas a mano failed→running
     vía tickets.db porque el run estaba vivo; backup en /tmp/forge/tickets.db.bak-*.)
+
+## Wave V — Rediseño de verificación (ESTRATÉGICO, decidido 2026-06-26)
+Contexto: el gate hoy combina TRES mecanismos. El frágil es el sello de hash del comando
+(`.vibeforge-gate`), que se rompe distinto con cada stack (python ok, react `npm test`→`vitest`,
+mañana flutter) y es una cinta de correr de mantenimiento. Los agentes lo editan (python-dev lo
+reescribió y borró frontend; react-dev corrigió el comando) → tamper → run muere. El fix táctico
+(seed correcto + regla "no editar el gate", commits 530eecd/40d185b) desbloquea, pero la causa de
+fondo es DÓNDE pusimos el candado: sobre el *comando*, que el agente legítimamente define por-stack.
+
+Decisión: pasar de "sello rígido del comando" a **verificación en capas**, cada mecanismo atacando
+la amenaza que le toca. NO es "confiar ciegamente en el agente" (sin humano-por-paso, el reward-hack
+de borrar tests es real) ni "sello rígido" (frágil por-stack). El humano sigue en el PR final
+(merge_mode: manual), lo que baja el costo de error del gate.
+
+V1. **Conservar el piso determinista AGNÓSTICO al stack** (barato, sin mantenimiento):
+    - correr la suite en sandbox offline (sin red, deps vendorizadas) — hace creíble "los tests pasan".
+    - suite-integrity: contar marcadores (`def test_`, `it(`, `testWidgets(`…) y que NO bajen. Ataca
+      el reward-hack #1 (borrar el test que falla). Esto ya existe y se queda.
+V2. **Quitar el sello de hash del COMANDO** (el `.vibeforge-gate` GateHash). En su lugar: el architect
+    define un *contrato de mínimos* por lane ("frontend ≥N tests de componente, todo verde"); el dev
+    es dueño del *cómo* (el comando exacto, que puede declarar). El contrato lo hace cumplir el conteo,
+    no un hash. Elimina la cinta de correr por-stack (flutter ya no rompe nada).
+V3. **Sumar verificación agéntica + funcional** (acá brilla la calidad de los modelos):
+    - el `reviewer` (agentic_verify) revisa contra los ACs — ya existe.
+    - para lanes de UI: paso `ui-verify` con browser (Playwright) que arranca la app y verifica que la
+      pantalla renderiza y el flujo clickea de verdad — señal mucho más fuerte que "los tests pasan".
+V4. **Antes de implementar V2**: análisis adversarial corto por escrito de "qué reward-hacks quedan
+    abiertos si quitamos el sello de comando" (ej. comando que sale 0 sin correr nada; tests que
+    siempre pasan). Mitigaciones: el conteo + el reviewer + ejecución-real-offline deben cubrirlos.
+Modelo mental: determinista donde es barato y el gaming es probable (borrar tests); agéntico donde
+hace falta juicio (¿el código funciona?, ¿la UI sirve?). Esencialmente BMAD + piso determinista barato.
