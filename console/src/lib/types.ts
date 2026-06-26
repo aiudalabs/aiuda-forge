@@ -264,4 +264,5 @@ export interface OrchestratorTicket {
   status: TicketStatus;
   deps: string[];
   run_id?: string;
+  sprint_id?: string;   // the sprint this story belongs to (SP1, SP2, …)
 }
