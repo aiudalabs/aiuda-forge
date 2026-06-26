@@ -113,3 +113,20 @@ Monorepo: `engine/` (Go, module `forge`) + `console/` (Next.js/TS).
     only renders the title, so the user can't see what a story is. Show the body + ACs in the ticket card
     (truncated) and full in the ticket detail/drawer. (The full build spec is generated just-in-time by
     draft_story — that's separate; this is just surfacing the skeleton description that already exists.)
+
+## Wave R — Resiliencia / recuperación (HIGH — bloquearon al usuario en vivo, 2026-06-26)
+R1. **Session-limit de Claude marca stories como `failed` permanentemente.** Pegar el límite de sesión
+    ("You've hit your session limit · resets ...") es transitorio, pero el step falló y la story quedó
+    `failed` aunque el kernel reintentó el step solo y el run siguió RUNNING. → Tratar el límite como error
+    retryable-con-backoff (esperar al reset / reintentar), NO como falla terminal. Distinguir errores
+    transitorios (rate/limit/timeout) de fallas reales en el runner del agente.
+R2. **No hay forma de sacar una story/sprint de `failed`** (la queja del usuario: "no tengo cómo devolverlas
+    al backlog o a que se ejecuten de nuevo"). `legalSources` no tiene transición de salida desde `failed`
+    (`failed`→`backlog` y `failed`→`running` ilegales). → Agregar acción "Reencolar": transición legal
+    `failed`→`backlog`, endpoints `POST /stories/{id}/requeue` y `POST /sprints/{id}/requeue`, y botón en
+    Board/RunDrawer. Requeue debe limpiar run_id/pr_url para que el orquestador dispare fresco.
+R3. **Story `failed` con run que se recupera (RUNNING) queda desalineada y el PR quedaría huérfano.** El
+    orquestador solo flipea story→running en su propio FireRun; una recuperación interna del kernel (requeue
+    de step stale) no re-sincroniza el estado de la story. → Al recuperar un step/run, reconciliar el estado
+    de las stories del run. (Incidente 2026-06-26: SP3+SP6, 10 stories, realineadas a mano failed→running
+    vía tickets.db porque el run estaba vivo; backup en /tmp/forge/tickets.db.bak-*.)

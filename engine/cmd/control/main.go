@@ -44,7 +44,10 @@ func main() {
 		EngineMode:     envOr("VIBEFORGE_ENGINE", "echo"),
 		SandboxRuntime: os.Getenv("VIBEFORGE_SANDBOX"),
 		AgentAuth:      agentAuth,
-		AgentTimeout:   20 * time.Minute,
+		// Per-agent wall clock. Goal-mode sprints build several stories in ONE pass,
+		// so a whole-sprint run can easily exceed the old fixed 20m. Configurable via
+		// VIBEFORGE_AGENT_TIMEOUT_MIN (minutes); default keeps the historical 20m.
+		AgentTimeout:   time.Duration(envInt("VIBEFORGE_AGENT_TIMEOUT_MIN", 20)) * time.Minute,
 		Workers:        envInt("VIBEFORGE_WORKERS", 4),
 	})
 	if err != nil {
