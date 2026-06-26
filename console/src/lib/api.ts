@@ -448,6 +448,24 @@ export async function retryRun(id: string): Promise<void> {
   await http<void>(`/runs/${id}/retry`, { method: "POST" });
 }
 
+// Project docs (Studio = Confluence, U1): read the project's specs straight from
+// its repo docs/ tree — the persistent source of truth.
+export async function listProjectDocs(projectId: string, ref = "dev"): Promise<import("./types").DocEntry[]> {
+  if (await isMock()) return [];
+  const res = await http<{ docs: import("./types").DocEntry[] }>(
+    `/projects/${projectId}/docs?ref=${encodeURIComponent(ref)}`,
+  );
+  return res.docs ?? [];
+}
+
+export async function getProjectDoc(projectId: string, path: string, ref = "dev"): Promise<string> {
+  if (await isMock()) return "";
+  const res = await http<{ content: string }>(
+    `/projects/${projectId}/docs/file?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`,
+  );
+  return res.content ?? "";
+}
+
 // Requeue (R2): resurrect a failed run's stories back to backlog so the
 // orchestrator re-fires them. In sprint mode this requeues the WHOLE sprint.
 export async function requeueRun(id: string): Promise<number> {

@@ -226,6 +226,18 @@ export interface Project {
   repo: string; // GitHub https URL
 }
 
+// ── Project docs (Studio = Confluence, U1) ────────────────────────────────────
+// GET /projects/{id}/docs → { docs: DocEntry[], ref }
+// GET /projects/{id}/docs/file?path=docs/PRD.md → { content }
+// The specs live in the repo (docs/ on the dev branch), the persistent source of
+// truth that outlives an ephemeral design run.
+export interface DocEntry {
+  name: string; // "PRD.md"
+  path: string; // "docs/PRD.md"
+  type: "file" | "dir";
+  size: number;
+}
+
 // ── Tickets (from orchestrator) ───────────────────────────────────────────────
 // GET /tickets → { tickets: Ticket[] }
 // GET /epics   → { epics: Epic[] }

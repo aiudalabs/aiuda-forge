@@ -1,5 +1,5 @@
-import { StudioView } from "@/components/studio/StudioView";
+import { Studio } from "@/components/studio/Studio";
 
 export default function StudioPage() {
-  return <StudioView />;
+  return <Studio />;
 }

@@ -1757,3 +1757,149 @@ header.top .sp {
     display: none;
   }
 }
+
+/* ── Studio = Confluence (U1) ──────────────────────────────────────────────── */
+.studio-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 clamp(20px, 2.4vw, 48px);
+  border-bottom: 1px solid var(--stroke);
+  background: #fff;
+}
+.studio-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 14px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink4);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.studio-tab.on {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.docs-h1 {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  margin: 2px 0 18px;
+}
+.docs-repo {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  gap: 22px;
+  align-items: start;
+}
+.docs-tree {
+  position: sticky;
+  top: 18px;
+  background: #fff;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-lg);
+  padding: 10px;
+  box-shadow: var(--shadow-soft);
+}
+.docs-tree-head {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--ink4);
+  padding: 6px 8px 10px;
+}
+.docs-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  appearance: none;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--ink2);
+  cursor: pointer;
+}
+.docs-tree-item:hover {
+  background: var(--paper, #f6f5f2);
+}
+.docs-tree-item.on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--ink);
+  font-weight: 650;
+}
+.docs-tree-item.dir {
+  cursor: default;
+  color: var(--ink4);
+}
+.docs-tree-ic {
+  width: 18px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 13px;
+}
+.docs-tree-label {
+  flex: 1;
+  min-width: 0;
+}
+.docs-tree-badge {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--ink4);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+.docs-tree-empty {
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink4);
+}
+
+.docs-reader {
+  background: #fff;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-lg);
+  padding: clamp(20px, 2.2vw, 40px) clamp(22px, 3vw, 56px);
+  box-shadow: var(--shadow-soft);
+  min-width: 0;
+}
+.docs-md {
+  max-width: 860px;
+}
+.docs-code {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink2);
+  margin: 0;
+}
+
+@media (max-width: 1000px) {
+  .docs-layout {
+    grid-template-columns: 1fr;
+  }
+  .docs-tree {
+    position: static;
+  }
+}

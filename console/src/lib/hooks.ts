@@ -320,6 +320,25 @@ export function useProjects() {
   });
 }
 
+// Studio = Confluence (U1): the project's repo docs/ tree + a single doc's content.
+export function useProjectDocs(projectId: string | null) {
+  return useQuery({
+    queryKey: ["project-docs", projectId],
+    queryFn: () => api.listProjectDocs(projectId as string),
+    enabled: !!projectId,
+    staleTime: 60_000,
+  });
+}
+
+export function useProjectDoc(projectId: string | null, path: string | null) {
+  return useQuery({
+    queryKey: ["project-doc", projectId, path],
+    queryFn: () => api.getProjectDoc(projectId as string, path as string),
+    enabled: !!projectId && !!path,
+    staleTime: 60_000,
+  });
+}
+
 export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({
