@@ -1,19 +1,29 @@
 "use client";
 
-// Studio shell (U1): two tabs for the active project —
-//   · Especificación — the persistent specs read from the repo (Confluence-like).
-//   · Diseño — the live design-run timeline (phases, gates, approvals).
-// Especificación is the default: the spec is the thing that's always there, even
-// after a design run has finished or been purged.
+// Studio shell (U1 + U5).
+//   · No project yet → the conversational entry (StudioEntry): the obvious place to
+//     start a new project. Launching it drops you straight into the Diseño flow.
+//   · With a project → two tabs:
+//       Especificación — the persistent specs read from the repo (Confluence-like).
+//       Diseño — the live design-run timeline (phases, gates, approvals).
 
 import { useState } from "react";
+import { useActiveProject } from "@/lib/activeProject";
 import { StudioDocs } from "./StudioDocs";
+import { StudioEntry } from "./StudioEntry";
 import { StudioView } from "./StudioView";
 
 type Tab = "spec" | "design";
 
 export function Studio() {
+  const { project, isLoading } = useActiveProject();
   const [tab, setTab] = useState<Tab>("spec");
+
+  // No project → the conversational entry. Launching a design auto-routes to the
+  // Diseño tab so the user lands on the live flow instead of hunting for it.
+  if (!isLoading && !project) {
+    return <StudioEntry onLaunched={() => setTab("design")} />;
+  }
 
   return (
     <>
