@@ -153,8 +153,10 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
             <div className="db">
               <div className="eyebrow acc">Pasos</div>
               <div className="steps">
-                {run.steps.map((s) => (
-                  <StepRow key={s.id} step={s} />
+                {run.steps.map((s, i) => (
+                  // step ids repeat across on_fail loops (implement/gate/review run
+                  // multiple times), so the id alone is NOT a unique key — include the index.
+                  <StepRow key={`${s.id}-${i}`} step={s} />
                 ))}
               </div>
 
@@ -186,7 +188,7 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
                     }}
                   >
                     {run.costBreakdown.byStep?.map((b, i) => (
-                      <span key={b.step}>
+                      <span key={`${b.step}-${i}`}>
                         {i > 0 ? " · " : ""}
                         {b.step} ${b.cost.toFixed(2)}
                       </span>
