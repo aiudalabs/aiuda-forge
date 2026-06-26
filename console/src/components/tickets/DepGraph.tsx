@@ -107,7 +107,15 @@ const NODE_H = 56;
 // Elements + dagre layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Dir = "LR" | "TB";
+type LayoutKind = "hier-lr" | "hier-tb" | "organic" | "circular" | "radial";
+
+const LAYOUTS: { kind: LayoutKind; label: string }[] = [
+  { kind: "hier-lr", label: "Jerárquico" },
+  { kind: "hier-tb", label: "Vertical" },
+  { kind: "organic", label: "Orgánico" },
+  { kind: "circular", label: "Circular" },
+  { kind: "radial", label: "Radial" },
+];
 
 function buildElements(
   tickets: OrchestratorTicket[],
@@ -145,8 +153,8 @@ function buildElements(
   return { nodes, edges };
 }
 
-// layoutDagre returns the nodes positioned by a dagre hierarchical layout.
-function layoutDagre(nodes: Node[], edges: Edge[], dir: Dir): Node[] {
+// layoutDagre — hierarchical (dagre) in the given direction.
+function layoutDagre(nodes: Node[], edges: Edge[], dir: "LR" | "TB"): Node[] {
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: dir, nodesep: 28, ranksep: 90, marginx: 20, marginy: 20 });
   nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
@@ -163,6 +171,133 @@ function layoutDagre(nodes: Node[], edges: Edge[], dir: Dir): Node[] {
   });
 }
 
+// dependency depth (longest path from a root) — drives the radial rings.
+function depthByNode(nodes: Node[], edges: Edge[]): Map<string, number> {
+  const preds = new Map<string, string[]>();
+  nodes.forEach((n) => preds.set(n.id, []));
+  edges.forEach((e) => preds.get(e.target)?.push(e.source));
+  const depth = new Map<string, number>();
+  const visiting = new Set<string>();
+  const calc = (id: string): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (visiting.has(id)) return 0; // cycle guard
+    visiting.add(id);
+    const ps = preds.get(id) ?? [];
+    const d = ps.length ? Math.max(...ps.map(calc)) + 1 : 0;
+    visiting.delete(id);
+    depth.set(id, d);
+    return d;
+  };
+  nodes.forEach((n) => calc(n.id));
+  return depth;
+}
+
+// layoutCircular — nodes spaced evenly on one ring.
+function layoutCircular(nodes: Node[]): Node[] {
+  const n = Math.max(nodes.length, 1);
+  const R = Math.max(240, n * 26);
+  return nodes.map((node, i) => {
+    const a = (i / n) * 2 * Math.PI - Math.PI / 2;
+    return { ...node, position: { x: Math.cos(a) * R, y: Math.sin(a) * R } };
+  });
+}
+
+// layoutRadial — concentric rings by dependency depth (roots at the centre).
+function layoutRadial(nodes: Node[], edges: Edge[]): Node[] {
+  const depth = depthByNode(nodes, edges);
+  const byDepth = new Map<number, Node[]>();
+  nodes.forEach((n) => {
+    const d = depth.get(n.id) ?? 0;
+    (byDepth.get(d) ?? byDepth.set(d, []).get(d)!).push(n);
+  });
+  const ring = 200;
+  const out: Node[] = [];
+  for (const [d, group] of byDepth) {
+    const R = d * ring;
+    group.forEach((node, i) => {
+      const a = (i / group.length) * 2 * Math.PI - Math.PI / 2;
+      out.push({ ...node, position: d === 0 ? { x: 0, y: 0 } : { x: Math.cos(a) * R, y: Math.sin(a) * R } });
+    });
+  }
+  return out;
+}
+
+// layoutForce — a compact force-directed (organic) simulation. Repulsion between
+// every pair + spring attraction along edges, cooled over a fixed iteration count.
+// Cheap and instant for the story-graph sizes we deal with.
+function layoutForce(nodes: Node[], edges: Edge[]): Node[] {
+  const n = nodes.length;
+  if (n === 0) return nodes;
+  const idx = new Map(nodes.map((nd, i) => [nd.id, i]));
+  const R0 = Math.max(240, n * 24);
+  const x = nodes.map((_, i) => Math.cos((i / n) * 2 * Math.PI) * R0);
+  const y = nodes.map((_, i) => Math.sin((i / n) * 2 * Math.PI) * R0);
+  const links = edges
+    .map((e) => [idx.get(e.source), idx.get(e.target)] as [number, number])
+    .filter(([a, b]) => a != null && b != null);
+
+  const k = 240; // ideal separation
+  const ITER = 320;
+  for (let it = 0; it < ITER; it++) {
+    const cool = 1 - it / ITER;
+    const dx = new Array(n).fill(0);
+    const dy = new Array(n).fill(0);
+    // repulsion
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let ddx = x[i] - x[j];
+        let ddy = y[i] - y[j];
+        let dist2 = ddx * ddx + ddy * ddy || 0.01;
+        const f = (k * k) / dist2;
+        const d = Math.sqrt(dist2);
+        ddx /= d;
+        ddy /= d;
+        dx[i] += ddx * f;
+        dy[i] += ddy * f;
+        dx[j] -= ddx * f;
+        dy[j] -= ddy * f;
+      }
+    }
+    // attraction along edges
+    for (const [a, b] of links) {
+      const ddx = x[a] - x[b];
+      const ddy = y[a] - y[b];
+      const d = Math.sqrt(ddx * ddx + ddy * ddy) || 0.01;
+      const f = (d * d) / k;
+      const ux = (ddx / d) * f;
+      const uy = (ddy / d) * f;
+      dx[a] -= ux;
+      dy[a] -= uy;
+      dx[b] += ux;
+      dy[b] += uy;
+    }
+    const maxStep = 40 * cool;
+    for (let i = 0; i < n; i++) {
+      const d = Math.sqrt(dx[i] * dx[i] + dy[i] * dy[i]) || 0.01;
+      x[i] += (dx[i] / d) * Math.min(d, maxStep);
+      y[i] += (dy[i] / d) * Math.min(d, maxStep);
+    }
+  }
+  return nodes.map((node, i) => ({ ...node, position: { x: x[i], y: y[i] } }));
+}
+
+// applyLayout dispatches to the chosen algorithm.
+function applyLayout(kind: LayoutKind, nodes: Node[], edges: Edge[]): Node[] {
+  switch (kind) {
+    case "hier-tb":
+      return layoutDagre(nodes, edges, "TB");
+    case "organic":
+      return layoutForce(nodes, edges);
+    case "circular":
+      return layoutCircular(nodes);
+    case "radial":
+      return layoutRadial(nodes, edges);
+    case "hier-lr":
+    default:
+      return layoutDagre(nodes, edges, "LR");
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Interactive graph
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,25 +309,25 @@ interface DepGraphProps {
 
 function DepGraphInner({ tickets, onOpenRun }: DepGraphProps) {
   const base = useMemo(() => buildElements(tickets, onOpenRun), [tickets, onOpenRun]);
-  const [dir, setDir] = useState<Dir>("LR");
+  const [layout, setLayout] = useState<LayoutKind>("hier-lr");
   const [fullscreen, setFullscreen] = useState(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const { fitView } = useReactFlow();
 
-  // (Re)apply the dagre auto-layout — also the "Auto-layout" button action.
+  // (Re)apply a layout algorithm and fit the view.
   const relayout = useCallback(
-    (d: Dir = dir) => {
-      setNodes(layoutDagre(base.nodes, base.edges, d));
+    (kind: LayoutKind) => {
+      setNodes(applyLayout(kind, base.nodes, base.edges));
       setEdges(base.edges);
       requestAnimationFrame(() => fitView({ padding: 0.18, duration: 400 }));
     },
-    [base, dir, setNodes, setEdges, fitView],
+    [base, setNodes, setEdges, fitView],
   );
 
-  // Initial layout + whenever the ticket set changes.
+  // Initial layout + whenever the ticket set changes (keep the chosen algorithm).
   useEffect(() => {
-    relayout(dir);
+    relayout(layout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
 
@@ -210,23 +345,27 @@ function DepGraphInner({ tickets, onOpenRun }: DepGraphProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreen]);
 
-  function flipDir() {
-    const next: Dir = dir === "LR" ? "TB" : "LR";
-    setDir(next);
-    relayout(next);
+  function pick(kind: LayoutKind) {
+    setLayout(kind);
+    relayout(kind);
   }
 
   return (
     <div className={`dag-wrap${fullscreen ? " full" : ""}`}>
       <div className="dag-toolbar">
-        <button className="dag-btn" onClick={() => relayout()} title="Reorganizar (auto-layout)">
-          ⤢ Auto-layout
-        </button>
+        <div className="dag-seg" role="group" aria-label="Disposición">
+          {LAYOUTS.map((l) => (
+            <button
+              key={l.kind}
+              className={`dag-seg-btn${layout === l.kind ? " on" : ""}`}
+              onClick={() => pick(l.kind)}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
         <button className="dag-btn" onClick={() => fitView({ padding: 0.18, duration: 400 })} title="Ajustar a pantalla">
           ⊡ Ajustar
-        </button>
-        <button className="dag-btn" onClick={flipDir} title="Cambiar dirección">
-          {dir === "LR" ? "↳ Horizontal" : "↴ Vertical"}
         </button>
         <button className="dag-btn primary" onClick={() => setFullscreen((v) => !v)}>
           {fullscreen ? "✕ Salir" : "⛶ Pantalla completa"}

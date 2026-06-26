@@ -1995,3 +1995,33 @@ header.top .sp {
 .dag-btn.primary:hover {
   background: var(--accent);
 }
+
+/* Layout selector (U3) — segmented control in the graph toolbar. */
+.dag-seg {
+  display: inline-flex;
+  background: var(--bg2);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.dag-seg-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink3);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: 0.14s var(--ease);
+}
+.dag-seg-btn:hover {
+  color: var(--ink);
+}
+.dag-seg-btn.on {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(13, 13, 15, 0.12);
+}
