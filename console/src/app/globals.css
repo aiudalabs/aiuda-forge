@@ -346,8 +346,20 @@ header.top .sp {
   color: #7f8696;
 }
 .wrap {
-  padding: 26px 30px;
-  max-width: 1180px;
+  /* Fluid content column: fill the available width (uses external monitors instead
+     of leaving the right half empty), centered + capped on ultra-wide so prose/cards
+     stay readable. Padding scales with the viewport. */
+  padding: clamp(20px, 2vw, 34px) clamp(20px, 2.4vw, 48px);
+  max-width: 1720px;
+  width: 100%;
+  margin-inline: auto;
+}
+
+/* Wide screens: dense surfaces (board, tickets, spend) breathe into the extra width. */
+@media (min-width: 1500px) {
+  .stats {
+    gap: 18px;
+  }
 }
 
 .stats {
