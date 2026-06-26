@@ -161,3 +161,33 @@ V4. **Antes de implementar V2**: análisis adversarial corto por escrito de "qu�
     siempre pasan). Mitigaciones: el conteo + el reviewer + ejecución-real-offline deben cubrirlos.
 Modelo mental: determinista donde es barato y el gaming es probable (borrar tests); agéntico donde
 hace falta juicio (¿el código funciona?, ¿la UI sirve?). Esencialmente BMAD + piso determinista barato.
+
+## Wave D — Hallazgos de validación (revisión paralela 2026-06-26, ver console/public/docs/*.md)
+D1. **[CRÍTICO·SEGURIDAD] Hueco de lectura cross-tenant.** `listRuns` toma `?project=` sin verificar
+    propiedad contra el usuario, y `getRun` no tiene scoping alguno (`api/server.go:180-214`). A1 se cerró
+    en DATOS (columnas project_id) pero NO en autorización: cualquier sesión válida lee runs/tasks de otro
+    proyecto. Fix: chequear ownership del proyecto en listRuns/getRun (y demás rutas por-id).
+D2. **[CRÍTICO] design.yaml encadena contexto VACÍO** (era #16, confirmado ACTIVO). `$discovery.text`,
+    `$prd.text`, `$architecture.text` resuelven a "" porque el texto del agente vive en `output.text`
+    (`resolve.go`, `design.yaml:32,47,64,81,97`). Cada fase recibe el brief/PRD/arquitectura previos vacíos,
+    sin error; los agentes sobreviven re-leyendo docs/ del workdir. Fix: usar `$step.output.text` en
+    design.yaml (o promover output.text a top-level `.text` en el resolver).
+D3. **[ALTO·SEGURIDAD] Gate ausente pasa trivialmente.** Sin `.vibeforge-gate`, `Snapshot` hashea a "" y el
+    anti-tamper se salta (`gate.go:54-60,116`). El piso determinista solo protege si el gate existía al sellar.
+    Combinado con el race "factory clona dev antes de mergear docs" (#19) da fallos reales. Fix: gate ausente
+    debe FALLAR, no pasar.
+D4. **[ALTO] Run hard-delete sin retención** (`store/control.go:37-59`): explica la "desaparición del design
+    run de Studio". Sin `deleted_at` ni audit; deja stories colgadas a un run_id inexistente. Fix: soft-delete
+    + retención (liga a A3).
+D5. **[MEDIO] Config muerta / campos YAML decorativos.** `skills:` nunca se carga ni inyecta (la consola
+    muestra pestaña Skills no consumida); `prompt: adversarial` se emite literal sin efecto; `approval:
+    risk-policy` declarado en 3 workflows pero `pr.go` no lo interpreta. Fix: implementarlos o quitarlos.
+D6. **[MEDIO] `modeFor` cachea una lectura de settings fallida** (`native.go:508-525`): un blip de la API tira
+    todo el ciclo de un proyecto a sprint+manual, pausando merges `auto` en silencio. Fix: no cachear errores.
+D7. **[MEDIO] `depsDone` enmascara datos corruptos** (`tickets.go:1182`): una dep que apunta a un id borrado
+    se trata como "no done" → deadlock silencioso del dependiente, sin error. Fix: dep inexistente = error visible.
+D8. **[MEDIO] Vocabulario de metodología hardcodeado en Go** (diverge de la filosofía): forma del backlog
+    (épicas/sprints) en `publish.go:13-42`, nombre del gate `.vibeforge-gate` en `gate.go:35`. Idealmente en
+    el registry. Otros: timeout REAL es 20m hardcodeado (`main.go:50`), el 45m es solo env de despliegue;
+    reaper puede duplicar llamada LLM pagada (>60s sin heartbeat); `mixed-lane → dev` solo loguea, sin señal UI;
+    falta password-change (#10); imágenes de sandbox por-lane (#11/B2); R3 (desync story↔run borrado) pendiente.
