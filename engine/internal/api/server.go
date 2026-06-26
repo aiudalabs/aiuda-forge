@@ -110,6 +110,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /projects/{id}/settings", s.needProjects(s.getProjectSettings))
 	m.HandleFunc("PUT /projects/{id}/settings", s.needProjects(s.putProjectSettings))
 	m.HandleFunc("GET /projects/{id}", s.needProjects(s.getProject))
+	// Studio = Confluence (U1): the project's specs read straight from its repo
+	// docs/ (source of truth that outlives an ephemeral design run).
+	m.HandleFunc("GET /projects/{id}/docs", s.needProjects(s.listProjectDocs))
+	m.HandleFunc("GET /projects/{id}/docs/file", s.needProjects(s.getProjectDoc))
 
 	// Native ticket store. Registered unconditionally and guarded per-request:
 	// Tickets may be nil (no TicketsDB configured) — needTickets returns 503 in that case.

@@ -194,6 +194,71 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// docRef returns the git ref to read docs from (?ref=), defaulting to "dev" —
+// the factory's integration branch, where the design handoff commits the specs.
+func docRef(r *http.Request) string {
+	if ref := r.URL.Query().Get("ref"); ref != "" {
+		return ref
+	}
+	return "dev"
+}
+
+// listProjectDocs lists the project's repo docs/ tree (U1: Studio = Confluence).
+// Reads from the repo via gh so the specs survive an ephemeral/purged design run.
+// A repo with no docs yet returns an empty list (not an error) so the UI shows an
+// "in progress" empty state rather than failing.
+func (s *Server) listProjectDocs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ref := docRef(r)
+	p, err := s.Projects.Get(id)
+	if err != nil {
+		if errors.Is(err, projects.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, "project not found: "+id)
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if p.Repo == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"docs": []github.DocEntry{}, "ref": ref})
+		return
+	}
+	entries, err := github.New().ListContents(r.Context(), p.Repo, "docs", ref)
+	if err != nil {
+		// No docs/ on this ref yet (design not handed off, or wrong branch).
+		writeJSON(w, http.StatusOK, map[string]any{"docs": []github.DocEntry{}, "ref": ref, "note": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"docs": entries, "ref": ref})
+}
+
+// getProjectDoc returns the decoded content of one doc file (?path=docs/PRD.md).
+// The path is constrained to docs/ to avoid reading arbitrary repo files.
+func (s *Server) getProjectDoc(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ref := docRef(r)
+	path := r.URL.Query().Get("path")
+	if !strings.HasPrefix(path, "docs/") || strings.Contains(path, "..") {
+		httpErr(w, http.StatusBadRequest, "path must be under docs/")
+		return
+	}
+	p, err := s.Projects.Get(id)
+	if err != nil {
+		if errors.Is(err, projects.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, "project not found: "+id)
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	content, err := github.New().ReadFile(r.Context(), p.Repo, path, ref)
+	if err != nil {
+		httpErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": path, "content": content, "ref": ref})
+}
+
 // ---- env helpers ------------------------------------------------------------
 
 // ghOrg returns the GitHub org/user to create repos under. Reads VIBEFORGE_GH_ORG;
