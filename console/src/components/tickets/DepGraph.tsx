@@ -1,9 +1,11 @@
 "use client";
 
-// DepGraph — grafo de dependencias entre stories con React Flow (v12).
-// Calcula un layout topológico por niveles: dep → story que depende.
-// Nodos clickables si tienen run_id (abre el drawer del Board).
+// DepGraph — story dependency graph (React Flow v12) with a dagre auto-layout.
+// Nodes are draggable (organize freely); the toolbar re-applies the auto-layout,
+// fits the view, flips direction, and toggles full-screen. Clickable nodes (with a
+// run_id) open the Board drawer.
 
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -12,15 +14,19 @@ import {
   MiniMap,
   Handle,
   Position,
+  useNodesState,
+  useEdgesState,
+  useReactFlow,
   type Node,
   type Edge,
   type NodeProps,
 } from "@xyflow/react";
+import Dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Estilos de nodo por estado — reutiliza los tokens CSS del mockup
+// Node styling by status
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface StatusStyle {
@@ -39,22 +45,19 @@ const STATUS_STYLE: Record<TicketStatus, StatusStyle> = {
 };
 
 const STATUS_ICON: Record<TicketStatus, string> = {
-  backlog:   " ⏳",
-  ready:     " ⟳",
-  running:   " ⟳",
+  backlog: " ⏳",
+  ready: " ⟳",
+  running: " ⟳",
   in_review: " ⌾",
-  done:      " ✓",
-  failed:    " ✗",
+  done: " ✓",
+  failed: " ✗",
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Nodo personalizado
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface StoryNodeData extends Record<string, unknown> {
   id: string;
   title: string;
   status: TicketStatus;
+  sprint?: string;
   runId?: string;
   onOpenRun: (runId: string) => void;
 }
@@ -66,28 +69,30 @@ function StoryNode({ data }: NodeProps) {
     <div
       style={{
         ...style,
-        borderRadius: 10,
+        borderRadius: 11,
         padding: "8px 14px",
         fontSize: 12,
         fontWeight: 600,
         fontFamily: "var(--display)",
         cursor: d.runId ? "pointer" : "default",
-        minWidth: 90,
-        maxWidth: 180,
+        width: NODE_W,
+        boxShadow: "0 2px 8px rgba(13,13,15,0.06)",
         lineHeight: 1.35,
         userSelect: "none",
       }}
       onClick={d.runId ? () => d.onOpenRun(d.runId as string) : undefined}
       title={d.runId ? `Ver run ${d.runId}` : d.title}
     >
-      {/* Connection points: without these, React Flow can't draw edges (error #008). */}
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
-      <div style={{ fontFamily: "var(--mono)", fontSize: 11, opacity: 0.7, marginBottom: 2 }}>
-        {d.id}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+        <span style={{ fontFamily: "var(--mono)", fontSize: 11, opacity: 0.7 }}>{d.id}</span>
+        {d.sprint && (
+          <span style={{ fontFamily: "var(--mono)", fontSize: 9.5, opacity: 0.5 }}>{d.sprint}</span>
+        )}
       </div>
-      <div style={{ fontSize: 12, lineHeight: 1.3, color: "inherit" }}>
-        {d.title.length > 36 ? d.title.slice(0, 35) + "…" : d.title}
+      <div style={{ fontSize: 12, lineHeight: 1.3, color: "inherit", marginTop: 2 }}>
+        {d.title.length > 38 ? d.title.slice(0, 37) + "…" : d.title}
         {STATUS_ICON[d.status]}
       </div>
     </div>
@@ -95,122 +100,71 @@ function StoryNode({ data }: NodeProps) {
 }
 
 const NODE_TYPES = { story: StoryNode };
+const NODE_W = 178;
+const NODE_H = 56;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cálculo de niveles topológicos (idéntico al de TicketsView pero para coords)
+// Elements + dagre layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface DagLevel {
-  id: string;
-  level: number;
-  isCycle: boolean;
-}
+type Dir = "LR" | "TB";
 
-function computeLevels(tickets: OrchestratorTicket[]): DagLevel[] {
-  const MAX_ITER = tickets.length + 2;
-  const byId = new Map(tickets.map((t) => [t.id, t]));
-  const levels = new Map<string, number>();
-
-  let changed = true;
-  let iter = 0;
-  while (changed && iter < MAX_ITER) {
-    changed = false;
-    iter++;
-    for (const t of tickets) {
-      const knownDeps = t.deps.filter((d) => byId.has(d));
-      let level = 0;
-      if (knownDeps.length > 0) {
-        const depLevels = knownDeps.map((d) => levels.get(d) ?? -1);
-        if (depLevels.some((l) => l < 0)) continue;
-        level = Math.max(...depLevels) + 1;
-      }
-      if (!levels.has(t.id) || levels.get(t.id) !== level) {
-        levels.set(t.id, level);
-        changed = true;
-      }
-    }
-  }
-
-  return tickets.map((t) => ({
-    id: t.id,
-    level: levels.get(t.id) ?? 0,
-    isCycle: !levels.has(t.id),
-  }));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Construcción de nodes + edges para React Flow
-// ─────────────────────────────────────────────────────────────────────────────
-
-const LEVEL_GAP_X = 220;
-const NODE_GAP_Y = 90;
-
-function buildGraph(
+function buildElements(
   tickets: OrchestratorTicket[],
-  onOpenRun: (runId: string) => void
+  onOpenRun: (runId: string) => void,
 ): { nodes: Node[]; edges: Edge[] } {
-  const dagLevels = computeLevels(tickets);
-  const levelMap = new Map(dagLevels.map((d) => [d.id, d.level]));
-
-  // Contar cuántos nodos por nivel para calcular offset Y centrado.
-  const countByLevel = new Map<number, number>();
-  for (const { level } of dagLevels) {
-    countByLevel.set(level, (countByLevel.get(level) ?? 0) + 1);
-  }
-
-  // Asignar posición a cada nodo: índice dentro del nivel para el eje Y.
-  const indexByLevel = new Map<number, number>();
-  const nodes: Node[] = [];
-
-  for (const t of tickets) {
-    const levelInfo = dagLevels.find((d) => d.id === t.id)!;
-    const level = levelInfo.isCycle ? 0 : levelInfo.level;
-    const idx = indexByLevel.get(level) ?? 0;
-    indexByLevel.set(level, idx + 1);
-
-    const colCount = countByLevel.get(level) ?? 1;
-    const totalHeight = (colCount - 1) * NODE_GAP_Y;
-
-    nodes.push({
+  const byId = new Map(tickets.map((t) => [t.id, t]));
+  const nodes: Node[] = tickets.map((t) => ({
+    id: t.id,
+    type: "story",
+    position: { x: 0, y: 0 },
+    data: {
       id: t.id,
-      type: "story",
-      position: {
-        x: level * LEVEL_GAP_X,
-        y: idx * NODE_GAP_Y - totalHeight / 2,
-      },
-      data: {
-        id: t.id,
-        title: t.title,
-        status: t.status,
-        runId: t.run_id,
-        onOpenRun,
-      } satisfies StoryNodeData,
-    });
-  }
+      title: t.title,
+      status: t.status,
+      sprint: (t as { sprint_id?: string }).sprint_id,
+      runId: t.run_id,
+      onOpenRun,
+    } satisfies StoryNodeData,
+  }));
 
-  // Edges: dep → story (directed left→right)
   const edges: Edge[] = [];
-  const ticketById = new Map(tickets.map((t) => [t.id, t]));
-
   for (const t of tickets) {
     for (const depId of t.deps) {
-      if (!ticketById.has(depId)) continue;
+      if (!byId.has(depId)) continue;
       edges.push({
         id: `${depId}->${t.id}`,
         source: depId,
         target: t.id,
         animated: t.status === "running",
-        style: { stroke: "var(--stroke-strong)", strokeWidth: 1.5 },
-        markerEnd: { type: "arrowclosed", color: "var(--ink4)" },
+        style: { stroke: "rgba(13,13,15,0.18)", strokeWidth: 1.5 },
+        markerEnd: { type: "arrowclosed", color: "#8a8a92" } as Edge["markerEnd"],
       });
     }
   }
-
   return { nodes, edges };
 }
 
+// layoutDagre returns the nodes positioned by a dagre hierarchical layout.
+function layoutDagre(nodes: Node[], edges: Edge[], dir: Dir): Node[] {
+  const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: dir, nodesep: 28, ranksep: 90, marginx: 20, marginy: 20 });
+  nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
+  edges.forEach((e) => g.setEdge(e.source, e.target));
+  Dagre.layout(g);
+  return nodes.map((n) => {
+    const p = g.node(n.id);
+    return {
+      ...n,
+      position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 },
+      targetPosition: dir === "LR" ? Position.Left : Position.Top,
+      sourcePosition: dir === "LR" ? Position.Right : Position.Bottom,
+    };
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Componente exportado
+// Interactive graph
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface DepGraphProps {
@@ -219,40 +173,91 @@ interface DepGraphProps {
 }
 
 function DepGraphInner({ tickets, onOpenRun }: DepGraphProps) {
-  const { nodes, edges } = buildGraph(tickets, onOpenRun);
+  const base = useMemo(() => buildElements(tickets, onOpenRun), [tickets, onOpenRun]);
+  const [dir, setDir] = useState<Dir>("LR");
+  const [fullscreen, setFullscreen] = useState(false);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const { fitView } = useReactFlow();
+
+  // (Re)apply the dagre auto-layout — also the "Auto-layout" button action.
+  const relayout = useCallback(
+    (d: Dir = dir) => {
+      setNodes(layoutDagre(base.nodes, base.edges, d));
+      setEdges(base.edges);
+      requestAnimationFrame(() => fitView({ padding: 0.18, duration: 400 }));
+    },
+    [base, dir, setNodes, setEdges, fitView],
+  );
+
+  // Initial layout + whenever the ticket set changes.
+  useEffect(() => {
+    relayout(dir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base]);
+
+  // Refit when entering/leaving full-screen (the viewport size changed).
+  useEffect(() => {
+    const id = requestAnimationFrame(() => fitView({ padding: 0.18, duration: 300 }));
+    return () => cancelAnimationFrame(id);
+  }, [fullscreen, fitView]);
+
+  // Escape closes full-screen.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFullscreen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
+  function flipDir() {
+    const next: Dir = dir === "LR" ? "TB" : "LR";
+    setDir(next);
+    relayout(next);
+  }
 
   return (
-    <div
-      className="dag"
-      style={{ height: 420, padding: 0, overflow: "hidden" }}
-    >
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={NODE_TYPES}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.3}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background color="var(--stroke-strong)" gap={20} size={1} />
-        <Controls
-          style={{ boxShadow: "none", border: "1px solid var(--stroke-strong)", borderRadius: 8 }}
-        />
-        <MiniMap
-          style={{
-            background: "var(--bg2)",
-            border: "1px solid var(--stroke)",
-            borderRadius: 8,
-          }}
-          nodeColor={(n) => {
-            const status = (n.data as StoryNodeData).status;
-            const s = STATUS_STYLE[status] ?? STATUS_STYLE.backlog;
-            return s.border.replace("1.5px solid ", "");
-          }}
-        />
-      </ReactFlow>
+    <div className={`dag-wrap${fullscreen ? " full" : ""}`}>
+      <div className="dag-toolbar">
+        <button className="dag-btn" onClick={() => relayout()} title="Reorganizar (auto-layout)">
+          ⤢ Auto-layout
+        </button>
+        <button className="dag-btn" onClick={() => fitView({ padding: 0.18, duration: 400 })} title="Ajustar a pantalla">
+          ⊡ Ajustar
+        </button>
+        <button className="dag-btn" onClick={flipDir} title="Cambiar dirección">
+          {dir === "LR" ? "↳ Horizontal" : "↴ Vertical"}
+        </button>
+        <button className="dag-btn primary" onClick={() => setFullscreen((v) => !v)}>
+          {fullscreen ? "✕ Salir" : "⛶ Pantalla completa"}
+        </button>
+      </div>
+      <div className="dag-canvas">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={NODE_TYPES}
+          fitView
+          fitViewOptions={{ padding: 0.18 }}
+          minZoom={0.2}
+          maxZoom={2}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="rgba(13,13,15,0.10)" gap={22} size={1} />
+          <Controls style={{ boxShadow: "none", border: "1px solid var(--stroke-strong)", borderRadius: 8 }} />
+          <MiniMap
+            pannable
+            zoomable
+            style={{ background: "var(--bg2)", border: "1px solid var(--stroke)", borderRadius: 8 }}
+            nodeColor={(n) => {
+              const s = STATUS_STYLE[(n.data as StoryNodeData).status] ?? STATUS_STYLE.backlog;
+              return s.border.replace("1.5px solid ", "");
+            }}
+          />
+        </ReactFlow>
+      </div>
     </div>
   );
 }
