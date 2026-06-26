@@ -180,6 +180,66 @@ nav a.on .ic {
 .proj .nm span:last-child {
   color: var(--ink4);
 }
+.proj .nm span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Selector de proyecto (multi-tenant, Wave 2): el .proj es el trigger; el menú
+   se abre hacia arriba (el switcher vive al fondo del sidebar). */
+.proj-switch {
+  margin-top: auto;
+  position: relative;
+}
+.proj-switch .proj {
+  margin-top: 0;
+}
+.proj-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 40;
+}
+.proj-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+.proj-opt:hover {
+  background: var(--bg2);
+}
+.proj-opt.on {
+  color: var(--accent);
+}
+.proj-opt-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proj-opt-check {
+  color: var(--accent);
+  flex: none;
+}
 
 main {
   display: flex;

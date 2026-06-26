@@ -12,21 +12,26 @@ import { useEffect, useState } from "react";
 import * as api from "./api";
 import type { ApiMode, CreateDesignRunInput, CreateStoryInput } from "./api";
 import { subscribe } from "./ws";
-import type { RegistryKind, RunEvent } from "./types";
+import type { ProjectSettings, RegistryKind, RunEvent } from "./types";
 
 export const qk = {
   mode: ["mode"] as const,
-  runs: ["runs"] as const,
+  // Las queries scopeadas por proyecto (Wave 2) llevan el id en la key para que
+  // cambiar de proyecto refetchee en vez de servir caché del proyecto anterior.
+  runs: (project?: string | null) => ["runs", project ?? null] as const,
   run: (id: string) => ["run", id] as const,
   events: (id: string) => ["events", id] as const,
-  stats: ["stats"] as const,
+  stats: (project?: string | null) => ["stats", project ?? null] as const,
+  spendToday: (project?: string | null) => ["spend-today", project ?? null] as const,
   control: ["control"] as const,
-  notifications: ["notifications"] as const,
+  notifications: (project?: string | null) => ["notifications", project ?? null] as const,
   registryList: (kind: RegistryKind) => ["registry", kind] as const,
   registryItem: (kind: RegistryKind, id: string) => ["registry", kind, id] as const,
   settings: ["settings"] as const,
-  metrics: ["metrics"] as const,
-  tickets: ["tickets"] as const,
+  projectSettings: (id: string | null) => ["projectSettings", id] as const,
+  metrics: (project?: string | null) => ["metrics", project ?? null] as const,
+  tickets: (project?: string | null) => ["tickets", project ?? null] as const,
+  readySprints: (project?: string | null) => ["readySprints", project ?? null] as const,
   epics: ["epics"] as const,
   projects: ["projects"] as const,
 };
@@ -39,8 +44,12 @@ export function useApiMode() {
   });
 }
 
-export function useRuns() {
-  return useQuery({ queryKey: qk.runs, queryFn: () => api.listRuns(), refetchInterval: 8000 });
+export function useRuns(project?: string | null) {
+  return useQuery({
+    queryKey: qk.runs(project),
+    queryFn: () => api.listRuns({ project: project ?? undefined }),
+    refetchInterval: 8000,
+  });
 }
 
 export function useRun(id: string | null) {
@@ -51,20 +60,32 @@ export function useRun(id: string | null) {
   });
 }
 
-export function useStats() {
-  return useQuery({ queryKey: qk.stats, queryFn: () => api.getStats(), refetchInterval: 10000 });
+export function useStats(project?: string | null) {
+  return useQuery({
+    queryKey: qk.stats(project),
+    queryFn: () => api.getStats(project ?? undefined),
+    refetchInterval: 10000,
+  });
 }
 
-export function useSpendToday() {
-  return useQuery({ queryKey: ["spend-today"], queryFn: () => api.getSpendToday(), refetchInterval: 15000 });
+export function useSpendToday(project?: string | null) {
+  return useQuery({
+    queryKey: qk.spendToday(project),
+    queryFn: () => api.getSpendToday(project ?? undefined),
+    refetchInterval: 15000,
+  });
 }
 
 export function useControlStatus() {
   return useQuery({ queryKey: qk.control, queryFn: () => api.getControlStatus() });
 }
 
-export function useNotifications() {
-  return useQuery({ queryKey: qk.notifications, queryFn: () => api.getNotifications(), refetchInterval: 10000 });
+export function useNotifications(project?: string | null) {
+  return useQuery({
+    queryKey: qk.notifications(project),
+    queryFn: () => api.getNotifications(project ?? undefined),
+    refetchInterval: 10000,
+  });
 }
 
 // ── Mutaciones ────────────────────────────────────────────────────────────────
@@ -74,9 +95,10 @@ function useRunAction<Args extends unknown[]>(fn: (...args: Args) => Promise<unk
   return useMutation({
     mutationFn: (args: Args) => fn(...args),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.runs });
-      qc.invalidateQueries({ queryKey: qk.stats });
-      qc.invalidateQueries({ queryKey: qk.notifications });
+      // Prefijo (sin el id de proyecto) → invalida todas las variantes scopeadas.
+      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
     },
     onError: (err: unknown) => {
       // Surfaceamos el error en consola; el objeto de error queda en mutation.error
@@ -142,9 +164,9 @@ export function useRealtime() {
         ev.type === "run.cancelled" ||
         ev.type === "run.awaiting_approval"
       ) {
-        qc.invalidateQueries({ queryKey: qk.runs });
-        qc.invalidateQueries({ queryKey: qk.stats });
-        qc.invalidateQueries({ queryKey: qk.notifications });
+        qc.invalidateQueries({ queryKey: ["runs"] });
+        qc.invalidateQueries({ queryKey: ["stats"] });
+        qc.invalidateQueries({ queryKey: ["notifications"] });
       }
     });
     return off;
@@ -215,22 +237,52 @@ export function useSaveSettings() {
   });
 }
 
+// ── Per-project settings hooks (Wave 2) ───────────────────────────────────────
+// execution_unit + merge_mode del proyecto activo. GET/PUT /projects/{id}/settings.
+
+export function useProjectSettings(projectId: string | null) {
+  return useQuery({
+    queryKey: qk.projectSettings(projectId),
+    queryFn: () => api.getProjectSettings(projectId as string),
+    enabled: !!projectId,
+  });
+}
+
+export function useSaveProjectSettings(projectId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ProjectSettings) =>
+      api.saveProjectSettings(projectId as string, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.projectSettings(projectId) });
+    },
+  });
+}
+
 // ── Metrics hook ──────────────────────────────────────────────────────────────
 
-export function useMetrics() {
+export function useMetrics(project?: string | null) {
   return useQuery({
-    queryKey: qk.metrics,
-    queryFn: () => api.getMetrics(),
+    queryKey: qk.metrics(project),
+    queryFn: () => api.getMetrics(project ?? undefined),
     refetchInterval: 15000,
   });
 }
 
 // ── Tickets hook (orquestador) ────────────────────────────────────────────────
 
-export function useTickets() {
+export function useTickets(project?: string | null) {
   return useQuery({
-    queryKey: qk.tickets,
-    queryFn: () => api.listTickets(),
+    queryKey: qk.tickets(project),
+    queryFn: () => api.listTickets(project ?? undefined),
+    refetchInterval: 10000,
+  });
+}
+
+export function useReadySprints(project?: string | null) {
+  return useQuery({
+    queryKey: qk.readySprints(project),
+    queryFn: () => api.readySprints(project ?? undefined),
     refetchInterval: 10000,
   });
 }
@@ -248,8 +300,9 @@ export function useCreateStory() {
   return useMutation({
     mutationFn: (input: CreateStoryInput) => api.createStory(input),
     onSuccess: () => {
-      // Invalida tickets para que la nueva story aparezca en tabla y DAG.
-      qc.invalidateQueries({ queryKey: qk.tickets });
+      // Invalida tickets (todas las variantes scopeadas) para que la nueva story
+      // aparezca en tabla y DAG.
+      qc.invalidateQueries({ queryKey: ["tickets"] });
     },
   });
 }

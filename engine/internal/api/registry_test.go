@@ -206,70 +206,58 @@ func TestSettings(t *testing.T) {
 	}
 }
 
-// TestExecutionUnitSetting: execution_unit defaults to "sprint", accepts "story",
-// and rejects an unknown value with 400 (without corrupting the stored value).
-func TestExecutionUnitSetting(t *testing.T) {
+// TestGlobalSettingsHasNoExecutionFields: execution_unit/merge_mode/merge_policy
+// were REMOVED from the global settings surface (audit A2 — they are now
+// per-project). The global GET must not carry them anymore.
+func TestGlobalSettingsHasNoExecutionFields(t *testing.T) {
 	base, _, _ := testKernel(t)
-
-	// Default must be "sprint".
 	_, d := do(t, "GET", base+"/settings", nil)
-	if !strings.Contains(string(d), `"execution_unit":"sprint"`) {
-		t.Fatalf("default execution_unit should be sprint, got: %s", d)
-	}
-
-	// Switch to story.
-	if resp, d := do(t, "PUT", base+"/settings", map[string]any{
-		"execution_unit": "story",
-	}); resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT execution_unit=story = %d: %s", resp.StatusCode, d)
-	}
-	_, d = do(t, "GET", base+"/settings", nil)
-	if !strings.Contains(string(d), `"execution_unit":"story"`) {
-		t.Fatalf("execution_unit did not persist as story: %s", d)
-	}
-
-	// An invalid value is a 400 and must NOT change the stored value.
-	if resp, _ := do(t, "PUT", base+"/settings", map[string]any{
-		"execution_unit": "epic",
-	}); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("invalid execution_unit should be 400, got %d", resp.StatusCode)
-	}
-	_, d = do(t, "GET", base+"/settings", nil)
-	if !strings.Contains(string(d), `"execution_unit":"story"`) {
-		t.Fatalf("rejected PUT corrupted stored execution_unit: %s", d)
+	for _, field := range []string{"execution_unit", "merge_mode", "merge_policy"} {
+		if strings.Contains(string(d), `"`+field+`"`) {
+			t.Fatalf("global settings still expose %q (should be per-project now): %s", field, d)
+		}
 	}
 }
 
-// TestMergeModeSetting: merge_mode defaults to "manual", accepts "auto", and
-// rejects an unknown value with 400 (without corrupting the stored value).
-func TestMergeModeSetting(t *testing.T) {
+// TestProjectSettings: per-project execution_unit/merge_mode round-trip on the
+// default project — defaults sprint/manual, accept story/auto, reject unknowns
+// with 400 without corrupting the stored value (audit A2).
+func TestProjectSettings(t *testing.T) {
 	base, _, _ := testKernel(t)
+	url := base + "/projects/default/settings"
 
-	// Default must be "manual".
-	_, d := do(t, "GET", base+"/settings", nil)
-	if !strings.Contains(string(d), `"merge_mode":"manual"`) {
-		t.Fatalf("default merge_mode should be manual, got: %s", d)
+	// Defaults.
+	resp, d := do(t, "GET", url, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d: %s", url, resp.StatusCode, d)
+	}
+	if !strings.Contains(string(d), `"execution_unit":"sprint"`) || !strings.Contains(string(d), `"merge_mode":"manual"`) {
+		t.Fatalf("default project settings should be sprint/manual, got: %s", d)
 	}
 
-	// Switch to auto.
-	if resp, d := do(t, "PUT", base+"/settings", map[string]any{
-		"merge_mode": "auto",
-	}); resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT merge_mode=auto = %d: %s", resp.StatusCode, d)
+	// Switch both.
+	if resp, d := do(t, "PUT", url, map[string]any{"execution_unit": "story", "merge_mode": "auto"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT settings = %d: %s", resp.StatusCode, d)
 	}
-	_, d = do(t, "GET", base+"/settings", nil)
-	if !strings.Contains(string(d), `"merge_mode":"auto"`) {
-		t.Fatalf("merge_mode did not persist as auto: %s", d)
+	_, d = do(t, "GET", url, nil)
+	if !strings.Contains(string(d), `"execution_unit":"story"`) || !strings.Contains(string(d), `"merge_mode":"auto"`) {
+		t.Fatalf("settings did not persist story/auto: %s", d)
 	}
 
-	// An invalid value is a 400 and must NOT change the stored value.
-	if resp, _ := do(t, "PUT", base+"/settings", map[string]any{
-		"merge_mode": "rebase",
-	}); resp.StatusCode != http.StatusBadRequest {
+	// Invalid values are 400 and must NOT corrupt the stored value.
+	if resp, _ := do(t, "PUT", url, map[string]any{"execution_unit": "epic"}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid execution_unit should be 400, got %d", resp.StatusCode)
+	}
+	if resp, _ := do(t, "PUT", url, map[string]any{"merge_mode": "rebase"}); resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid merge_mode should be 400, got %d", resp.StatusCode)
 	}
-	_, d = do(t, "GET", base+"/settings", nil)
-	if !strings.Contains(string(d), `"merge_mode":"auto"`) {
-		t.Fatalf("rejected PUT corrupted stored merge_mode: %s", d)
+	_, d = do(t, "GET", url, nil)
+	if !strings.Contains(string(d), `"execution_unit":"story"`) || !strings.Contains(string(d), `"merge_mode":"auto"`) {
+		t.Fatalf("rejected PUT corrupted stored settings: %s", d)
+	}
+
+	// Unknown project → 404.
+	if resp, _ := do(t, "GET", base+"/projects/nope/settings", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("settings for unknown project should be 404, got %d", resp.StatusCode)
 	}
 }

@@ -85,11 +85,13 @@ type Epic struct {
 	Description string `json:"description"`
 }
 
-// Sprint is a time-box that Stories can be assigned to.
+// Sprint is a time-box that Stories can be assigned to. ProjectID scopes the
+// sprint to its project (audit A1); empty defaults to DefaultProjectID on create.
 type Sprint struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Goal string `json:"goal"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Goal      string `json:"goal"`
+	ProjectID string `json:"project_id"`
 }
 
 // Story is the unit of work. epic_id and sprint_id are optional. deps is the
@@ -112,7 +114,16 @@ type Story struct {
 	// run finishes (status → in_review) so the merge-reconcile loop can check
 	// whether that PR has been merged before advancing the story to done.
 	PRURL string `json:"pr_url,omitempty"`
+	// ProjectID scopes the story to its project (audit A1). Stories created via
+	// POST carry it; stories published via ticket_publish inherit the design run's
+	// project_id. Empty defaults to DefaultProjectID on create.
+	ProjectID string `json:"project_id,omitempty"`
 }
+
+// DefaultProjectID is the project that pre-multi-tenant stories/sprints are
+// backfilled to so single-tenant backlogs survive the migration. It mirrors
+// store.DefaultProjectID (the same "default" project the kernel uses).
+const DefaultProjectID = "default"
 
 const schema = `
 CREATE TABLE IF NOT EXISTS epics (
@@ -122,23 +133,25 @@ CREATE TABLE IF NOT EXISTS epics (
 );
 
 CREATE TABLE IF NOT EXISTS sprints (
-  id   TEXT PRIMARY KEY,
-  name TEXT NOT NULL DEFAULT '',
-  goal TEXT NOT NULL DEFAULT ''
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL DEFAULT '',
+  goal       TEXT NOT NULL DEFAULT '',
+  project_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS stories (
-  id        TEXT PRIMARY KEY,
-  epic_id   TEXT NOT NULL DEFAULT '',
-  sprint_id TEXT NOT NULL DEFAULT '',
-  title     TEXT NOT NULL DEFAULT '',
-  body      TEXT NOT NULL DEFAULT '',
-  accept    TEXT NOT NULL DEFAULT '',
-  owner     TEXT NOT NULL DEFAULT '',
-  status    TEXT NOT NULL DEFAULT 'backlog',
-  run_id    TEXT NOT NULL DEFAULT '',
-  repo      TEXT NOT NULL DEFAULT '',
-  pr_url    TEXT NOT NULL DEFAULT ''
+  id         TEXT PRIMARY KEY,
+  epic_id    TEXT NOT NULL DEFAULT '',
+  sprint_id  TEXT NOT NULL DEFAULT '',
+  title      TEXT NOT NULL DEFAULT '',
+  body       TEXT NOT NULL DEFAULT '',
+  accept     TEXT NOT NULL DEFAULT '',
+  owner      TEXT NOT NULL DEFAULT '',
+  status     TEXT NOT NULL DEFAULT 'backlog',
+  run_id     TEXT NOT NULL DEFAULT '',
+  repo       TEXT NOT NULL DEFAULT '',
+  pr_url     TEXT NOT NULL DEFAULT '',
+  project_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS story_deps (
@@ -158,6 +171,14 @@ const migrationAddRepo = `ALTER TABLE stories ADD COLUMN repo TEXT NOT NULL DEFA
 // migrationAddPRURL adds the pr_url column to databases predating the merge-gated
 // lifecycle. Same swallow-on-duplicate contract as migrationAddRepo.
 const migrationAddPRURL = `ALTER TABLE stories ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''`
+
+// projectIDMigrations add the project_id column to stories and sprints on DBs
+// predating multi-tenancy (audit A1). Same swallow-on-duplicate contract as the
+// repo/pr_url migrations; existing rows are then backfilled to DefaultProjectID.
+var projectIDMigrations = []string{
+	`ALTER TABLE stories ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE sprints ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
+}
 
 // Store is the ticket store backed by a sqlite database.
 type Store struct {
@@ -193,6 +214,21 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(migrationAddPRURL); err != nil && !isDuplicateColumn(err) {
 		db.Close()
 		return nil, fmt.Errorf("migrate stories.pr_url: %w", err)
+	}
+	// Multi-tenancy migration (audit A1): add project_id to stories+sprints and
+	// backfill pre-existing rows to the default project so an existing backlog
+	// keeps working. Idempotent — a duplicate-column error means already migrated.
+	for _, m := range projectIDMigrations {
+		if _, err := db.Exec(m); err != nil && !isDuplicateColumn(err) {
+			db.Close()
+			return nil, fmt.Errorf("migrate project_id: %w", err)
+		}
+	}
+	for _, table := range []string{"stories", "sprints"} {
+		if _, err := db.Exec(`UPDATE `+table+` SET project_id=? WHERE project_id=''`, DefaultProjectID); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("backfill default project: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -248,14 +284,30 @@ func (s *Store) CreateSprint(sp Sprint) error {
 	if sp.ID == "" {
 		return errors.New("sprint id is required")
 	}
-	_, err := s.db.Exec(`INSERT INTO sprints(id, name, goal) VALUES(?,?,?)`,
-		sp.ID, sp.Name, sp.Goal)
+	if sp.ProjectID == "" {
+		sp.ProjectID = DefaultProjectID // back-compat: an unscoped sprint joins the default project
+	}
+	_, err := s.db.Exec(`INSERT INTO sprints(id, name, goal, project_id) VALUES(?,?,?,?)`,
+		sp.ID, sp.Name, sp.Goal, sp.ProjectID)
 	return err
 }
 
 // ListSprints returns all sprints ordered by id.
 func (s *Store) ListSprints() ([]Sprint, error) {
-	rows, err := s.db.Query(`SELECT id, name, goal FROM sprints ORDER BY id ASC`)
+	return s.listSprints("")
+}
+
+// listSprints returns sprints, optionally scoped to projectID (empty = all
+// projects, for admin/back-compat), ordered by id.
+func (s *Store) listSprints(projectID string) ([]Sprint, error) {
+	q := `SELECT id, name, goal, project_id FROM sprints`
+	var args []any
+	if projectID != "" {
+		q += ` WHERE project_id=?`
+		args = append(args, projectID)
+	}
+	q += ` ORDER BY id ASC`
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +315,7 @@ func (s *Store) ListSprints() ([]Sprint, error) {
 	var out []Sprint
 	for rows.Next() {
 		var sp Sprint
-		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Goal); err != nil {
+		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Goal, &sp.ProjectID); err != nil {
 			return nil, err
 		}
 		out = append(out, sp)
@@ -280,6 +332,9 @@ func (s *Store) CreateStory(st Story) error {
 	}
 	if st.Status == "" {
 		st.Status = StatusBacklog
+	}
+	if st.ProjectID == "" {
+		st.ProjectID = DefaultProjectID // back-compat: an unscoped story joins the default project
 	}
 	// Reject a self-dependency up front: it never resolves (a story can't be its own
 	// "done" prerequisite) and would deadlock readiness forever (H7).
@@ -301,9 +356,9 @@ func (s *Store) CreateStory(st Story) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		st.ID, st.EpicID, st.SprintID, st.Title, st.Body, st.Accept, st.Owner, string(st.Status), st.RunID, st.Repo, st.PRURL)
+	_, err = tx.Exec(`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		st.ID, st.EpicID, st.SprintID, st.Title, st.Body, st.Accept, st.Owner, string(st.Status), st.RunID, st.Repo, st.PRURL, st.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -318,9 +373,9 @@ func (s *Store) CreateStory(st Story) error {
 // GetStory loads a Story by id, including its deps.
 func (s *Store) GetStory(id string) (Story, error) {
 	var st Story
-	err := s.db.QueryRow(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
+	err := s.db.QueryRow(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id
 		FROM stories WHERE id=?`, id).
-		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL)
+		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Story{}, ErrNotFound
 	}
@@ -335,10 +390,24 @@ func (s *Store) GetStory(id string) (Story, error) {
 	return st, nil
 }
 
-// ListStories returns all stories with their deps.
+// ListStories returns all stories with their deps. To scope to one project use
+// ListStoriesByProject.
 func (s *Store) ListStories() ([]Story, error) {
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
-		FROM stories ORDER BY id ASC`)
+	return s.ListStoriesByProject("")
+}
+
+// ListStoriesByProject returns stories scoped to projectID (empty = all projects,
+// for admin/back-compat) with their deps, ordered by id (audit A1).
+func (s *Store) ListStoriesByProject(projectID string) ([]Story, error) {
+	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id
+		FROM stories`
+	var args []any
+	if projectID != "" {
+		q += ` WHERE project_id=?`
+		args = append(args, projectID)
+	}
+	q += ` ORDER BY id ASC`
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +415,7 @@ func (s *Store) ListStories() ([]Story, error) {
 	var out []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID); err != nil {
 			return nil, err
 		}
 		out = append(out, st)
@@ -680,7 +749,7 @@ func reaches(adj map[string][]string, start, target string) bool {
 // A story with no deps is ready immediately when its stored status is backlog.
 func (s *Store) Ready() ([]Story, error) {
 	// Load all backlog stories and check deps in one pass.
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id
 		FROM stories WHERE status='backlog' ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -689,7 +758,7 @@ func (s *Store) Ready() ([]Story, error) {
 	var candidates []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, st)
@@ -728,7 +797,7 @@ func (s *Store) Ready() ([]Story, error) {
 // Ties (no ordering constraint between two stories) are broken stably by id, so
 // the order is deterministic. Returns an empty slice for a sprint with no stories.
 func (s *Store) StoriesBySprint(sprintID string) ([]Story, error) {
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id
 		FROM stories WHERE sprint_id=? ORDER BY id ASC`, sprintID)
 	if err != nil {
 		return nil, err
@@ -737,7 +806,7 @@ func (s *Store) StoriesBySprint(sprintID string) ([]Story, error) {
 	var stories []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID); err != nil {
 			return nil, err
 		}
 		stories = append(stories, st)
@@ -825,7 +894,14 @@ func depsPlaced(need, placed map[string]bool) bool {
 // are resolved inside the single run, so they never block sprint readiness.
 // Sprints with zero stories are skipped.
 func (s *Store) ReadySprints() ([]Sprint, error) {
-	sprints, err := s.ListSprints()
+	return s.ReadySprintsByProject("")
+}
+
+// ReadySprintsByProject is ReadySprints scoped to projectID (empty = all
+// projects, for admin/back-compat) (audit A1). The scheduler fetches a project's
+// ready sprints so each project's work is evaluated under its own settings.
+func (s *Store) ReadySprintsByProject(projectID string) ([]Sprint, error) {
+	sprints, err := s.listSprints(projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -1000,7 +1076,7 @@ func (s *Store) MarkSprintInReview(sprintID, prURL string) error {
 // InReview returns all stories currently in_review (any sprint or loose). The
 // merge-reconcile loop reads these each cycle to check whether their PR merged.
 func (s *Store) InReview() ([]Story, error) {
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id
 		FROM stories WHERE status='in_review' ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -1009,7 +1085,7 @@ func (s *Store) InReview() ([]Story, error) {
 	var out []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID); err != nil {
 			return nil, err
 		}
 		out = append(out, st)

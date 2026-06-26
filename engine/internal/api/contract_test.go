@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"forge/internal/agent"
 	"forge/internal/app"
 	"forge/internal/gate"
+	"forge/internal/httpx"
 )
 
 // testKernel builds an in-process kernel wired to the repo's real registry, with
@@ -41,6 +43,7 @@ func testKernel(t *testing.T) (string, *app.App, context.CancelFunc) {
 	}
 	a, err := app.Build(app.Config{
 		DBPath:         filepath.Join(t.TempDir(), "k.db"),
+		ProjectsDB:     filepath.Join(t.TempDir(), "projects.db"),
 		RegistryRoot:   registryRoot,
 		WorkdirRoot:    t.TempDir(),
 		EngineMode:     "echo",
@@ -348,4 +351,77 @@ func copyTree(src, dst string) error {
 		}
 		return os.WriteFile(target, b, 0o644)
 	})
+}
+
+// TestProjectsOwnerScopedAndFilters: POST /projects stamps owner_id from the auth
+// context; GET /projects returns ONLY that user's projects; ?project= scopes
+// /tickets and /runs (audit A1/A2). The request user is injected via a wrapper
+// since the test server runs the open-mode middleware.
+func TestProjectsOwnerScopedAndFilters(t *testing.T) {
+	_, a, _ := testKernel(t)
+
+	// Wrap the raw server so each request carries a user id taken from a header.
+	userServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if uid := r.Header.Get("X-Test-User"); uid != "" {
+			r = r.WithContext(httpx.WithUserID(r.Context(), uid))
+		}
+		a.Server.ServeHTTP(w, r)
+	}))
+	t.Cleanup(userServer.Close)
+	base := userServer.URL
+
+	create := func(user, name string) {
+		body, _ := json.Marshal(map[string]any{"name": name, "repo": "https://github.com/acme/" + name})
+		req, _ := http.NewRequest("POST", base+"/projects", bytes.NewReader(body))
+		req.Header.Set("X-Test-User", user)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("POST /projects (%s) = %d: %s", user, resp.StatusCode, data)
+		}
+		var p map[string]any
+		_ = json.Unmarshal(data, &p)
+		if p["owner_id"] != user {
+			t.Fatalf("created project owner_id: got %v, want %s", p["owner_id"], user)
+		}
+	}
+	create("usr-1", "a1")
+	create("usr-1", "a2")
+	create("usr-2", "b1")
+
+	list := func(user string) []any {
+		req, _ := http.NewRequest("GET", base+"/projects", nil)
+		req.Header.Set("X-Test-User", user)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var out struct {
+			Projects []any `json:"projects"`
+		}
+		_ = json.Unmarshal(data, &out)
+		return out.Projects
+	}
+	if got := list("usr-1"); len(got) != 2 {
+		t.Fatalf("usr-1 GET /projects: got %d, want 2 (owner-scoped)", len(got))
+	}
+	if got := list("usr-2"); len(got) != 1 {
+		t.Fatalf("usr-2 GET /projects: got %d, want 1 (owner-scoped)", len(got))
+	}
+
+	// ?project= filter on /runs returns only that project's runs (none here for a
+	// made-up id) — the endpoint must accept the param and scope, not 400.
+	resp, d := do(t, "GET", userServer.URL+"/runs?project=nonesuch", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /runs?project= = %d: %s", resp.StatusCode, d)
+	}
+	if !strings.Contains(string(d), `"runs":[]`) {
+		t.Fatalf("project-scoped /runs for unknown project should be empty, got: %s", d)
+	}
 }

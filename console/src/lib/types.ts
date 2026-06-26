@@ -160,6 +160,9 @@ export interface AgentAuth {
   secret: string; // may be "••••••••" when masked
 }
 
+// GLOBAL settings (por instancia del control-plane): solo conexiones · seguridad ·
+// sandbox · CORS. execution_unit, merge_mode y merge_policy salieron de aquí en Wave 2
+// → ahora son PER-PROYECTO (ver ProjectSettings, GET/PUT /projects/{id}/settings).
 export interface SettingsPayload {
   mcp: McpConnection[];
   agent_auth: AgentAuth;
@@ -167,12 +170,13 @@ export interface SettingsPayload {
     runtime: string;
     image: string;
   };
-  merge_policy: {
-    low_risk: string;   // "automerge"
-    high_risk: string;  // "human_gate"
-  };
-  execution_unit: string; // "sprint" (default, 1 PR/sprint) | "story" (1 PR/story)
-  merge_mode: string; // "manual" (default, human merges PR) | "auto" (factory merges)
+}
+
+// PER-PROJECT settings (GET/PUT /projects/{id}/settings, Wave 2). Cómo la fábrica
+// ejecuta el trabajo de ESTE proyecto: la unidad de PR y quién mergea.
+export interface ProjectSettings {
+  execution_unit: "sprint" | "story"; // "sprint" (default, 1 PR/sprint) | "story" (1 PR/story)
+  merge_mode: "manual" | "auto"; // "manual" (default, humano mergea) | "auto" (la fábrica mergea)
 }
 
 // ── Metrics / Spend ───────────────────────────────────────────────────────────

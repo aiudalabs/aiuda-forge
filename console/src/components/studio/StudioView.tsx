@@ -19,6 +19,7 @@ import {
   useProjects,
   useReject,
 } from "@/lib/hooks";
+import { useActiveProject } from "@/lib/activeProject";
 import { ApiError } from "@/lib/api";
 import type { DesignPhase, DesignRun, DesignStepStatus, Project } from "@/lib/types";
 
@@ -638,6 +639,7 @@ function NewProjectModal({
   const [busy, setBusy] = useState(false);
   const createProject = useCreateProject();
   const createDesignRun = useCreateDesignRun();
+  const { setActiveId } = useActiveProject();
 
   // Cerrar con Escape.
   useEffect(() => {
@@ -665,6 +667,8 @@ function NewProjectModal({
     try {
       // 1. Crear el proyecto (crea el repo en GitHub).
       const proj = await createProject.mutateAsync({ name: trimmedName, description: trimmedDesc });
+      // El proyecto recién creado pasa a ser el activo: la consola se scopea a él.
+      setActiveId(proj.id);
       // 2. Iniciar el run de diseño vinculado al proyecto.
       const run = await createDesignRun.mutateAsync({
         project_id: proj.id,

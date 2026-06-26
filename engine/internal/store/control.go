@@ -84,7 +84,7 @@ func (s *Store) ReopenRun(runID string) error {
 	if _, err := tx.Exec(`UPDATE runs SET status=?, updated_at=? WHERE id=?`, string(StatusRunning), now, runID); err != nil {
 		return err
 	}
-	if err := emitTx(tx, runID, "", EventRunStatusChanged, map[string]any{"from": run.Status, "to": StatusRunning, "reason": "retry"}, now); err != nil {
+	if err := emitTx(tx, runID, "", run.ProjectID, EventRunStatusChanged, map[string]any{"from": run.Status, "to": StatusRunning, "reason": "retry"}, now); err != nil {
 		return err
 	}
 	return tx.Commit()

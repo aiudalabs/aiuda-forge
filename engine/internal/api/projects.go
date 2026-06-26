@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	github "forge/internal/github"
+	"forge/internal/httpx"
 	"forge/internal/projects"
 )
 
@@ -43,6 +44,9 @@ func (s *Server) needProjects(h http.HandlerFunc) http.HandlerFunc {
 type createProjectReq struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// Repo is optional: when supplied, the project adopts that existing GitHub
+	// repo (validated) instead of creating a new one.
+	Repo string `json:"repo"`
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
@@ -56,24 +60,38 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug := toSlug(req.Name)
-	org := s.ghOrg()
 
-	gh := github.New()
-	repoURL, err := gh.CreateRepo(r.Context(), org, slug, req.Description, true)
-	if err != nil {
-		if errors.Is(err, github.ErrRepoExists) {
-			httpErr(w, http.StatusConflict, "github repo already exists: "+org+"/"+slug)
+	// Adopt the supplied repo (validated at the boundary, audit C5) or create a
+	// fresh GitHub repo under the org.
+	repoURL := req.Repo
+	if repoURL != "" {
+		if err := httpx.ValidateRemote(repoURL); err != nil {
+			httpErr(w, http.StatusBadRequest, "invalid repo: "+err.Error())
 			return
 		}
-		httpErr(w, http.StatusInternalServerError, "create github repo: "+err.Error())
-		return
+	} else {
+		org := s.ghOrg()
+		gh := github.New()
+		created, err := gh.CreateRepo(r.Context(), org, slug, req.Description, true)
+		if err != nil {
+			if errors.Is(err, github.ErrRepoExists) {
+				httpErr(w, http.StatusConflict, "github repo already exists: "+org+"/"+slug)
+				return
+			}
+			httpErr(w, http.StatusInternalServerError, "create github repo: "+err.Error())
+			return
+		}
+		repoURL = created
+		if err := gh.EnsureDevBranch(r.Context(), repoURL); err != nil {
+			// Non-fatal: the repo is created; the caller can retry branch creation.
+			_ = err // do not block 201
+		}
 	}
 
-	if err := gh.EnsureDevBranch(r.Context(), repoURL); err != nil {
-		// Non-fatal: the repo is created; log the error in the detail but still persist.
-		// The caller can retry branch creation manually if needed.
-		_ = err // surfaced via project record; do not block 201
-	}
+	// owner_id is the authenticated user the auth middleware resolved (audit A1).
+	// Empty in open/dev mode or for a service-token caller — the project is then
+	// unowned, which is acceptable for single-user/local use.
+	ownerID := httpx.UserIDFromContext(r.Context())
 
 	id := slug + "-" + shortID()
 	p := projects.Project{
@@ -81,6 +99,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		Name:        req.Name,
 		Description: req.Description,
 		Repo:        repoURL,
+		OwnerID:     ownerID,
+		// ExecutionUnit/MergeMode default to sprint/manual in the store.
 	}
 	created, err := s.Projects.Create(p)
 	if err != nil {
@@ -97,7 +117,19 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 // ---- GET /projects ----------------------------------------------------------
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	list, err := s.Projects.List()
+	// Owner-scoping (audit A1): a logged-in user sees ONLY their own projects. A
+	// service-token caller (the orchestrator) or open/dev mode resolves to no user
+	// and sees all projects — they are trusted/admin contexts, not a browser user.
+	ownerID := httpx.UserIDFromContext(r.Context())
+	var (
+		list []projects.Project
+		err  error
+	)
+	if ownerID != "" {
+		list, err = s.Projects.ListByOwner(ownerID)
+	} else {
+		list, err = s.Projects.List()
+	}
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -106,6 +138,44 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		list = []projects.Project{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": list})
+}
+
+// ---- GET /projects/{id}/settings, PUT /projects/{id}/settings ---------------
+
+func (s *Server) getProjectSettings(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	set, err := s.Projects.GetSettings(id)
+	if err != nil {
+		if errors.Is(err, projects.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, "project not found: "+id)
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, set)
+}
+
+func (s *Server) putProjectSettings(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var in projects.Settings
+	if !readJSON(w, r, &in) {
+		return
+	}
+	out, err := s.Projects.PutSettings(id, in)
+	if err != nil {
+		if errors.Is(err, projects.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, "project not found: "+id)
+			return
+		}
+		if errors.Is(err, projects.ErrInvalid) {
+			httpErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ---- GET /projects/{id} -----------------------------------------------------

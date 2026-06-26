@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -22,7 +23,7 @@ func newTestStore(t *testing.T) *Store {
 
 func seedRunWithTask(t *testing.T, s *Store, runID, taskID string) *Task {
 	t.Helper()
-	if _, err := s.CreateRun(runID, "wf", "{}"); err != nil {
+	if _, err := s.CreateRun(runID, "wf", "", "{}"); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 	task := &Task{ID: taskID, RunID: runID, WorkflowID: "wf", StepID: "s1", Type: "echo"}
@@ -36,7 +37,7 @@ func seedRunWithTask(t *testing.T, s *Store, runID, taskID string) *Task {
 // tasks. Each task must be claimed by exactly one worker (zero double-claims).
 func TestConcurrentClaimNoDoubleClaim(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.CreateRun("run1", "wf", "{}"); err != nil {
+	if _, err := s.CreateRun("run1", "wf", "", "{}"); err != nil {
 		t.Fatal(err)
 	}
 	const ntasks = 50
@@ -209,7 +210,7 @@ func TestHeartbeatKeepsTaskAlive(t *testing.T) {
 // the dependency is DONE.
 func TestDependencyGatesClaim(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.CreateRun("run1", "wf", "{}"); err != nil {
+	if _, err := s.CreateRun("run1", "wf", "", "{}"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.EnqueueTask(&Task{ID: "a", RunID: "run1", WorkflowID: "wf", StepID: "first", Type: "echo"}); err != nil {
@@ -276,4 +277,131 @@ func TestEventsEmittedOnTransition(t *testing.T) {
 	if !created || !toRunning || !toDone {
 		t.Fatalf("missing events: created=%v toRunning=%v toDone=%v (got %d events)", created, toRunning, toDone, len(events))
 	}
+}
+
+// TestRunProjectScoping: runs carry project_id and ListRunsByProject filters by
+// it; tasks and events inherit their run's project (audit A1).
+func TestRunProjectScoping(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, err := s.CreateRun("rA", "wf", "pa", "{}"); err != nil {
+		t.Fatalf("create rA: %v", err)
+	}
+	if _, err := s.CreateRun("rB", "wf", "pb", "{}"); err != nil {
+		t.Fatalf("create rB: %v", err)
+	}
+	// A run created without a project defaults to "default".
+	if _, err := s.CreateRun("rD", "wf", "", "{}"); err != nil {
+		t.Fatalf("create rD: %v", err)
+	}
+
+	pa, err := s.ListRunsByProject("", "pa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pa) != 1 || pa[0].ID != "rA" || pa[0].ProjectID != "pa" {
+		t.Fatalf("ListRunsByProject(pa): got %+v, want [rA@pa]", pa)
+	}
+	if rd, err := s.GetRun("rD"); err != nil || rd.ProjectID != DefaultProjectID {
+		t.Fatalf("default-scoped run: got %+v err=%v, want project_id=%q", rd, err, DefaultProjectID)
+	}
+	all, err := s.ListRuns("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("ListRuns: got %d, want 3", len(all))
+	}
+
+	// A task enqueued under rA inherits project_id "pa", and so do its events.
+	if err := s.EnqueueTask(&Task{ID: "tA", RunID: "rA", WorkflowID: "wf", StepID: "s", Type: "echo"}); err != nil {
+		t.Fatalf("enqueue tA: %v", err)
+	}
+	task, err := s.GetTask("tA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ProjectID != "pa" {
+		t.Fatalf("task project_id: got %q, want pa", task.ProjectID)
+	}
+	evs, err := s.EventsAfter("rA", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) == 0 {
+		t.Fatal("expected at least the run.created event")
+	}
+	for _, e := range evs {
+		if e.ProjectID != "pa" {
+			t.Fatalf("event %s project_id: got %q, want pa", e.Type, e.ProjectID)
+		}
+	}
+}
+
+// TestProjectIDMigrationBackfill: a DB created with the PRE-multi-tenant shape
+// (no project_id columns, an existing run row) must upgrade idempotently on Open
+// and backfill the legacy row to the default project (audit A1).
+func TestProjectIDMigrationBackfill(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	// Build the old schema by hand and insert a pre-migration run + task + event.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = raw.Exec(`
+		CREATE TABLE runs (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, status TEXT NOT NULL,
+			payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+		CREATE TABLE tasks (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, workflow_id TEXT NOT NULL,
+			step_id TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
+			result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0,
+			fence INTEGER NOT NULL DEFAULT 0, depends_on TEXT NOT NULL DEFAULT '[]', wave INTEGER NOT NULL DEFAULT 0,
+			claimed_by TEXT NOT NULL DEFAULT '', heartbeat_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+		CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+			task_id TEXT NOT NULL DEFAULT '', type TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
+		INSERT INTO runs(id, workflow_id, status, payload, created_at, updated_at) VALUES('old-run','wf','DONE','{}',1,1);
+		INSERT INTO tasks(id, run_id, workflow_id, step_id, type, status, created_at, updated_at) VALUES('old-task','old-run','wf','s','echo','DONE',1,1);
+		INSERT INTO events(run_id, task_id, type, data, created_at) VALUES('old-run','old-task','x','{}',1);
+	`)
+	if err != nil {
+		t.Fatalf("seed legacy schema: %v", err)
+	}
+	raw.Close()
+
+	// Open via the store: migrations run, legacy rows are backfilled to "default".
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open (migrate): %v", err)
+	}
+	defer s.Close()
+
+	run, err := s.GetRun("old-run")
+	if err != nil {
+		t.Fatalf("legacy run lost after migration: %v", err)
+	}
+	if run.ProjectID != DefaultProjectID {
+		t.Errorf("legacy run project_id: got %q, want %q", run.ProjectID, DefaultProjectID)
+	}
+	task, err := s.GetTask("old-task")
+	if err != nil {
+		t.Fatalf("legacy task lost: %v", err)
+	}
+	if task.ProjectID != DefaultProjectID {
+		t.Errorf("legacy task project_id: got %q, want %q", task.ProjectID, DefaultProjectID)
+	}
+	evs, err := s.EventsAfter("old-run", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].ProjectID != DefaultProjectID {
+		t.Errorf("legacy event project_id not backfilled: %+v", evs)
+	}
+
+	// Re-Open must be idempotent (no duplicate-column failure).
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("re-open should be idempotent: %v", err)
+	}
+	s2.Close()
 }

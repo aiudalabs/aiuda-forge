@@ -5,6 +5,7 @@
 // Muestra total_cost_usd, cost_by_workflow, cost_by_step, acceptance_rate.
 
 import { useMetrics } from "@/lib/hooks";
+import { useActiveProjectId } from "@/lib/activeProject";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers de formato
@@ -23,7 +24,8 @@ function fmtPct(r: number) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SpendView() {
-  const { data, isLoading, isError } = useMetrics();
+  const projectId = useActiveProjectId();
+  const { data, isLoading, isError } = useMetrics(projectId);
 
   if (isLoading) {
     return (

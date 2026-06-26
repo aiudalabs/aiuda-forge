@@ -96,7 +96,10 @@ func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
 // readySprints handles GET /sprints/ready — sprints that can be fired as a
 // single goal-mode run (≥1 story, all backlog, external deps done).
 func (s *Server) readySprints(w http.ResponseWriter, r *http.Request) {
-	sprints, err := s.Tickets.ReadySprints()
+	// ?project=<id> scopes ready sprints to one project (audit A1/A2) so the
+	// scheduler evaluates each project's sprints under its own settings.
+	project := r.URL.Query().Get("project")
+	sprints, err := s.Tickets.ReadySprintsByProject(project)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -336,24 +339,29 @@ func (s *Server) claimStory(w http.ResponseWriter, r *http.Request) {
 // ticketView is the shape the orchestrator's GET /tickets returns, so the
 // existing UI can read the native store without changes.
 type ticketView struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Status   string   `json:"status"` // derived: backlog stories whose deps are done report "ready"
-	Deps     []string `json:"deps"`
-	RunID    string   `json:"run_id,omitempty"`
-	SprintID string   `json:"sprint_id,omitempty"` // lets the scheduler group running stories by sprint
-	PRURL    string   `json:"pr_url,omitempty"`    // recorded in_review; the reconcile loop checks this PR
-	Repo     string   `json:"repo,omitempty"`      // the repo the PR lives in (needed to address it via gh)
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Status    string   `json:"status"` // derived: backlog stories whose deps are done report "ready"
+	Deps      []string `json:"deps"`
+	RunID     string   `json:"run_id,omitempty"`
+	SprintID  string   `json:"sprint_id,omitempty"`  // lets the scheduler group running stories by sprint
+	PRURL     string   `json:"pr_url,omitempty"`     // recorded in_review; the reconcile loop checks this PR
+	Repo      string   `json:"repo,omitempty"`       // the repo the PR lives in (needed to address it via gh)
+	ProjectID string   `json:"project_id,omitempty"` // lets the scheduler group work by project (audit A1)
 }
 
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
-	stories, err := s.Tickets.ListStories()
+	// ?project=<id> scopes the board to one project (audit A1); absent = all.
+	project := r.URL.Query().Get("project")
+	stories, err := s.Tickets.ListStoriesByProject(project)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Build the ready set for O(1) lookup during the view construction.
+	// Build the ready set for O(1) lookup during the view construction. Ready is
+	// not project-scoped (it's only a membership lookup) — the story list above is
+	// already scoped, so a ready story outside the project is simply never matched.
 	readyStories, err := s.Tickets.Ready()
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
@@ -375,14 +383,15 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			deps = []string{}
 		}
 		views = append(views, ticketView{
-			ID:       st.ID,
-			Title:    st.Title,
-			Status:   status,
-			Deps:     deps,
-			RunID:    st.RunID,
-			SprintID: st.SprintID,
-			PRURL:    st.PRURL,
-			Repo:     st.Repo,
+			ID:        st.ID,
+			Title:     st.Title,
+			Status:    status,
+			Deps:      deps,
+			RunID:     st.RunID,
+			SprintID:  st.SprintID,
+			PRURL:     st.PRURL,
+			Repo:      st.Repo,
+			ProjectID: st.ProjectID,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": views})

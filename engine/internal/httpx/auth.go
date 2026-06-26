@@ -1,9 +1,29 @@
 package httpx
 
 import (
+	"context"
 	"crypto/subtle"
 	"net/http"
 )
+
+// ctxKey is the private context key type for values httpx stashes on a request.
+type ctxKey int
+
+const userIDKey ctxKey = iota
+
+// WithUserID returns a copy of ctx carrying the authenticated user id. Exported
+// so tests can populate it; the middleware calls it after a session validates.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userIDKey, userID)
+}
+
+// UserIDFromContext returns the authenticated user id stashed on the request, or
+// "" when the request was authorized by the service token (no per-user session)
+// or auth is open. Handlers that need an owner (POST/GET /projects) read it here.
+func UserIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(userIDKey).(string)
+	return id
+}
 
 // SessionValidator resolves a session bearer token to a stable user id. It is
 // satisfied by the auth store (UserForToken). Returning a non-nil error means
@@ -64,7 +84,13 @@ func Auth(cfg AuthConfig, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if cfg.authorized(r) {
+		ok, userID := cfg.authorize(r)
+		if ok {
+			// Stash the resolved user id (empty for a service-token caller) so
+			// owner-scoped handlers can read it from the request context.
+			if userID != "" {
+				r = r.WithContext(WithUserID(r.Context(), userID))
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -73,9 +99,10 @@ func Auth(cfg AuthConfig, next http.Handler) http.Handler {
 	})
 }
 
-// authorized reports whether r presents valid credentials: the service token
-// (constant-time compared) or a live session token.
-func (c AuthConfig) authorized(r *http.Request) bool {
+// authorize reports whether r presents valid credentials and, for a session
+// token, the resolved user id. The service token authorizes with userID="" (no
+// per-user identity). A failed auth returns (false, "").
+func (c AuthConfig) authorize(r *http.Request) (ok bool, userID string) {
 	tok := bearerToken(r)
 	// Browser WebSockets cannot set an Authorization header, so the WS upgrade
 	// (and only that path) may carry the token as a ?token= query param. This is
@@ -84,19 +111,19 @@ func (c AuthConfig) authorized(r *http.Request) bool {
 		tok = r.URL.Query().Get("token")
 	}
 	if tok == "" {
-		return false
+		return false, ""
 	}
 	// Service token: constant-time compare so a wrong token can't be timed out.
 	if c.ServiceToken != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(c.ServiceToken)) == 1 {
-		return true
+		return true, ""
 	}
-	// Session token: look it up in the auth store.
+	// Session token: look it up in the auth store and carry the user id forward.
 	if c.Sessions != nil {
-		if _, err := c.Sessions.UserIDForToken(tok); err == nil {
-			return true
+		if id, err := c.Sessions.UserIDForToken(tok); err == nil {
+			return true, id
 		}
 	}
-	return false
+	return false, ""
 }
 
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header,

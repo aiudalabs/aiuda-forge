@@ -64,6 +64,15 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		repo = v
 	}
 
+	// project_id flows from the design run's trigger payload (the console sets it)
+	// through the workflow inputs to here, so a published backlog inherits the
+	// project that designed it (audit A1). Empty falls back to the default project
+	// in CreateStory/CreateSprint (single-project / legacy backlogs).
+	projectID := ""
+	if v, ok := inputs["project_id"].(string); ok {
+		projectID = v
+	}
+
 	full := filepath.Join(workdir, backlogPath)
 	raw, err := os.ReadFile(full)
 	if err != nil {
@@ -105,7 +114,7 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		if sp.ID == "" {
 			continue
 		}
-		if err := r.createSprint(sp.ID, sp.Name, sp.Goal); err != nil {
+		if err := r.createSprint(sp.ID, sp.Name, sp.Goal, projectID); err != nil {
 			return workflow.StepResult{
 				Success: false,
 				Detail:  fmt.Sprintf("ticket_publish: create sprint %s: %v", sp.ID, err),
@@ -117,7 +126,7 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		if s.SprintID == "" || declared[s.SprintID] {
 			continue
 		}
-		if err := r.createSprint(s.SprintID, s.SprintID, ""); err != nil {
+		if err := r.createSprint(s.SprintID, s.SprintID, "", projectID); err != nil {
 			return workflow.StepResult{
 				Success: false,
 				Detail:  fmt.Sprintf("ticket_publish: derive sprint %s: %v", s.SprintID, err),
@@ -132,16 +141,17 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 			continue
 		}
 		err := r.Store.CreateStory(Story{
-			ID:       s.ID,
-			EpicID:   bf.Epic.ID,
-			SprintID: s.SprintID,
-			Title:    s.Title,
-			Body:     s.Body,
-			Accept:   s.Acceptance,
-			Owner:    s.Owner,
-			Deps:     s.Deps,
-			Status:   StatusBacklog,
-			Repo:     repo,
+			ID:        s.ID,
+			EpicID:    bf.Epic.ID,
+			SprintID:  s.SprintID,
+			Title:     s.Title,
+			Body:      s.Body,
+			Accept:    s.Acceptance,
+			Owner:     s.Owner,
+			Deps:      s.Deps,
+			Status:    StatusBacklog,
+			Repo:      repo,
+			ProjectID: projectID,
 		})
 		if err != nil {
 			if isSQLiteConflict(err) {
@@ -182,11 +192,11 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 
 // createSprint inserts a sprint, treating an "already exists" UNIQUE conflict as
 // success so republishing a backlog is idempotent.
-func (r *PublishRunner) createSprint(id, name, goal string) error {
+func (r *PublishRunner) createSprint(id, name, goal, projectID string) error {
 	if name == "" {
 		name = id
 	}
-	if err := r.Store.CreateSprint(Sprint{ID: id, Name: name, Goal: goal}); err != nil && !isSQLiteConflict(err) {
+	if err := r.Store.CreateSprint(Sprint{ID: id, Name: name, Goal: goal, ProjectID: projectID}); err != nil && !isSQLiteConflict(err) {
 		return err
 	}
 	return nil

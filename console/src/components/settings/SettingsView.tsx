@@ -1,12 +1,22 @@
 "use client";
 
-// SETTINGS — conexiones · seguridad · política (doc 16 §2.7).
-// Cableado contra GET/PUT /settings. Los secretos llegan enmascarados (••••••••) y se
-// devuelven sin cambio si el usuario no los edita, para no pisar el valor almacenado.
+// SETTINGS — dos planos (Wave 2, multi-tenant):
+//  · GLOBAL (por instancia): conexiones (MCP) · auth del agente · sandbox. GET/PUT /settings.
+//  · PER-PROYECTO (proyecto activo): unidad de ejecución · modo de merge.
+//    GET/PUT /projects/{id}/settings. execution_unit + merge_mode + merge_policy
+//    SALIERON del plano global — ahora viven por proyecto.
+// Los secretos llegan enmascarados (••••••••) y se devuelven sin cambio si el usuario
+// no los edita, para no pisar el valor almacenado.
 
 import { useEffect, useState } from "react";
-import { useSettings, useSaveSettings } from "@/lib/hooks";
-import type { SettingsPayload } from "@/lib/types";
+import {
+  useSettings,
+  useSaveSettings,
+  useProjectSettings,
+  useSaveProjectSettings,
+} from "@/lib/hooks";
+import { useActiveProject } from "@/lib/activeProject";
+import type { ProjectSettings, SettingsPayload } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -76,7 +86,7 @@ export function SettingsView() {
     <div className="wrap">
       <div className="sectitle">
         <h2>Settings</h2>
-        <span className="c">conexiones · seguridad · política</span>
+        <span className="c">global · conexiones · seguridad · sandbox</span>
         <span className="sp" />
         <button className="btn primary sm" onClick={handleSave} disabled={save.isPending}>
           {save.isPending ? "Guardando…" : "Guardar"}
@@ -105,6 +115,7 @@ export function SettingsView() {
         </div>
       )}
 
+      {/* GLOBAL: conexiones · seguridad · sandbox (por instancia). */}
       <div className="grid3" style={{ gap: 16 }}>
         {/* MCP Connections */}
         <McpSection
@@ -118,30 +129,128 @@ export function SettingsView() {
           onChange={(agent_auth) => setForm((f) => f ? { ...f, agent_auth } : f)}
         />
 
-        {/* Merge Policy */}
-        <MergePolicySection
-          policy={form.merge_policy}
-          onChange={(merge_policy) => setForm((f) => f ? { ...f, merge_policy } : f)}
-        />
-
         {/* Sandbox */}
         <SandboxSection
           sandbox={form.sandbox}
           onChange={(sandbox) => setForm((f) => f ? { ...f, sandbox } : f)}
         />
-
-        {/* Unidad de ejecución */}
-        <ExecutionUnitSection
-          unit={form.execution_unit}
-          onChange={(execution_unit) => setForm((f) => f ? { ...f, execution_unit } : f)}
-        />
-
-        {/* Modo de merge */}
-        <MergeModeSection
-          mode={form.merge_mode}
-          onChange={(merge_mode) => setForm((f) => f ? { ...f, merge_mode } : f)}
-        />
       </div>
+
+      {/* PER-PROYECTO: unidad de ejecución + modo de merge del proyecto activo. */}
+      <ProjectSettingsSection />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sección PER-PROYECTO — execution_unit + merge_mode del proyecto activo
+// (GET/PUT /projects/{id}/settings). Estado local + guardado independiente del
+// formulario global, porque pega contra otro endpoint.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ProjectSettingsSection() {
+  const { project } = useActiveProject();
+  const projectId = project?.id ?? null;
+  const { data, isLoading, isError } = useProjectSettings(projectId);
+  const save = useSaveProjectSettings(projectId);
+
+  const [form, setForm] = useState<ProjectSettings | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Re-sincronizar al cambiar de proyecto o cuando llegan los datos.
+  useEffect(() => {
+    if (data) setForm({ ...data });
+  }, [data]);
+
+  // Limpiar el form al cambiar de proyecto para no mostrar valores del anterior.
+  useEffect(() => {
+    setForm(null);
+    setSaved(false);
+    setSaveError(null);
+  }, [projectId]);
+
+  async function handleSave() {
+    if (!form || !projectId) return;
+    setSaveError(null);
+    setSaved(false);
+    try {
+      await save.mutateAsync(form);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err: unknown) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div className="sectitle">
+        <h2>Proyecto</h2>
+        <span className="c">
+          {project ? `ejecución de ${project.name}` : "ejecución por proyecto"}
+        </span>
+        <span className="sp" />
+        <button
+          className="btn primary sm"
+          onClick={handleSave}
+          disabled={save.isPending || !form || !projectId}
+        >
+          {save.isPending ? "Guardando…" : "Guardar"}
+        </button>
+      </div>
+
+      {saved && (
+        <div className="shellnote" style={{ borderColor: "var(--ok-line, #b8e4c5)", color: "var(--ok, #1a7a3a)" }}>
+          Configuración del proyecto guardada.
+        </div>
+      )}
+
+      {saveError && (
+        <div
+          style={{
+            padding: "8px 12px",
+            background: "var(--err-soft, #fff0f0)",
+            border: "1px solid var(--err-line, #f5c5c5)",
+            borderRadius: 4,
+            fontSize: 12,
+            color: "var(--err, #c00)",
+            marginBottom: 12,
+          }}
+        >
+          {saveError}
+        </div>
+      )}
+
+      {!projectId ? (
+        <div className="placeholder">
+          <div className="ph-ic">✦</div>
+          Selecciona un proyecto para configurar su ejecución.
+        </div>
+      ) : isLoading || !form ? (
+        <div className="placeholder">
+          <div className="ph-ic"><span className="spin" /></div>
+          Cargando configuración del proyecto…
+        </div>
+      ) : isError ? (
+        <div className="placeholder err">
+          <div className="ph-ic">⚠</div>
+          No se pudo cargar la configuración del proyecto.
+        </div>
+      ) : (
+        <div className="grid3" style={{ gap: 16 }}>
+          <ExecutionUnitSection
+            unit={form.execution_unit}
+            onChange={(execution_unit) =>
+              setForm((f) => (f ? { ...f, execution_unit } : f))
+            }
+          />
+          <MergeModeSection
+            mode={form.merge_mode}
+            onChange={(merge_mode) => setForm((f) => (f ? { ...f, merge_mode } : f))}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -257,8 +366,8 @@ function ExecutionUnitSection({
   unit,
   onChange,
 }: {
-  unit: SettingsPayload["execution_unit"];
-  onChange: (v: string) => void;
+  unit: ProjectSettings["execution_unit"];
+  onChange: (v: ProjectSettings["execution_unit"]) => void;
 }) {
   return (
     <div className="card">
@@ -268,7 +377,11 @@ function ExecutionUnitSection({
       </div>
       <div className="field" style={{ marginTop: 10 }}>
         <label>Modo</label>
-        <select className="inp" value={unit} onChange={(e) => onChange(e.target.value)}>
+        <select
+          className="inp"
+          value={unit}
+          onChange={(e) => onChange(e.target.value as ProjectSettings["execution_unit"])}
+        >
           <option value="sprint">por sprint — 1 PR por sprint (goal mode)</option>
           <option value="story">por story — 1 PR por story</option>
         </select>
@@ -286,8 +399,8 @@ function MergeModeSection({
   mode,
   onChange,
 }: {
-  mode: SettingsPayload["merge_mode"];
-  onChange: (v: string) => void;
+  mode: ProjectSettings["merge_mode"];
+  onChange: (v: ProjectSettings["merge_mode"]) => void;
 }) {
   return (
     <div className="card">
@@ -297,7 +410,11 @@ function MergeModeSection({
       </div>
       <div className="field" style={{ marginTop: 10 }}>
         <label>Modo</label>
-        <select className="inp" value={mode} onChange={(e) => onChange(e.target.value)}>
+        <select
+          className="inp"
+          value={mode}
+          onChange={(e) => onChange(e.target.value as ProjectSettings["merge_mode"])}
+        >
           <option value="manual">manual — un humano hace merge en GitHub</option>
           <option value="auto">auto — la fábrica hace merge del PR</option>
         </select>
@@ -306,43 +423,6 @@ function MergeModeSection({
         {mode === "auto"
           ? "El PR ya pasó gate + review; la fábrica lo mergea y desbloquea los dependientes."
           : "El trabajo queda en revisión hasta que alguien mergea el PR; ahí se desbloquean los dependientes."}
-      </div>
-    </div>
-  );
-}
-
-function MergePolicySection({
-  policy,
-  onChange,
-}: {
-  policy: SettingsPayload["merge_policy"];
-  onChange: (v: SettingsPayload["merge_policy"]) => void;
-}) {
-  return (
-    <div className="card">
-      <h3>Política de merge</h3>
-      <div className="role">Por nivel de riesgo.</div>
-      <div className="field" style={{ marginTop: 10 }}>
-        <label>Bajo riesgo</label>
-        <select
-          className="inp"
-          value={policy.low_risk}
-          onChange={(e) => onChange({ ...policy, low_risk: e.target.value })}
-        >
-          <option value="automerge">automerge</option>
-          <option value="human_gate">human_gate</option>
-        </select>
-      </div>
-      <div className="field">
-        <label>Auth / pagos / migrac.</label>
-        <select
-          className="inp"
-          value={policy.high_risk}
-          onChange={(e) => onChange({ ...policy, high_risk: e.target.value })}
-        >
-          <option value="human_gate">human_gate</option>
-          <option value="automerge">automerge</option>
-        </select>
       </div>
     </div>
   );

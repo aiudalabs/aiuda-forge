@@ -985,3 +985,74 @@ func equalSlice(a, b []string) bool {
 	}
 	return true
 }
+
+// TestProjectScoping: stories and ready-sprints filter by project_id (audit A1).
+// ListStoriesByProject / ReadySprintsByProject return only the named project's
+// rows; the no-arg ListStories / ReadySprints return all.
+func TestProjectScoping(t *testing.T) {
+	st := openTemp(t)
+
+	// Two projects, each a sprint with one ready (backlog, no deps) story.
+	if err := st.CreateSprint(tickets.Sprint{ID: "SPA", Name: "A", ProjectID: "pa"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSprint(tickets.Sprint{ID: "SPB", Name: "B", ProjectID: "pb"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateStory(tickets.Story{ID: "A1", Title: "a1", SprintID: "SPA", ProjectID: "pa"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateStory(tickets.Story{ID: "B1", Title: "b1", SprintID: "SPB", ProjectID: "pb"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// ListStoriesByProject is scoped.
+	pa, err := st.ListStoriesByProject("pa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pa) != 1 || pa[0].ID != "A1" || pa[0].ProjectID != "pa" {
+		t.Fatalf("ListStoriesByProject(pa): got %+v, want [A1@pa]", pa)
+	}
+
+	// No-arg ListStories returns both.
+	all, err := st.ListStories()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListStories: got %d, want 2", len(all))
+	}
+
+	// ReadySprintsByProject is scoped; no-arg returns both.
+	rsa, err := st.ReadySprintsByProject("pa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rsa) != 1 || rsa[0].ID != "SPA" {
+		t.Fatalf("ReadySprintsByProject(pa): got %+v, want [SPA]", rsa)
+	}
+	rsAll, err := st.ReadySprints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rsAll) != 2 {
+		t.Fatalf("ReadySprints: got %d ready sprints, want 2", len(rsAll))
+	}
+}
+
+// TestStoryDefaultsToDefaultProject: a story/sprint created without a project_id
+// is backfilled to the default project (back-compat, audit A1).
+func TestStoryDefaultsToDefaultProject(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "X", Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetStory("X")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProjectID != tickets.DefaultProjectID {
+		t.Fatalf("unscoped story project_id: got %q, want %q", got.ProjectID, tickets.DefaultProjectID)
+	}
+}

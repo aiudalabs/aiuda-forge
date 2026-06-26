@@ -55,7 +55,7 @@ func (s *Store) Claim(workerID string) (*Task, error) {
 			string(StatusRunning), newFence, workerID, now, now, t.ID); err != nil {
 			return nil, err
 		}
-		if err := emitTx(tx, t.RunID, t.ID, EventStepStatusChange,
+		if err := emitTx(tx, t.RunID, t.ID, t.ProjectID, EventStepStatusChange,
 			map[string]any{"step": t.StepID, "from": StatusQueued, "to": StatusRunning, "worker": workerID}, now); err != nil {
 			return nil, err
 		}
@@ -107,8 +107,8 @@ func (s *Store) Transition(taskID string, fence int64, to Status, result map[str
 
 	var from Status
 	var curFence int64
-	var runID, stepID string
-	err = tx.QueryRow(`SELECT status, fence, run_id, step_id FROM tasks WHERE id=?`, taskID).Scan(&from, &curFence, &runID, &stepID)
+	var runID, stepID, projectID string
+	err = tx.QueryRow(`SELECT status, fence, run_id, step_id, project_id FROM tasks WHERE id=?`, taskID).Scan(&from, &curFence, &runID, &stepID, &projectID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -146,7 +146,7 @@ func (s *Store) Transition(taskID string, fence int64, to Status, result map[str
 	if errMsg != "" {
 		data["error"] = errMsg
 	}
-	if err := emitTx(tx, runID, taskID, EventStepStatusChange, data, now); err != nil {
+	if err := emitTx(tx, runID, taskID, projectID, EventStepStatusChange, data, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -195,7 +195,7 @@ func (s *Store) ResolveAwaiting(runID, stepID string, to Status, result map[stri
 	if errMsg != "" {
 		data["error"] = errMsg
 	}
-	if err := emitTx(tx, runID, t.ID, EventStepStatusChange, data, now); err != nil {
+	if err := emitTx(tx, runID, t.ID, t.ProjectID, EventStepStatusChange, data, now); err != nil {
 		return nil, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -267,18 +267,18 @@ func (s *Store) RequeueStale(staleMillis int64) (int, error) {
 	}
 	defer tx.Rollback()
 	cutoff := s.now() - staleMillis
-	rows, err := tx.Query(`SELECT id, run_id, step_id, fence FROM tasks WHERE status='RUNNING' AND heartbeat_at < ?`, cutoff)
+	rows, err := tx.Query(`SELECT id, run_id, step_id, project_id, fence FROM tasks WHERE status='RUNNING' AND heartbeat_at < ?`, cutoff)
 	if err != nil {
 		return 0, err
 	}
 	type stale struct {
-		id, runID, stepID string
-		fence             int64
+		id, runID, stepID, projectID string
+		fence                        int64
 	}
 	var found []stale
 	for rows.Next() {
 		var s stale
-		if err := rows.Scan(&s.id, &s.runID, &s.stepID, &s.fence); err != nil {
+		if err := rows.Scan(&s.id, &s.runID, &s.stepID, &s.projectID, &s.fence); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -296,7 +296,7 @@ func (s *Store) RequeueStale(staleMillis int64) (int, error) {
 			string(StatusQueued), newFence, now, st.id); err != nil {
 			return 0, err
 		}
-		if err := emitTx(tx, st.runID, st.id, EventStepStatusChange,
+		if err := emitTx(tx, st.runID, st.id, st.projectID, EventStepStatusChange,
 			map[string]any{"step": st.stepID, "from": StatusRunning, "to": StatusQueued, "reason": "stale"}, now); err != nil {
 			return 0, err
 		}

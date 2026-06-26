@@ -1,6 +1,7 @@
 package projects_test
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -90,12 +91,21 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(list) != 2 {
-		t.Fatalf("list len: got %d, want 2", len(list))
+	// Open auto-creates the "default" backfill project (audit A1), so List returns
+	// it alongside the two created here. Drop it and assert on the rest.
+	var got []projects.Project
+	for _, p := range list {
+		if p.ID == projects.DefaultProjectID {
+			continue
+		}
+		got = append(got, p)
 	}
-	// Ordered by created_at DESC → P2 first.
-	if list[0].ID != "P2" {
-		t.Errorf("first item: got %q, want P2", list[0].ID)
+	if len(got) != 2 {
+		t.Fatalf("list len (excluding default): got %d, want 2", len(got))
+	}
+	// Among the created projects, ordered by created_at DESC → P2 before P1.
+	if got[0].ID != "P2" || got[1].ID != "P1" {
+		t.Errorf("order: got %q,%q, want P2,P1", got[0].ID, got[1].ID)
 	}
 }
 
@@ -106,4 +116,88 @@ func containsStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestListByOwner: GET /projects scoping — ListByOwner returns only one user's
+// projects (audit A1).
+func TestListByOwner(t *testing.T) {
+	st := openTemp(t)
+	mustCreate(t, st, projects.Project{ID: "u1a", Name: "A", OwnerID: "usr-1"})
+	mustCreate(t, st, projects.Project{ID: "u1b", Name: "B", OwnerID: "usr-1"})
+	mustCreate(t, st, projects.Project{ID: "u2a", Name: "C", OwnerID: "usr-2"})
+
+	one, err := st.ListByOwner("usr-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one) != 2 {
+		t.Fatalf("usr-1 should own 2 projects, got %d", len(one))
+	}
+	for _, p := range one {
+		if p.OwnerID != "usr-1" {
+			t.Errorf("leaked project owned by %q into usr-1's list", p.OwnerID)
+		}
+	}
+}
+
+// TestSettingsRoundTripAndValidation: per-project execution settings default to
+// sprint/manual, accept story/auto, and reject unknown values (audit A2).
+func TestSettingsRoundTripAndValidation(t *testing.T) {
+	st := openTemp(t)
+	mustCreate(t, st, projects.Project{ID: "P", Name: "p", OwnerID: "usr-1"})
+
+	got, err := st.GetSettings("P")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExecutionUnit != projects.ExecutionUnitSprint || got.MergeMode != projects.MergeModeManual {
+		t.Fatalf("defaults: got %+v, want sprint/manual", got)
+	}
+
+	out, err := st.PutSettings("P", projects.Settings{ExecutionUnit: "story", MergeMode: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ExecutionUnit != "story" || out.MergeMode != "auto" {
+		t.Fatalf("round-trip: got %+v, want story/auto", out)
+	}
+
+	if _, err := st.PutSettings("P", projects.Settings{ExecutionUnit: "epic"}); !errors.Is(err, projects.ErrInvalid) {
+		t.Fatalf("invalid execution_unit should be ErrInvalid, got %v", err)
+	}
+	if _, err := st.PutSettings("P", projects.Settings{MergeMode: "rebase"}); !errors.Is(err, projects.ErrInvalid) {
+		t.Fatalf("invalid merge_mode should be ErrInvalid, got %v", err)
+	}
+	// A rejected PUT must not corrupt the stored value.
+	after, _ := st.GetSettings("P")
+	if after.ExecutionUnit != "story" || after.MergeMode != "auto" {
+		t.Fatalf("rejected PUT corrupted settings: %+v", after)
+	}
+
+	if _, err := st.GetSettings("nope"); !errors.Is(err, projects.ErrNotFound) {
+		t.Fatalf("settings for unknown project should be ErrNotFound, got %v", err)
+	}
+}
+
+// TestDefaultProjectExists: Open always materializes the "default" backfill
+// project (owner_id="") so pre-multi-tenant data has a real row to point at.
+func TestDefaultProjectExists(t *testing.T) {
+	st := openTemp(t)
+	d, err := st.Get(projects.DefaultProjectID)
+	if err != nil {
+		t.Fatalf("default project should exist: %v", err)
+	}
+	if d.OwnerID != "" {
+		t.Errorf("default project owner_id should be empty, got %q", d.OwnerID)
+	}
+	if d.ExecutionUnit != projects.ExecutionUnitSprint || d.MergeMode != projects.MergeModeManual {
+		t.Errorf("default project settings: got %s/%s, want sprint/manual", d.ExecutionUnit, d.MergeMode)
+	}
+}
+
+func mustCreate(t *testing.T, st *projects.Store, p projects.Project) {
+	t.Helper()
+	if _, err := st.Create(p); err != nil {
+		t.Fatalf("create %s: %v", p.ID, err)
+	}
 }

@@ -1,14 +1,18 @@
 // Package settings is a small file-backed store for control-plane configuration
-// the UI edits: MCP connections (JIRA/GitHub), agent auth, sandbox, and the
-// merge policy by risk. It is config — NOT execution — so it lives in the
-// control plane next to the registry, not in the kernel. Secret-shaped fields
-// are never returned in clear (Masked()).
+// the UI edits: MCP connections (JIRA/GitHub), agent auth, and sandbox. It is
+// config — NOT execution — so it lives in the control plane next to the registry,
+// not in the kernel. Secret-shaped fields are never returned in clear (Masked()).
+//
+// Execution settings (execution_unit, merge_mode) are NO LONGER global: they were
+// moved to per-project storage (internal/projects, audit A2) so two projects can
+// run under different modes concurrently. The dead merge_policy field (the
+// `approval: risk-policy` factory step is a Wave-6 no-op — never wired) was
+// removed entirely.
 package settings
 
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,7 +22,8 @@ import (
 // distinguish a bad request from a server fault and answer 400 instead of 500.
 var ErrInvalid = errors.New("invalid settings")
 
-// Settings is the editable configuration surface (doc 16 §2.7).
+// Settings is the editable GLOBAL configuration surface: MCP, agent auth, and
+// sandbox only. Per-project execution settings live in internal/projects.
 type Settings struct {
 	// MCP connections, e.g. {"github": {"connected": true, "repo": "nmlemus/x"}}.
 	MCP map[string]map[string]any `json:"mcp"`
@@ -27,41 +32,6 @@ type Settings struct {
 	AgentAuth AgentAuth `json:"agent_auth"`
 	// Sandbox runtime config (docker|local · gVisor · image · egress allowlist).
 	Sandbox map[string]any `json:"sandbox"`
-	// Merge policy by lane/risk: {"low":"automerge","auth":"human_gate"}.
-	MergePolicy map[string]string `json:"merge_policy"`
-	// ExecutionUnit selects how the orchestrator batches work into runs:
-	//   "sprint" (default) — a whole sprint is implemented in ONE run → ONE PR.
-	//   "story"            — one run/PR per story (the original per-story behavior).
-	ExecutionUnit string `json:"execution_unit"`
-	// MergeMode selects who merges a run's PR before its dependents unblock:
-	//   "manual" (default) — a human merges the PR on GitHub; the scheduler then
-	//                        detects the merge and advances the work to done.
-	//   "auto"             — the scheduler merges the (already-reviewed) PR itself.
-	// A dependent never launches until the prerequisite's PR is MERGED regardless
-	// of this setting — merge_mode only decides whether that merge is automatic.
-	MergeMode string `json:"merge_mode"`
-}
-
-// Execution-unit modes. "sprint" is the default (goal mode).
-const (
-	ExecutionUnitSprint = "sprint"
-	ExecutionUnitStory  = "story"
-)
-
-// Merge modes. "manual" is the default (a human merges the PR on GitHub).
-const (
-	MergeModeManual = "manual"
-	MergeModeAuto   = "auto"
-)
-
-// validExecutionUnit reports whether v is an accepted execution_unit value.
-func validExecutionUnit(v string) bool {
-	return v == ExecutionUnitSprint || v == ExecutionUnitStory
-}
-
-// validMergeMode reports whether v is an accepted merge_mode value.
-func validMergeMode(v string) bool {
-	return v == MergeModeManual || v == MergeModeAuto
 }
 
 // AgentAuth holds how the agent authenticates. Secret never crosses to clients.
@@ -88,26 +58,14 @@ func Open(path string) (*Store, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	// Backfill for settings files written before execution_unit existed: an empty
-	// value means "unset" → default to sprint (goal mode).
-	if st.s.ExecutionUnit == "" {
-		st.s.ExecutionUnit = ExecutionUnitSprint
-	}
-	// Backfill merge_mode for files written before it existed → manual (human merge).
-	if st.s.MergeMode == "" {
-		st.s.MergeMode = MergeModeManual
-	}
 	return st, nil
 }
 
 func defaults() Settings {
 	return Settings{
-		MCP:           map[string]map[string]any{},
-		AgentAuth:     AgentAuth{Mode: "subscription"},
-		Sandbox:       map[string]any{"runtime": "docker", "egress": "allowlist"},
-		MergePolicy:   map[string]string{"low": "automerge", "high": "human_gate"},
-		ExecutionUnit: ExecutionUnitSprint, // default: goal mode (whole sprint per run)
-		MergeMode:     MergeModeManual,     // default: a human merges the PR on GitHub
+		MCP:       map[string]map[string]any{},
+		AgentAuth: AgentAuth{Mode: "subscription"},
+		Sandbox:   map[string]any{"runtime": "docker", "egress": "allowlist"},
 	}
 }
 
@@ -138,28 +96,6 @@ func (st *Store) Put(in Settings) (Settings, error) {
 	}
 	if in.Sandbox != nil {
 		st.s.Sandbox = in.Sandbox
-	}
-	if in.MergePolicy != nil {
-		st.s.MergePolicy = in.MergePolicy
-	}
-	// execution_unit: an empty value means "unchanged"; a present value must be
-	// one of the accepted modes — reject anything else so the orchestrator never
-	// reads a garbage mode.
-	if in.ExecutionUnit != "" {
-		if !validExecutionUnit(in.ExecutionUnit) {
-			return Settings{}, fmt.Errorf("%w: execution_unit %q must be %q or %q",
-				ErrInvalid, in.ExecutionUnit, ExecutionUnitSprint, ExecutionUnitStory)
-		}
-		st.s.ExecutionUnit = in.ExecutionUnit
-	}
-	// merge_mode: same contract as execution_unit — empty means "unchanged",
-	// a present value must be one of the accepted modes.
-	if in.MergeMode != "" {
-		if !validMergeMode(in.MergeMode) {
-			return Settings{}, fmt.Errorf("%w: merge_mode %q must be %q or %q",
-				ErrInvalid, in.MergeMode, MergeModeManual, MergeModeAuto)
-		}
-		st.s.MergeMode = in.MergeMode
 	}
 	if in.AgentAuth.Mode != "" {
 		st.s.AgentAuth.Mode = in.AgentAuth.Mode

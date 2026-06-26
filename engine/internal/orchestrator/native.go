@@ -17,14 +17,15 @@ import (
 
 // NativeTicket is the orchestrator's view of a control-plane story.
 type NativeTicket struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Status   string   `json:"status"`
-	RunID    string   `json:"run_id"`
-	Deps     []string `json:"deps"`
-	SprintID string   `json:"sprint_id"` // empty in story mode; set when the story belongs to a sprint
-	PRURL    string   `json:"pr_url"`    // recorded when in_review; the PR the reconcile loop checks for merge
-	Repo     string   `json:"repo"`      // the repo the PR lives in (needed to address it via gh)
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Status    string   `json:"status"`
+	RunID     string   `json:"run_id"`
+	Deps      []string `json:"deps"`
+	SprintID  string   `json:"sprint_id"`  // empty in story mode; set when the story belongs to a sprint
+	PRURL     string   `json:"pr_url"`     // recorded when in_review; the PR the reconcile loop checks for merge
+	Repo      string   `json:"repo"`       // the repo the PR lives in (needed to address it via gh)
+	ProjectID string   `json:"project_id"` // the project this work belongs to (audit A1) — drives per-project settings
 }
 
 // StoryProvider is the interface through which NativeScheduler reads stories
@@ -89,21 +90,23 @@ type StoryProvider interface {
 
 // NativeSprint is the scheduler's view of a sprint for goal-mode batching.
 type NativeSprint struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Goal string `json:"goal"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Goal      string `json:"goal"`
+	ProjectID string `json:"project_id"` // the project this sprint belongs to (audit A1)
 }
 
 // NativeStory is the full story the scheduler passes to a run as context.
 // Repo is the GitHub repository URL the factory agent clones to implement
 // the story; it flows from the design run payload → story.repo → run payload.
 type NativeStory struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	Accept string `json:"acceptance"`
-	Owner  string `json:"owner"`
-	Repo   string `json:"repo"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Accept    string `json:"acceptance"`
+	Owner     string `json:"owner"`
+	Repo      string `json:"repo"`
+	ProjectID string `json:"project_id"` // the project this story belongs to (audit A1) — stamped on factory runs
 }
 
 // NativeHTTPProvider implements StoryProvider against the control-plane HTTP API.
@@ -490,39 +493,150 @@ func terminalFailed(status string) bool {
 	return false
 }
 
-// RunOnce executes a single poll-and-fire cycle. It reads execution_unit from the
-// control plane and dispatches to sprint-batched (goal) mode or per-story mode:
-//
-//   - "sprint" (default): a whole sprint is implemented in ONE run on ONE branch
-//     → ONE PR. ReadySprints are claimed atomically and fired with a combined
-//     "goal mode" ticket; a sprint run's completion advances ALL its stories.
-//   - "story": one run/PR per story (the original behavior).
-//
-// execution_unit is read fresh each cycle so the toggle takes effect without a
-// restart; an unreadable setting falls back to sprint (the default).
-// RunOnce returns the number of actions taken so the loop can reset its backoff.
-func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
-	unit, err := s.cp.ExecutionUnit(ctx)
+// projectMode is a single project's execution settings for one cycle. It is
+// fetched once per project (cached in modeCache) so a project's ready work is all
+// evaluated under the same execution_unit + merge_mode (audit A2).
+type projectMode struct {
+	executionUnit string
+	mergeMode     string
+}
+
+// modeFor returns project's settings, fetching them from the control plane the
+// first time and caching them for the rest of this cycle. An unreadable setting
+// falls back to the safe defaults (sprint + manual) so a transient API blip does
+// not stall or mis-mode a project's work.
+func (s *NativeScheduler) modeFor(ctx context.Context, cache map[string]projectMode, projectID string) projectMode {
+	if m, ok := cache[projectID]; ok {
+		return m
+	}
+	unit, mode, err := s.cp.ProjectSettings(ctx, projectID)
 	if err != nil {
-		log.Printf("native-scheduler: read execution_unit (defaulting to sprint): %v", err)
-		unit = "sprint"
+		log.Printf("native-scheduler: read settings for project %q (defaulting sprint/manual): %v", projectID, err)
 	}
 	if unit == "" {
 		unit = "sprint"
 	}
+	if mode == "" {
+		mode = "manual"
+	}
+	m := projectMode{executionUnit: unit, mergeMode: mode}
+	cache[projectID] = m
+	return m
+}
+
+// RunOnce executes a single poll-and-fire cycle, PER PROJECT (audit A2). Each
+// project's ready story/sprint work is evaluated under THAT project's settings:
+//
+//   - execution_unit "sprint" (default): a whole sprint → ONE run → ONE PR.
+//   - execution_unit "story": one run/PR per story.
+//   - merge_mode "manual" (default): wait for a human merge; "auto": merge it.
+//
+// A python project on sprint+manual and a node project on story+auto are both
+// handled correctly in the same cycle: work is grouped by project_id, and each
+// project's settings are fetched once (modeCache) and applied to its own work.
+//
+// Settings are read fresh each cycle so a toggle takes effect without a restart.
+// RunOnce returns the number of actions taken so the loop can reset its backoff.
+func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
+	modeCache := map[string]projectMode{}
 
 	// Merge-reconcile first: advance any in_review work whose PR has merged (and,
-	// in auto mode, merge the PRs ourselves) BEFORE firing, so a dependent can
-	// unblock in the same cycle its prerequisite's PR lands.
-	actions := s.reconcileMerges(ctx)
+	// per the project's merge_mode, merge the PRs ourselves) BEFORE firing, so a
+	// dependent can unblock in the same cycle its prerequisite's PR lands.
+	actions := s.reconcileMerges(ctx, modeCache)
 
-	var fired int
-	if unit == "story" {
-		fired, err = s.runStoryMode(ctx)
-	} else {
-		fired, err = s.runSprintMode(ctx)
-	}
+	// Fire ready work, grouped by project so each project runs under its own
+	// execution_unit. Both lists are read once and partitioned by project_id.
+	fired, err := s.fireByProject(ctx, modeCache)
 	return actions + fired, err
+}
+
+// fireByProject partitions ready stories and ready sprints by project_id and
+// fires each project's work under that project's execution_unit (audit A2). A
+// story-mode project fires its ready stories one run each; a sprint-mode project
+// fires its ready sprints as goal-mode runs. Completions for running work are
+// advanced first (per project, same modes) so dependents unblock promptly.
+func (s *NativeScheduler) fireByProject(ctx context.Context, modeCache map[string]projectMode) (int, error) {
+	actions := 0
+
+	// Step (a) — advance completions for running work, grouped by project so each
+	// project's running stories/sprints settle under its own execution_unit.
+	running, err := s.provider.Running(ctx)
+	if err != nil {
+		return actions, fmt.Errorf("list running stories: %w", err)
+	}
+	for projectID, rs := range groupByProject(running) {
+		mode := s.modeFor(ctx, modeCache, projectID)
+		a, err := s.advanceRunning(ctx, rs, mode.executionUnit)
+		if err != nil {
+			return actions, err
+		}
+		actions += a
+	}
+
+	// Step (b) — fire ready work per project.
+	ready, err := s.provider.Ready(ctx)
+	if err != nil {
+		return actions, fmt.Errorf("list ready stories: %w", err)
+	}
+	sprints, err := s.provider.ReadySprints(ctx)
+	if err != nil {
+		return actions, fmt.Errorf("list ready sprints: %w", err)
+	}
+
+	readyByProject := groupByProject(ready)
+	sprintsByProject := groupSprintsByProject(sprints)
+
+	// The union of project ids that have any ready work this cycle.
+	projectIDs := map[string]bool{}
+	for pid := range readyByProject {
+		projectIDs[pid] = true
+	}
+	for pid := range sprintsByProject {
+		projectIDs[pid] = true
+	}
+
+	for pid := range projectIDs {
+		mode := s.modeFor(ctx, modeCache, pid)
+		if mode.executionUnit == "story" {
+			actions += s.fireReadyStories(ctx, readyByProject[pid])
+			continue
+		}
+		// Sprint (goal) mode: fire this project's ready sprints.
+		for _, sp := range sprintsByProject[pid] {
+			if s.fireSprint(ctx, sp) {
+				actions++
+			}
+		}
+	}
+	return actions, nil
+}
+
+// groupByProject partitions tickets by project_id. An empty project_id (legacy /
+// not-yet-backfilled rows) groups under the default project so they still fire.
+func groupByProject(tickets []NativeTicket) map[string][]NativeTicket {
+	out := map[string][]NativeTicket{}
+	for _, t := range tickets {
+		pid := t.ProjectID
+		if pid == "" {
+			pid = "default"
+		}
+		out[pid] = append(out[pid], t)
+	}
+	return out
+}
+
+// groupSprintsByProject partitions ready sprints by project_id (default for empty).
+func groupSprintsByProject(sprints []NativeSprint) map[string][]NativeSprint {
+	out := map[string][]NativeSprint{}
+	for _, sp := range sprints {
+		pid := sp.ProjectID
+		if pid == "" {
+			pid = "default"
+		}
+		out[pid] = append(out[pid], sp)
+	}
+	return out
 }
 
 // reconcileMerges advances in_review work toward done based on its PR's merge
@@ -532,11 +646,13 @@ func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 //   - if merge_mode == "auto" AND the PR is still open, MERGES it (the run already
 //     passed gate + review) and marks done in the same cycle.
 //
-// merge_mode is read fresh from the control plane each cycle (like execution_unit),
-// so the toggle takes effect without a restart. A nil gh client or an unrecorded PR
-// leaves the work in_review (manual-merge-by-human is then the only path). Errors
-// are logged and skipped — the work simply waits for the next cycle.
-func (s *NativeScheduler) reconcileMerges(ctx context.Context) int {
+// Each in_review unit is reconciled under ITS OWN project's merge_mode (audit
+// A2): a project on "auto" has its reviewed PRs merged by the scheduler while a
+// project on "manual" waits for a human — in the same cycle. merge_mode is fetched
+// once per project (modeCache) and read fresh each cycle so a toggle takes effect
+// without a restart. A nil gh client or an unrecorded PR leaves the work in_review.
+// Errors are logged and skipped — the work simply waits for the next cycle.
+func (s *NativeScheduler) reconcileMerges(ctx context.Context, modeCache map[string]projectMode) int {
 	if s.gh == nil {
 		return 0
 	}
@@ -548,14 +664,6 @@ func (s *NativeScheduler) reconcileMerges(ctx context.Context) int {
 	if len(inReview) == 0 {
 		return 0
 	}
-	mode, err := s.cp.MergeMode(ctx)
-	if err != nil {
-		log.Printf("native-scheduler: read merge_mode (defaulting to manual): %v", err)
-		mode = "manual"
-	}
-	if mode == "" {
-		mode = "manual"
-	}
 
 	actions := 0
 	seenSprint := map[string]bool{} // a goal-mode sprint shares one PR — reconcile it once
@@ -566,6 +674,12 @@ func (s *NativeScheduler) reconcileMerges(ctx context.Context) int {
 			}
 			seenSprint[t.SprintID] = true
 		}
+		// Apply THIS unit's project merge_mode.
+		pid := t.ProjectID
+		if pid == "" {
+			pid = "default"
+		}
+		mode := s.modeFor(ctx, modeCache, pid).mergeMode
 		if s.reconcileOne(ctx, t, mode) {
 			actions++
 		}
@@ -804,25 +918,23 @@ func prNumberFromURL(prURL string) (int, bool) {
 	return n, true
 }
 
-// runStoryMode is the per-story poll-and-fire cycle:
-//
-//  1. For each running story: check its run's status; if DONE, mark the story
-//     done; if terminal-failed (FAILED/CANCELLED), mark it failed. Stories whose
-//     run is still in progress (RUNNING/QUEUED/AWAITING) are skipped.
-//  2. For each ready story: CLAIM it first (atomic backlog→running), then fire a
-//     run. If the claim returns false (another scheduler got it), skip — this
-//     prevents double-fire under concurrent schedulers.
-//
-// Completing a story advances its status to "done", which unblocks any
-// dependent stories — they will appear in Ready() on the next cycle.
-func (s *NativeScheduler) runStoryMode(ctx context.Context) (int, error) {
-	actions := 0
-	// Step (a) — advance completions before firing so a dep can unblock in the
-	// same cycle that its run finishes (matches the GitHub orchestrator's order).
-	running, err := s.provider.Running(ctx)
-	if err != nil {
-		return actions, fmt.Errorf("list running stories: %w", err)
+// advanceRunning advances completions for a project's running work under its
+// execution_unit (audit A2). A "story"-mode project advances each running story
+// individually; a "sprint"-mode project advances by sprint (a sprint's stories
+// share one run). The advance order runs BEFORE firing in fireByProject so a dep
+// can unblock in the same cycle its run finishes. Returns the number of actions.
+func (s *NativeScheduler) advanceRunning(ctx context.Context, running []NativeTicket, executionUnit string) (int, error) {
+	if executionUnit == "story" {
+		return s.advanceRunningStories(ctx, running), nil
 	}
+	return s.advanceRunningSprints(ctx, running)
+}
+
+// advanceRunningStories is the per-story completion pass: DONE → park in_review
+// (or fail if no mergeable PR, H1); FAILED/CANCELLED → failed; a story running
+// with an empty run_id is reset to backlog (B4 stranded recovery).
+func (s *NativeScheduler) advanceRunningStories(ctx context.Context, running []NativeTicket) int {
+	actions := 0
 	for _, t := range running {
 		if t.RunID == "" {
 			// B4: a running story with no run_id never had its run recorded (a
@@ -858,12 +970,15 @@ func (s *NativeScheduler) runStoryMode(ctx context.Context) (int, error) {
 		}
 		// In-progress statuses (RUNNING, QUEUED, AWAITING, …): leave it alone.
 	}
+	return actions
+}
 
-	// Step (b) — fire ready stories. Claim-then-fire to prevent double-fire.
-	ready, err := s.provider.Ready(ctx)
-	if err != nil {
-		return actions, fmt.Errorf("list ready stories: %w", err)
-	}
+// fireReadyStories fires a story-mode project's ready stories: CLAIM each
+// (atomic backlog→running) then fire a run. A lost claim (concurrent scheduler)
+// skips the story — preventing double-fire. The story's project_id is stamped on
+// the run payload so the factory run is scoped (audit A1). Returns actions taken.
+func (s *NativeScheduler) fireReadyStories(ctx context.Context, ready []NativeTicket) int {
+	actions := 0
 	for _, t := range ready {
 		// Atomically claim backlog → running before firing. If another scheduler
 		// (or a previous cycle that hasn't flushed yet) already claimed it, skip.
@@ -883,7 +998,9 @@ func (s *NativeScheduler) runStoryMode(ctx context.Context) (int, error) {
 		// repo is passed through so OnSeed can clone the project repository.
 		// agent is the story's owner — lane routing: the runner uses it to pick the
 		// per-lane specialist (python-dev, react-dev…); empty falls back to "dev".
+		// project_id flows from the story onto the run so the factory run is scoped.
 		title, ticket, repo, agent := t.Title, t.Title, "", ""
+		projectID := t.ProjectID
 		if st, gerr := s.provider.GetStory(ctx, t.ID); gerr == nil {
 			title = st.Title
 			ticket = st.Title
@@ -895,13 +1012,17 @@ func (s *NativeScheduler) runStoryMode(ctx context.Context) (int, error) {
 			}
 			repo = st.Repo
 			agent = st.Owner
+			if st.ProjectID != "" {
+				projectID = st.ProjectID
+			}
 		}
 		payload := map[string]any{
-			"story_id": t.ID,
-			"title":    title,
-			"ticket":   ticket,
-			"repo":     repo,
-			"agent":    agent,
+			"story_id":   t.ID,
+			"title":      title,
+			"ticket":     ticket,
+			"repo":       repo,
+			"agent":      agent,
+			"project_id": projectID,
 		}
 		runID, err := s.cp.FireRun(ctx, s.workflow, payload)
 		if err != nil {
@@ -933,7 +1054,7 @@ func (s *NativeScheduler) runStoryMode(ctx context.Context) (int, error) {
 		actions++
 		log.Printf("native-scheduler: story %s claimed and fired — run %s", t.ID, runID)
 	}
-	return actions, nil
+	return actions
 }
 
 // sprintPreamble is the "goal mode" header prepended to a sprint's combined
@@ -956,43 +1077,6 @@ Rules:
 
 Stories (in order):
 `
-
-// runSprintMode is the goal-mode poll-and-fire cycle. It fires a whole sprint as
-// ONE run and advances all of a sprint's stories together:
-//
-//  1. Completion: group running stories by sprint_id; for each sprint with a
-//     recorded run_id, check the run. DONE → MarkSprintDone (all stories done);
-//     FAILED/CANCELLED → MarkSprintFailed. Stories without a sprint (story-mode
-//     leftovers) are advanced individually so a mid-flight mode switch settles.
-//  2. Firing: for each ReadySprint, ClaimSprint atomically (all-backlog→running);
-//     if the claim is lost to a concurrent scheduler, skip. Otherwise build ONE
-//     combined goal-mode ticket from the topo-ordered stories and FireRun once.
-func (s *NativeScheduler) runSprintMode(ctx context.Context) (int, error) {
-	actions := 0
-
-	// Step (a) — advance completions, grouping running stories by sprint.
-	running, err := s.provider.Running(ctx)
-	if err != nil {
-		return actions, fmt.Errorf("list running stories: %w", err)
-	}
-	a, err := s.advanceRunningSprints(ctx, running)
-	if err != nil {
-		return actions, err
-	}
-	actions += a
-
-	// Step (b) — fire ready sprints. Claim-then-fire to prevent double-fire.
-	sprints, err := s.provider.ReadySprints(ctx)
-	if err != nil {
-		return actions, fmt.Errorf("list ready sprints: %w", err)
-	}
-	for _, sp := range sprints {
-		if s.fireSprint(ctx, sp) {
-			actions++
-		}
-	}
-	return actions, nil
-}
 
 // advanceRunningSprints groups running stories by sprint_id and, for each sprint
 // whose shared run has reached a terminal state, advances ALL its stories at once.
@@ -1118,10 +1202,16 @@ func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool 
 	ticket := sprintPreamble + renderSprintStories(stories)
 	repo := ""
 	storyIDs := make([]string, len(stories))
+	// All stories in a sprint share one repo and one project. Derive both from the
+	// stories, falling back to the sprint's own project_id (audit A1).
+	projectID := sp.ProjectID
 	for i, st := range stories {
 		storyIDs[i] = st.ID
 		if repo == "" {
-			repo = st.Repo // all stories in a sprint share one repo
+			repo = st.Repo
+		}
+		if projectID == "" {
+			projectID = st.ProjectID
 		}
 	}
 
@@ -1131,12 +1221,13 @@ func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool 
 	agent := commonOwner(stories, sp.ID)
 
 	payload := map[string]any{
-		"sprint_id": sp.ID,
-		"story_ids": storyIDs,
-		"title":     title,
-		"ticket":    ticket,
-		"repo":      repo,
-		"agent":     agent,
+		"sprint_id":  sp.ID,
+		"story_ids":  storyIDs,
+		"title":      title,
+		"ticket":     ticket,
+		"repo":       repo,
+		"agent":      agent,
+		"project_id": projectID,
 	}
 	runID, err := s.cp.FireRun(ctx, s.workflow, payload)
 	if err != nil {

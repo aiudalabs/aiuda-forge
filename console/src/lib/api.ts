@@ -9,6 +9,7 @@
 import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS } from "./config";
 import { authHeaders, handleUnauthorized } from "./auth";
 import {
+  DEFAULT_PROJECT_SETTINGS,
   MOCK_PROJECT,
   mockArtifacts,
   mockControl,
@@ -18,6 +19,7 @@ import {
   mockMetrics,
   mockNotifications,
   mockOrchestratorTickets,
+  mockProjectSettings,
   mockProjects,
   mockRegistryContent,
   mockRegistryIds,
@@ -26,6 +28,7 @@ import {
   mockSettings,
   mockSpendToday,
   mockStats,
+  mockTicketsByProject,
 } from "./mock";
 import type {
   BoardStats,
@@ -38,6 +41,7 @@ import type {
   Notification,
   OrchestratorTicket,
   Project,
+  ProjectSettings,
   RegistryDeleteResponse,
   RegistryKind,
   RegistryListResponse,
@@ -133,6 +137,9 @@ async function rawFetch(path: string, init?: RequestInit): Promise<Response> {
 export async function listRuns(params?: { status?: RunStatus; project?: string }): Promise<Run[]> {
   if (await isMock()) {
     let runs = [...mockRuns];
+    // Scope multi-tenant (Wave 2): el board/runs cuelga de un proyecto. En real el
+    // backend filtra con ?project=; aquí espejamos filtrando por el campo project.
+    if (params?.project) runs = runs.filter((r) => r.project === params.project);
     if (params?.status) runs = runs.filter((r) => r.status === params.status);
     return runs;
   }
@@ -344,11 +351,18 @@ export async function getEvents(id: string, after = 0): Promise<RunEvent[]> {
   return raw.map(mapEvent);
 }
 
-export async function getStats(): Promise<BoardStats> {
+// project= es un query param ADITIVO: el contrato no lista /metrics como scopeado,
+// así que lo pasamos solo cuando hay proyecto activo y el engine puede ignorarlo
+// sin romper. Así las stat-cards reflejan el proyecto activo si el backend lo soporta.
+function metricsPath(project?: string): string {
+  return project ? `/metrics?project=${encodeURIComponent(project)}` : `/metrics`;
+}
+
+export async function getStats(project?: string): Promise<BoardStats> {
   if (await isMock()) return mockStats;
   // GET /metrics trae el desglose; lo mapeamos al resumen del board. by_status
   // cuenta runs por estado. openPRs no está en el contrato del kernel todavía.
-  const m = await http<MetricsPayload>(`/metrics`);
+  const m = await http<MetricsPayload>(metricsPath(project));
   const bs = m.by_status ?? {};
   return {
     running: bs.RUNNING ?? 0,
@@ -363,12 +377,12 @@ export interface SpendToday {
   tokens: string;
 }
 
-export async function getSpendToday(): Promise<SpendToday> {
+export async function getSpendToday(project?: string): Promise<SpendToday> {
   if (await isMock()) return mockSpendToday;
   // GET /metrics → extraemos total_cost_usd y lo mapeamos a SpendToday.
   // Los tokens no están en el contrato actual, así que estimamos de by_step si llegan,
   // o mostramos "—" para no inventar un valor.
-  const m = await http<MetricsPayload>(`/metrics`);
+  const m = await http<MetricsPayload>(metricsPath(project));
   return { cost: m.total_cost_usd, tokens: "—" };
 }
 
@@ -377,11 +391,11 @@ export async function getControlStatus(): Promise<ControlStatus> {
   return http<ControlStatus>(`/control/status`);
 }
 
-export async function getNotifications(): Promise<Notification[]> {
+export async function getNotifications(project?: string): Promise<Notification[]> {
   // Derivadas de runs en AWAITING/FAILED — el kernel no expone /notifications todavía, así que
-  // la campana refleja el estado vivo del board (mock o real). TODO(endpoint): GET /notifications
-  // o derivar del stream del bus (run.awaiting_approval / run.failed).
-  const runs = await listRuns();
+  // la campana refleja el estado vivo del board (mock o real). Scopeada al proyecto activo
+  // (Wave 2). TODO(endpoint): GET /notifications o derivar del stream del bus.
+  const runs = await listRuns({ project });
   const derived = runs
     .filter((r) => r.status === "AWAITING" || r.status === "FAILED")
     .map((r) => {
@@ -396,8 +410,6 @@ export async function getNotifications(): Promise<Notification[]> {
     });
   return derived;
 }
-
-export const DEFAULT_PROJECT = MOCK_PROJECT;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Acciones (mutaciones) — cada una = un endpoint del contrato
@@ -559,16 +571,14 @@ export async function deleteRegistryItem(kind: RegistryKind, id: string): Promis
 // Settings — GET/PUT /settings
 // ─────────────────────────────────────────────────────────────────────────────
 
-// El kernel guarda mcp como mapa {nombre: {...}} y merge_policy con claves
-// low/high; la UI usa una lista de conexiones y low_risk/high_risk. Estos
-// adapters traducen en ambos sentidos sin romper el contrato del backend.
+// El kernel guarda mcp como mapa {nombre: {...}}; la UI usa una lista de conexiones.
+// Estos adapters traducen en ambos sentidos sin romper el contrato del backend.
+// Wave 2: el GLOBAL settings perdió merge_policy, execution_unit y merge_mode — esos
+// son ahora per-proyecto (ver getProjectSettings). Aquí solo mcp · agent_auth · sandbox.
 interface RawSettings {
   mcp?: Record<string, Record<string, unknown>>;
   agent_auth?: { mode?: string; secret?: string };
   sandbox?: { runtime?: string; image?: string; egress?: string };
-  merge_policy?: Record<string, string>;
-  execution_unit?: string;
-  merge_mode?: string;
 }
 
 function settingsFromBackend(r: RawSettings): SettingsPayload {
@@ -581,9 +591,6 @@ function settingsFromBackend(r: RawSettings): SettingsPayload {
     mcp,
     agent_auth: { mode: r.agent_auth?.mode ?? "subscription", secret: r.agent_auth?.secret ?? "" },
     sandbox: { runtime: r.sandbox?.runtime ?? "", image: r.sandbox?.image ?? "" },
-    merge_policy: { low_risk: r.merge_policy?.low ?? "", high_risk: r.merge_policy?.high ?? "" },
-    execution_unit: r.execution_unit ?? "sprint",
-    merge_mode: r.merge_mode ?? "manual",
   };
 }
 
@@ -594,9 +601,6 @@ function settingsToBackend(s: SettingsPayload): RawSettings {
     mcp,
     agent_auth: s.agent_auth,
     sandbox: { runtime: s.sandbox.runtime, image: s.sandbox.image },
-    merge_policy: { low: s.merge_policy.low_risk, high: s.merge_policy.high_risk },
-    execution_unit: s.execution_unit,
-    merge_mode: s.merge_mode,
   };
 }
 
@@ -618,12 +622,47 @@ export async function saveSettings(payload: SettingsPayload): Promise<SettingsPa
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Per-project settings — GET/PUT /projects/{id}/settings (Wave 2)
+// execution_unit + merge_mode viven por proyecto. El payload del backend es plano
+// ({execution_unit, merge_mode}) — sin adapter de shape, solo defaults defensivos.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function projectSettingsFrom(r: Partial<ProjectSettings>): ProjectSettings {
+  return {
+    execution_unit: r.execution_unit === "story" ? "story" : "sprint",
+    merge_mode: r.merge_mode === "auto" ? "auto" : "manual",
+  };
+}
+
+export async function getProjectSettings(projectId: string): Promise<ProjectSettings> {
+  if (await isMock()) {
+    return { ...(mockProjectSettings[projectId] ?? DEFAULT_PROJECT_SETTINGS) };
+  }
+  return projectSettingsFrom(await http<Partial<ProjectSettings>>(`/projects/${projectId}/settings`));
+}
+
+export async function saveProjectSettings(
+  projectId: string,
+  payload: ProjectSettings,
+): Promise<ProjectSettings> {
+  if (await isMock()) {
+    mockProjectSettings[projectId] = { ...payload };
+    return { ...payload };
+  }
+  const saved = await http<Partial<ProjectSettings>>(`/projects/${projectId}/settings`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  return projectSettingsFrom(saved);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Metrics — GET /metrics (control-plane)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function getMetrics(): Promise<MetricsPayload> {
+export async function getMetrics(project?: string): Promise<MetricsPayload> {
   if (await isMock()) return { ...mockMetrics };
-  return http<MetricsPayload>(`/metrics`);
+  return http<MetricsPayload>(metricsPath(project));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -631,12 +670,16 @@ export async function getMetrics(): Promise<MetricsPayload> {
 // y GitHub pasan a ser sync opcional (B2); la UI lee del store propio.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function listTickets(): Promise<OrchestratorTicket[]> {
+export async function listTickets(project?: string): Promise<OrchestratorTicket[]> {
   // Fuente de verdad = el store NATIVO del control-plane (GET /tickets en :8080),
   // no el orquestador. Así la UI es self-contained: lee epics/stories/deps del
-  // store propio. El orquestador/GitHub pasan a ser sync opcional (B2).
-  if (await isMock()) return [...mockOrchestratorTickets];
-  const res = await rawFetch(`/tickets`);
+  // store propio. Scopeada al proyecto activo (Wave 2): GET /tickets?project=<id>.
+  if (await isMock()) {
+    if (project) return [...(mockTicketsByProject[project] ?? [])];
+    return [...mockTicketsByProject[MOCK_PROJECT]];
+  }
+  const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+  const res = await rawFetch(`/tickets${qs}`);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, `GET /tickets → ${res.status} ${body}`);
@@ -644,6 +687,28 @@ export async function listTickets(): Promise<OrchestratorTicket[]> {
   // Toleramos array pelado además de { tickets: [...] }, espejando el patrón de listRuns.
   const json = await res.json();
   return Array.isArray(json) ? json : (json as { tickets?: OrchestratorTicket[] })?.tickets ?? [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sprints listos — GET /sprints/ready?project=<id> (contrato Wave 2)
+// Sprints cuyas deps están resueltas y pueden ejecutarse. El orquestador los toma.
+// La UI aún no tiene una vista dedicada; la función existe para cerrar el contrato y
+// mockearse. En mock derivamos "ready" de los tickets ready del proyecto.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function readySprints(project?: string): Promise<OrchestratorTicket[]> {
+  if (await isMock()) {
+    const list = project ? (mockTicketsByProject[project] ?? []) : mockTicketsByProject[MOCK_PROJECT];
+    return list.filter((t) => t.status === "ready");
+  }
+  const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+  const res = await rawFetch(`/sprints/ready${qs}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(res.status, `GET /sprints/ready → ${res.status} ${body}`);
+  }
+  const json = await res.json();
+  return Array.isArray(json) ? json : (json as { sprints?: OrchestratorTicket[] })?.sprints ?? [];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

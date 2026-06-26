@@ -7,15 +7,17 @@ import { useRouter, usePathname } from "next/navigation";
 import { useState } from "react";
 import { sectionForPath } from "@/lib/sections";
 import { useApiMode, useNotifications, useSpendToday } from "@/lib/hooks";
+import { useActiveProjectId } from "@/lib/activeProject";
 import { logout } from "@/lib/auth";
 
 export function Topbar() {
   const path = usePathname();
   const router = useRouter();
   const section = sectionForPath(path);
-  const { data: spend } = useSpendToday();
+  const projectId = useActiveProjectId();
+  const { data: spend } = useSpendToday(projectId);
   const { data: mode } = useApiMode();
-  const { data: notifications = [] } = useNotifications();
+  const { data: notifications = [] } = useNotifications(projectId);
   const [open, setOpen] = useState(false);
 
   const count = notifications.length;

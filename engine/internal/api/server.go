@@ -102,6 +102,10 @@ func (s *Server) routes() {
 	// Project store. Guarded per-request — Projects may be nil (no ProjectsDB configured).
 	m.HandleFunc("POST /projects", s.needProjects(s.createProject))
 	m.HandleFunc("GET /projects", s.needProjects(s.listProjects))
+	// Per-project settings (audit A2). Registered before "/projects/{id}" patterns
+	// are not needed — Go's ServeMux matches the more specific pattern first.
+	m.HandleFunc("GET /projects/{id}/settings", s.needProjects(s.getProjectSettings))
+	m.HandleFunc("PUT /projects/{id}/settings", s.needProjects(s.putProjectSettings))
 	m.HandleFunc("GET /projects/{id}", s.needProjects(s.getProject))
 
 	// Native ticket store. Registered unconditionally and guarded per-request:
@@ -167,7 +171,10 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	status := store.Status(r.URL.Query().Get("status"))
-	runs, err := s.Store.ListRuns(status)
+	// ?project=<id> scopes the list to one project (audit A1); absent = all
+	// projects (back-compat / admin).
+	project := r.URL.Query().Get("project")
+	runs, err := s.Store.ListRunsByProject(status, project)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return

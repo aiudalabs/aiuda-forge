@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { useCreateStory, useEpics, useTickets } from "@/lib/hooks";
+import { useActiveProjectId } from "@/lib/activeProject";
 import { ApiError } from "@/lib/api";
 import { RunDrawer } from "@/components/board/RunDrawer";
 import { DepGraph } from "@/components/tickets/DepGraph";
@@ -43,7 +44,8 @@ const STATUS_CLASS: Record<TicketStatus, string> = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function TicketsView() {
-  const { data: tickets, isLoading, isError, refetch } = useTickets();
+  const projectId = useActiveProjectId();
+  const { data: tickets, isLoading, isError, refetch } = useTickets(projectId);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [showNewStory, setShowNewStory] = useState(false);
   const [view, setView] = useState<TicketsView>("tabla");

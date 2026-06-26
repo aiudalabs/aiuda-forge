@@ -8,6 +8,7 @@ import { usePathname } from "next/navigation";
 import { AuthGate } from "./AuthGate";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { ActiveProjectProvider } from "@/lib/activeProject";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -15,15 +16,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // La página de login no lleva chrome ni gate (se renderiza sola).
   if (pathname === "/login") return <>{children}</>;
 
+  // ActiveProjectProvider va dentro del gate (carga GET /projects solo autenticado)
+  // y dentro de QueryClientProvider (layout) — useProjects necesita ambos. Scopea
+  // toda la consola al proyecto activo (Wave 2).
   return (
     <AuthGate>
-      <div className="app">
-        <Sidebar />
-        <main>
-          <Topbar />
-          {children}
-        </main>
-      </div>
+      <ActiveProjectProvider>
+        <div className="app">
+          <Sidebar />
+          <main>
+            <Topbar />
+            {children}
+          </main>
+        </div>
+      </ActiveProjectProvider>
     </AuthGate>
   );
 }

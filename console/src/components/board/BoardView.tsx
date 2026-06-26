@@ -10,6 +10,7 @@ import { StatCards } from "./StatCards";
 import { RunCard } from "./RunCard";
 import { RunDrawer } from "./RunDrawer";
 import { useControlStatus, usePause, useResume, useRuns } from "@/lib/hooks";
+import { useActiveProjectId } from "@/lib/activeProject";
 import type { RunStatus } from "@/lib/types";
 
 const STATUS_OPTS: { value: RunStatus | "ALL" | "ATTENTION"; label: string }[] = [
@@ -23,7 +24,8 @@ const STATUS_OPTS: { value: RunStatus | "ALL" | "ATTENTION"; label: string }[] =
 
 export function BoardView() {
   const params = useSearchParams();
-  const { data: runs, isLoading, isError, refetch } = useRuns();
+  const projectId = useActiveProjectId();
+  const { data: runs, isLoading, isError, refetch } = useRuns(projectId);
   const { data: control } = useControlStatus();
   const pause = usePause();
   const resume = useResume();

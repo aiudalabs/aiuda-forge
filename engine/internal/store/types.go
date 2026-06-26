@@ -43,7 +43,8 @@ type Run struct {
 	ID         string `json:"id"`
 	WorkflowID string `json:"workflow_id"`
 	Status     Status `json:"status"`
-	Payload    string `json:"payload"` // trigger payload, JSON
+	Payload    string `json:"payload"`    // trigger payload, JSON
+	ProjectID  string `json:"project_id"` // the project this run belongs to (audit A1)
 	CreatedAt  int64  `json:"created_at"`
 	UpdatedAt  int64  `json:"updated_at"`
 }
@@ -66,6 +67,7 @@ type Task struct {
 	Wave        int      `json:"wave"`
 	ClaimedBy   string   `json:"claimed_by"`
 	HeartbeatAt int64    `json:"heartbeat_at"`
+	ProjectID   string   `json:"project_id"` // the project this task belongs to (audit A1)
 	CreatedAt   int64    `json:"created_at"`
 	UpdatedAt   int64    `json:"updated_at"`
 }
@@ -77,7 +79,8 @@ type Event struct {
 	RunID     string `json:"run_id"`
 	TaskID    string `json:"task_id"`
 	Type      string `json:"type"`
-	Data      string `json:"data"` // JSON
+	Data      string `json:"data"`       // JSON
+	ProjectID string `json:"project_id"` // the project this event belongs to (audit A1)
 	CreatedAt int64  `json:"created_at"`
 }
 

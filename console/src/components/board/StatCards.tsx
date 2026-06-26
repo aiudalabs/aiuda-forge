@@ -1,9 +1,11 @@
 // Stat cards del board (doc 16 §2.1): en ejecución · esperan aprobación · PRs abiertos · costo.
 
 import { useStats } from "@/lib/hooks";
+import { useActiveProjectId } from "@/lib/activeProject";
 
 export function StatCards() {
-  const { data, isLoading } = useStats();
+  const projectId = useActiveProjectId();
+  const { data, isLoading } = useStats(projectId);
   const s = data ?? { running: 0, awaiting: 0, openPRs: 0, projectCost: 0 };
 
   return (

@@ -79,7 +79,12 @@ func (e *Engine) StartRun(workflowID string, trigger map[string]any) (string, er
 	}
 	payload, _ := json.Marshal(trigger)
 	runID := newID("run")
-	if _, err := e.Store.CreateRun(runID, workflowID, string(payload)); err != nil {
+	// A run is scoped to its project (audit A1). The trigger payload carries
+	// project_id — the console sets it on design runs, the factory scheduler on
+	// factory runs. An empty value defaults to the "default" project in the store
+	// (back-compat for echo/local flows that don't carry a project).
+	projectID, _ := trigger["project_id"].(string)
+	if _, err := e.Store.CreateRun(runID, workflowID, projectID, string(payload)); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(e.Workdir(runID), 0o755); err != nil {

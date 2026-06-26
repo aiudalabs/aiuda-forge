@@ -19,17 +19,18 @@ type fakeStoryProvider struct {
 }
 
 type fakeStory struct {
-	id       string
-	title    string
-	status   string // "backlog" | "running" | "done"
-	runID    string
-	deps     []string
-	sprintID string // "" in story-mode fakes; set for sprint-mode tests
-	repo     string
-	body     string
-	accept   string
-	owner    string // lane/agent id; "" in fakes that don't exercise routing
-	prURL    string // recorded when the story moves to in_review
+	id        string
+	title     string
+	status    string // "backlog" | "running" | "done"
+	runID     string
+	deps      []string
+	sprintID  string // "" in story-mode fakes; set for sprint-mode tests
+	repo      string
+	body      string
+	accept    string
+	owner     string // lane/agent id; "" in fakes that don't exercise routing
+	prURL     string // recorded when the story moves to in_review
+	projectID string // "" in single-project fakes; set for per-project (audit A2) tests
 }
 
 func newFakeProvider(stories ...*fakeStory) *fakeStoryProvider {
@@ -54,7 +55,7 @@ func (p *fakeStoryProvider) Ready(_ context.Context) ([]NativeTicket, error) {
 		if !p.depsAllDoneLocked(s.deps) {
 			continue
 		}
-		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status, Deps: s.deps})
+		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status, Deps: s.deps, SprintID: s.sprintID, ProjectID: s.projectID})
 	}
 	return out, nil
 }
@@ -69,7 +70,7 @@ func (p *fakeStoryProvider) Running(_ context.Context) ([]NativeTicket, error) {
 		if s.status != "running" {
 			continue
 		}
-		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status, RunID: s.runID, Deps: s.deps, SprintID: s.sprintID})
+		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status, RunID: s.runID, Deps: s.deps, SprintID: s.sprintID, ProjectID: s.projectID})
 	}
 	return out, nil
 }
@@ -179,7 +180,7 @@ func (p *fakeStoryProvider) InReview(_ context.Context) ([]NativeTicket, error) 
 			continue
 		}
 		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status,
-			RunID: s.runID, Deps: s.deps, SprintID: s.sprintID, PRURL: s.prURL, Repo: s.repo})
+			RunID: s.runID, Deps: s.deps, SprintID: s.sprintID, PRURL: s.prURL, Repo: s.repo, ProjectID: s.projectID})
 	}
 	return out, nil
 }
@@ -192,7 +193,7 @@ func (p *fakeStoryProvider) GetStory(_ context.Context, id string) (NativeStory,
 	if !ok {
 		return NativeStory{}, fmt.Errorf("story %s not found", id)
 	}
-	return NativeStory{ID: id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo, Owner: s.owner}, nil
+	return NativeStory{ID: id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo, Owner: s.owner, ProjectID: s.projectID}, nil
 }
 
 // ---- sprint-batched fake methods --------------------------------------------
@@ -247,7 +248,7 @@ func (p *fakeStoryProvider) ReadySprints(_ context.Context) ([]NativeSprint, err
 			}
 		}
 		if ready {
-			out = append(out, NativeSprint{ID: sid, Name: sid})
+			out = append(out, NativeSprint{ID: sid, Name: sid, ProjectID: ms[0].projectID})
 		}
 	}
 	return out, nil
@@ -264,7 +265,7 @@ func (p *fakeStoryProvider) SprintStories(_ context.Context, sprintID string) ([
 		if s.sprintID != sprintID {
 			continue
 		}
-		out = append(out, NativeStory{ID: s.id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo, Owner: s.owner})
+		out = append(out, NativeStory{ID: s.id, Title: s.title, Body: s.body, Accept: s.accept, Repo: s.repo, Owner: s.owner, ProjectID: s.projectID})
 	}
 	return out, nil
 }
@@ -1205,4 +1206,91 @@ func indexOfSub(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// ---- per-project scheduling (audit A2) --------------------------------------
+
+// TestPerProjectExecutionUnitInOneCycle: two projects with DIFFERENT
+// execution_unit are both handled correctly in the SAME RunOnce cycle — project
+// "py" on story mode fires one run per ready story; project "node" on sprint mode
+// fires ONE goal-mode run for its whole sprint. This is the core A2 guarantee.
+func TestPerProjectExecutionUnitInOneCycle(t *testing.T) {
+	provider := newFakeProvider(
+		// project "py": two loose backlog stories → story mode → two runs.
+		&fakeStory{id: "PY1", title: "py one", status: "backlog", projectID: "py", repo: "github.com/acme/py"},
+		&fakeStory{id: "PY2", title: "py two", status: "backlog", projectID: "py", repo: "github.com/acme/py"},
+		// project "node": one sprint with two stories → sprint mode → ONE run.
+		&fakeStory{id: "ND1", title: "nd one", status: "backlog", projectID: "node", sprintID: "NSP", repo: "github.com/acme/node"},
+		&fakeStory{id: "ND2", title: "nd two", status: "backlog", projectID: "node", sprintID: "NSP", repo: "github.com/acme/node", deps: []string{"ND1"}},
+	)
+	cp := &fakeControlPlane{}
+	cp.setProjectMode("py", "story", "manual")
+	cp.setProjectMode("node", "sprint", "auto")
+	sched := NewNativeScheduler(provider, cp, "factory", nil)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 runs total: PY1, PY2 (story mode) + 1 sprint run for NSP (sprint mode).
+	if cp.firedCount() != 3 {
+		t.Fatalf("want 3 runs (2 story + 1 sprint), got %d", cp.firedCount())
+	}
+
+	// Every fired payload carries the right project_id.
+	storyRuns, sprintRuns := 0, 0
+	for i := 0; i < cp.firedCount(); i++ {
+		p := cp.payloadOf(i)
+		if _, isSprint := p["sprint_id"]; isSprint {
+			sprintRuns++
+			if p["project_id"] != "node" {
+				t.Errorf("sprint run project_id: got %v, want node", p["project_id"])
+			}
+		} else {
+			storyRuns++
+			if p["project_id"] != "py" {
+				t.Errorf("story run project_id: got %v, want py", p["project_id"])
+			}
+		}
+	}
+	if storyRuns != 2 || sprintRuns != 1 {
+		t.Fatalf("want 2 story runs + 1 sprint run, got %d story / %d sprint", storyRuns, sprintRuns)
+	}
+
+	// node's sprint stories are all claimed running and share one run_id.
+	if provider.runIDOf("ND1") != provider.runIDOf("ND2") || provider.runIDOf("ND1") == "" {
+		t.Errorf("node sprint stories should share one run_id, got %q / %q", provider.runIDOf("ND1"), provider.runIDOf("ND2"))
+	}
+}
+
+// TestPerProjectMergeModeInOneCycle: in ONE reconcile cycle a project on "auto"
+// has its reviewed PR merged by the scheduler, while a project on "manual" is left
+// for a human — both in the same cycle (audit A2).
+func TestPerProjectMergeModeInOneCycle(t *testing.T) {
+	provider := newFakeProvider(
+		// auto-project story in_review with an open PR #10 → scheduler merges it.
+		&fakeStory{id: "AUTO", title: "auto", status: "in_review", projectID: "pa", repo: "github.com/acme/a", runID: "rA", prURL: "github.com/acme/a/pull/10"},
+		// manual-project story in_review with an open PR #20 → must NOT be merged.
+		&fakeStory{id: "MAN", title: "man", status: "in_review", projectID: "pm", repo: "github.com/acme/m", runID: "rM", prURL: "github.com/acme/m/pull/20"},
+	)
+	cp := &fakeControlPlane{}
+	cp.setProjectMode("pa", "story", "auto")
+	cp.setProjectMode("pm", "story", "manual")
+	gh := newFakeMergeChecker() // neither PR is merged yet
+
+	sched := NewNativeScheduler(provider, cp, "factory", gh)
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exactly the auto-project's PR (#10) is merged; the manual one is untouched.
+	if gh.mergeCalls != 1 || len(gh.mergedNumbers) != 1 || gh.mergedNumbers[0] != 10 {
+		t.Fatalf("auto project PR #10 should be the only merge, got calls=%d numbers=%v", gh.mergeCalls, gh.mergedNumbers)
+	}
+	if got := provider.statusOf("AUTO"); got != "done" {
+		t.Errorf("auto-merged story should be done, got %s", got)
+	}
+	if got := provider.statusOf("MAN"); got != "in_review" {
+		t.Errorf("manual story must stay in_review (await human merge), got %s", got)
+	}
 }

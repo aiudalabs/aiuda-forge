@@ -44,11 +44,12 @@ func (f *fakeGitHub) setIssue(issue Issue) {
 type fakeControlPlane struct {
 	mu           sync.Mutex
 	runs         []firedRun
-	statuses     map[string]string // runID → status; absent → "RUNNING"
-	execUnit     string            // execution_unit reported to RunOnce; "" → "story"
-	mergeMode    string            // merge_mode reported to RunOnce; "" → "manual"
-	prURLs       map[string]string // runID → PR URL the run "opened"
-	prStepFailed map[string]bool   // runID → pr step FAILED (H1: DONE run, no usable PR)
+	statuses     map[string]string      // runID → status; absent → "RUNNING"
+	execUnit     string                 // default execution_unit reported to RunOnce; "" → "story"
+	mergeMode    string                 // default merge_mode reported to RunOnce; "" → "manual"
+	projectModes map[string]projectMode // per-project settings override (audit A2); absent → defaults above
+	prURLs       map[string]string      // runID → PR URL the run "opened"
+	prStepFailed map[string]bool        // runID → pr step FAILED (H1: DONE run, no usable PR)
 }
 
 type firedRun struct {
@@ -73,26 +74,35 @@ func (f *fakeControlPlane) RunStatus(_ context.Context, runID string) (string, e
 	return "RUNNING", nil
 }
 
-// ExecutionUnit reports the configured mode. Defaults to "story" in tests so the
-// existing per-story tests keep their semantics; sprint tests set execUnit.
-func (f *fakeControlPlane) ExecutionUnit(_ context.Context) (string, error) {
+// ProjectSettings reports a project's execution_unit + merge_mode (audit A2). A
+// per-project override in projectModes wins; otherwise the fake's defaults apply
+// (execUnit "" → "story" so existing per-story tests keep their semantics;
+// mergeMode "" → "manual" so the scheduler does not auto-merge unless opted in).
+func (f *fakeControlPlane) ProjectSettings(_ context.Context, projectID string) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.execUnit == "" {
-		return "story", nil
+	if m, ok := f.projectModes[projectID]; ok {
+		return m.executionUnit, m.mergeMode, nil
 	}
-	return f.execUnit, nil
+	unit := f.execUnit
+	if unit == "" {
+		unit = "story"
+	}
+	mode := f.mergeMode
+	if mode == "" {
+		mode = "manual"
+	}
+	return unit, mode, nil
 }
 
-// MergeMode reports the configured merge mode. Defaults to "manual" in tests so
-// the scheduler does not auto-merge unless a test opts in.
-func (f *fakeControlPlane) MergeMode(_ context.Context) (string, error) {
+// setProjectMode overrides the settings for one project (audit A2 per-project tests).
+func (f *fakeControlPlane) setProjectMode(projectID, executionUnit, mergeMode string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.mergeMode == "" {
-		return "manual", nil
+	if f.projectModes == nil {
+		f.projectModes = map[string]projectMode{}
 	}
-	return f.mergeMode, nil
+	f.projectModes[projectID] = projectMode{executionUnit: executionUnit, mergeMode: mergeMode}
 }
 
 // RunPRURL reports the PR URL recorded for a run (empty if none set).

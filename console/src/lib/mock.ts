@@ -11,13 +11,17 @@ import type {
   Notification,
   OrchestratorTicket,
   Project,
+  ProjectSettings,
   Run,
   RunDetail,
   RunEvent,
   SettingsPayload,
 } from "./types";
 
-export const MOCK_PROJECT = "manitaspty";
+// Proyecto activo por defecto en modo mock = el primer proyecto de mockProjects.
+// Los runs/tickets de ejemplo cuelgan de este id para que el switcher multi-tenant
+// (Wave 2) muestre datos al filtrar por ?project=proj_001.
+export const MOCK_PROJECT = "proj_001";
 
 export const mockRuns: Run[] = [
   {
@@ -94,6 +98,32 @@ export const mockRuns: Run[] = [
       { kind: "review", label: "review ⚠ 1 nota", tone: "warn" },
     ],
     project: MOCK_PROJECT,
+  },
+  // Runs de OTRO proyecto (proj_002) — demuestran el scoping del switcher: solo
+  // aparecen cuando el proyecto activo es asistencia-escolar.
+  {
+    id: "run_b3d10a77",
+    ticket: { id: "S1-02", title: "Escáner QR — Flutter camera plugin" },
+    workflow: "factory-plus",
+    status: "RUNNING",
+    agent: "dev",
+    model: "opus",
+    currentStep: "implement",
+    cost: 0.22,
+    badges: [],
+    project: "proj_002",
+  },
+  {
+    id: "run_c8e21b90",
+    ticket: { id: "S1-01", title: "Auth docente — Firebase Auth email/password" },
+    workflow: "factory",
+    status: "DONE",
+    agent: "dev",
+    model: "opus",
+    cost: 0.27,
+    pr: { number: 1 },
+    badges: [{ kind: "gate", label: "gate ✓", tone: "ok" }],
+    project: "proj_002",
   },
 ];
 
@@ -265,10 +295,18 @@ export const mockSettings: SettingsPayload = {
     runtime: "docker · gVisor (runsc)",
     image: "vibeforge-agent",
   },
-  merge_policy: {
-    low_risk: "automerge",
-    high_risk: "human_gate",
-  },
+};
+
+// ── Per-project settings mock ─────────────────────────────────────────────────
+// GET/PUT /projects/{id}/settings. execution_unit + merge_mode por proyecto.
+export const mockProjectSettings: Record<string, ProjectSettings> = {
+  proj_001: { execution_unit: "sprint", merge_mode: "manual" },
+  proj_002: { execution_unit: "story", merge_mode: "auto" },
+  proj_003: { execution_unit: "sprint", merge_mode: "manual" },
+};
+
+// Default para un proyecto que aún no tiene settings guardados.
+export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   execution_unit: "sprint",
   merge_mode: "manual",
 };
@@ -653,11 +691,25 @@ Encontrar servicio de limpieza confiable requiere recomendaciones boca a boca; n
 
 // ── Orchestrator tickets mock ─────────────────────────────────────────────────
 
-export const mockOrchestratorTickets: OrchestratorTicket[] = [
-  { id: "ENG-1", title: "is_valid_email(s) + tests", status: "done", deps: [], run_id: "run_f7932443" },
-  { id: "ENG-2", title: "to_roman(n) 1..3999 + tests", status: "done", deps: [], run_id: "run_69c573fc" },
-  { id: "ENG-3", title: "fib(n) + tests", status: "done", deps: ["ENG-1"], run_id: "run_e6bca38f" },
-  { id: "ENG-12", title: "reverse_words(s) — reordena palabras, colapsa espacios", status: "running", deps: [], run_id: "run_76af79df" },
-  { id: "ENG-14", title: "Validador de cédula panameña + tests", status: "running", deps: ["ENG-1"], run_id: "run_a91c20e1" },
-  { id: "ENG-15", title: "Formato de fecha panameño + tests", status: "backlog", deps: ["ENG-14"] },
-];
+// Tickets de ejemplo por proyecto (el backend filtra server-side con ?project=;
+// en mock filtramos por este map). mockOrchestratorTickets queda como el set del
+// proyecto por defecto para compatibilidad con call-sites sin proyecto.
+export const mockTicketsByProject: Record<string, OrchestratorTicket[]> = {
+  proj_001: [
+    { id: "ENG-1", title: "is_valid_email(s) + tests", status: "done", deps: [], run_id: "run_f7932443" },
+    { id: "ENG-2", title: "to_roman(n) 1..3999 + tests", status: "done", deps: [], run_id: "run_69c573fc" },
+    { id: "ENG-3", title: "fib(n) + tests", status: "done", deps: ["ENG-1"], run_id: "run_e6bca38f" },
+    { id: "ENG-12", title: "reverse_words(s) — reordena palabras, colapsa espacios", status: "running", deps: [], run_id: "run_76af79df" },
+    { id: "ENG-14", title: "Validador de cédula panameña + tests", status: "running", deps: ["ENG-1"], run_id: "run_a91c20e1" },
+    { id: "ENG-15", title: "Formato de fecha panameño + tests", status: "backlog", deps: ["ENG-14"] },
+  ],
+  proj_002: [
+    { id: "S1-01", title: "Auth docente — Firebase Auth email/password", status: "done", deps: [], run_id: "run_c8e21b90" },
+    { id: "S1-02", title: "Escáner QR — Flutter camera plugin", status: "running", deps: ["S1-01"], run_id: "run_b3d10a77" },
+    { id: "S1-03", title: "Registro en Firestore — colección attendance", status: "ready", deps: [] },
+    { id: "S1-04", title: "Notificación FCM al padre cuando alumno ausente", status: "backlog", deps: ["S1-03"] },
+  ],
+  proj_003: [],
+};
+
+export const mockOrchestratorTickets: OrchestratorTicket[] = mockTicketsByProject[MOCK_PROJECT];
