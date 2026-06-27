@@ -448,6 +448,14 @@ export async function retryRun(id: string): Promise<void> {
   await http<void>(`/runs/${id}/retry`, { method: "POST" });
 }
 
+// Sprints (the planned increments, with name + goal). Used by the Sprints backlog
+// view; scoped to the active project client-side via the project's tickets.
+export async function listSprints(): Promise<import("./types").Sprint[]> {
+  if (await isMock()) return [];
+  const res = await http<{ sprints: import("./types").Sprint[] }>(`/sprints`);
+  return res.sprints ?? [];
+}
+
 // Project docs (Studio = Confluence, U1): read the project's specs straight from
 // its repo docs/ tree — the persistent source of truth.
 export async function listProjectDocs(projectId: string, ref = "dev"): Promise<import("./types").DocEntry[]> {

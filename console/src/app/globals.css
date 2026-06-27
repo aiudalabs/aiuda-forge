@@ -2401,3 +2401,140 @@ header.top .sp {
 .wrap.bleed .dag-wrap {
   height: calc(100vh - 230px);
 }
+
+/* ── Sprints backlog view (JIRA-style) ─────────────────────────────────────── */
+.sprints {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 1000px;
+}
+.sprint-card {
+  background: #fff;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+.sprint-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  appearance: none;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 14px 18px;
+  cursor: pointer;
+}
+.sprint-head:hover {
+  background: var(--bg2);
+}
+.sprint-caret {
+  color: var(--ink4);
+  font-size: 12px;
+  width: 12px;
+}
+.sprint-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink3);
+  flex: none;
+}
+.sprint-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sprint-bar {
+  width: 120px;
+  height: 8px;
+  background: var(--bg3);
+  border-radius: 999px;
+  overflow: hidden;
+  flex: none;
+}
+.sprint-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s var(--ease);
+}
+.sprint-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink4);
+  width: 42px;
+  text-align: right;
+  flex: none;
+}
+.sprint-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  flex: none;
+  width: 96px;
+  text-align: center;
+}
+.sprint-body {
+  padding: 4px 18px 16px 42px;
+  border-top: 1px solid var(--stroke);
+}
+.sprint-goal {
+  font-size: 13px;
+  color: var(--ink3);
+  line-height: 1.5;
+  margin: 12px 0 10px;
+}
+.sprint-waiting {
+  font-size: 12px;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+.sprint-stories {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sprint-story {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  appearance: none;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.sprint-story:hover {
+  background: var(--bg2);
+}
+.sprint-story-id {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink4);
+  width: 56px;
+  flex: none;
+}
+.sprint-story-ttl {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

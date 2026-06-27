@@ -256,6 +256,14 @@ export interface Epic {
   title: string;
 }
 
+// A planned sprint: a coherent, demoable increment (one PR). name + goal come from
+// the scrum-master's backlog (e.g. "Sprint 1 — Platform Foundation").
+export interface Sprint {
+  id: string;
+  name: string;
+  goal: string;
+}
+
 export interface OrchestratorTicket {
   id: string;
   title: string;

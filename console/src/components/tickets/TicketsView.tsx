@@ -12,10 +12,11 @@ import { ApiError } from "@/lib/api";
 import { RunDrawer } from "@/components/board/RunDrawer";
 import { DepGraph } from "@/components/tickets/DepGraph";
 import { KanbanBoard } from "@/components/tickets/KanbanBoard";
+import { SprintsView } from "@/components/tickets/SprintsView";
 import { TicketDetail } from "@/components/tickets/TicketDetail";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
 
-type TicketsView = "tabla" | "kanban" | "grafo";
+type TicketsView = "tabla" | "sprints" | "kanban" | "grafo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -58,14 +59,16 @@ export function TicketsView() {
   // Single, view-aware descriptor — avoids repeating "store nativo · backlog" on top
   // of a second "Kanban / Grafo DAG" sub-header (they were redundant).
   const viewDesc =
-    view === "kanban"
-      ? "Kanban · agrupado por estado"
-      : view === "grafo"
-        ? "Grafo DAG · dependencias · niveles topológicos"
-        : "store nativo · backlog";
+    view === "sprints"
+      ? "Sprints · el plan del proyecto"
+      : view === "kanban"
+        ? "Kanban · agrupado por estado"
+        : view === "grafo"
+          ? "Grafo DAG · dependencias · niveles topológicos"
+          : "store nativo · backlog";
 
   return (
-    <div className={`wrap${view !== "tabla" ? " bleed" : ""}`}>
+    <div className={`wrap${view === "kanban" || view === "grafo" ? " bleed" : ""}`}>
       <div className="sectitle">
         <h2>Tickets</h2>
         <span className="c">{viewDesc}</span>
@@ -83,7 +86,7 @@ export function TicketsView() {
             padding: 3,
           }}
         >
-          {(["tabla", "kanban", "grafo"] as TicketsView[]).map((v) => (
+          {(["tabla", "sprints", "kanban", "grafo"] as TicketsView[]).map((v) => (
             <button
               key={v}
               className={`btn sm${view === v ? " primary" : " ghost"}`}
@@ -135,6 +138,8 @@ export function TicketsView() {
             />
           ))}
         </div>
+      ) : view === "sprints" ? (
+        <SprintsView tickets={list} onOpenTicket={setOpenTicketId} />
       ) : view === "kanban" ? (
         <KanbanBoard tickets={list} onOpenTicket={setOpenTicketId} />
       ) : (

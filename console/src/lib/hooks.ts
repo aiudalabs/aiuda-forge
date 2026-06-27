@@ -320,6 +320,15 @@ export function useProjects() {
   });
 }
 
+// Sprints (planned increments with name + goal) for the Sprints backlog view.
+export function useSprints() {
+  return useQuery({
+    queryKey: ["sprints"],
+    queryFn: () => api.listSprints(),
+    staleTime: 60_000,
+  });
+}
+
 // Studio = Confluence (U1): the project's repo docs/ tree + a single doc's content.
 export function useProjectDocs(projectId: string | null) {
   return useQuery({
