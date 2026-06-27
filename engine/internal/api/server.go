@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"forge/internal/auth"
+	"forge/internal/httpx"
 	"forge/internal/projects"
 	"forge/internal/settings"
 	"forge/internal/store"
@@ -180,8 +181,17 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	status := store.Status(r.URL.Query().Get("status"))
 	// ?project=<id> scopes the list to one project (audit A1); absent = all
-	// projects (back-compat / admin).
+	// projects (back-compat / service-token admin).
 	project := r.URL.Query().Get("project")
+	// Multi-tenant (D1): a user session may only list runs of a project it owns —
+	// no/unowned project yields an empty list (no cross-tenant leak). The service
+	// token (orchestrator) is unrestricted.
+	if httpx.UserIDFromContext(r.Context()) != "" {
+		if project == "" || !s.canAccessProject(r.Context(), project) {
+			writeJSON(w, http.StatusOK, map[string]any{"runs": []*store.Run{}})
+			return
+		}
+	}
 	runs, err := s.Store.ListRunsByProject(status, project)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
@@ -206,6 +216,10 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		notFound(w, err)
 		return
 	}
+	if !s.canAccessProject(r.Context(), run.ProjectID) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id) // 404, not 403 (no existence leak)
+		return
+	}
 	tasks, _ := s.Store.TasksForRun(id)
 	if tasks == nil {
 		tasks = []*store.Task{}
@@ -215,6 +229,10 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	if err := s.Store.CancelRun(id); err != nil {
 		notFound(w, err)
 		return
@@ -225,6 +243,10 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	if err := s.Store.DeleteRun(id); err != nil {
 		notFound(w, err)
 		return
@@ -234,6 +256,10 @@ func (s *Server) deleteRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) retryRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	if err := s.Engine.RetryRun(id); err != nil {
 		notFound(w, err)
 		return
@@ -247,6 +273,10 @@ func (s *Server) retryRun(w http.ResponseWriter, r *http.Request) {
 // run_id, this requeues the WHOLE sprint; in story mode it requeues the one story.
 func (s *Server) requeueRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	n, err := s.Tickets.RequeueByRun(id)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
@@ -282,6 +312,10 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) approveStep(w http.ResponseWriter, r *http.Request) {
 	id, step := r.PathValue("id"), r.PathValue("step")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	if err := s.Engine.ApproveStep(id, step); err != nil {
 		httpErr(w, http.StatusConflict, err.Error())
 		return
@@ -295,6 +329,10 @@ type rejectReq struct {
 
 func (s *Server) rejectStep(w http.ResponseWriter, r *http.Request) {
 	id, step := r.PathValue("id"), r.PathValue("step")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	var req rejectReq
 	if !readJSON(w, r, &req) {
 		return
@@ -308,6 +346,10 @@ func (s *Server) rejectStep(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) mergeStep(w http.ResponseWriter, r *http.Request) {
 	id, step := r.PathValue("id"), r.PathValue("step")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	// In the MVP the pr step already commits/pushes (PR_MODE=local); merge is an
 	// explicit ack endpoint so the contract surface exists and is exercisable.
 	writeJSON(w, http.StatusOK, map[string]any{"merged": step, "run": id})
@@ -315,6 +357,10 @@ func (s *Server) mergeStep(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) artifacts(w http.ResponseWriter, r *http.Request) {
 	id, kind := r.PathValue("id"), r.PathValue("kind")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	tasks, err := s.Store.TasksForRun(id)
 	if err != nil {
 		notFound(w, err)
@@ -334,6 +380,12 @@ func (s *Server) artifacts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	// ?project=<id> scopes the metrics to one project (absent = all projects).
 	project := r.URL.Query().Get("project")
+	if s.crossTenantDenied(w, r.Context(), project, map[string]any{
+		"runs_total": 0, "by_status": map[string]int{}, "total_cost_usd": 0,
+		"cost_by_workflow": map[string]float64{}, "cost_by_step": map[string]float64{}, "acceptance_rate": 0,
+	}) {
+		return // D1: a user session may only read its own project's spend
+	}
 	runs, _ := s.Store.ListRunsByProject("", project)
 	byStatus := map[string]int{}
 	costByWorkflow := map[string]float64{}
@@ -522,6 +574,10 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	evs, err := s.Store.EventsAfter(id, after)
 	if err != nil {

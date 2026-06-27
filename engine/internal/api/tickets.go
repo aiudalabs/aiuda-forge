@@ -355,6 +355,9 @@ type ticketView struct {
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 	// ?project=<id> scopes the board to one project (audit A1); absent = all.
 	project := r.URL.Query().Get("project")
+	if s.crossTenantDenied(w, r.Context(), project, map[string]any{"tickets": []any{}}) {
+		return // D1: a user session may only read its own project's board
+	}
 	stories, err := s.Tickets.ListStoriesByProject(project)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
