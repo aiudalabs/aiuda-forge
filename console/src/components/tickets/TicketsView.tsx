@@ -127,21 +127,9 @@ export function TicketsView() {
           ))}
         </div>
       ) : view === "kanban" ? (
-        <>
-          <div className="sectitle" style={{ marginTop: 4 }}>
-            <h2>Kanban</h2>
-            <span className="c">agrupado por estado</span>
-          </div>
-          <KanbanBoard tickets={list} onOpenTicket={setOpenTicketId} />
-        </>
+        <KanbanBoard tickets={list} onOpenTicket={setOpenTicketId} />
       ) : (
-        <>
-          <div className="sectitle" style={{ marginTop: 4 }}>
-            <h2>Grafo DAG</h2>
-            <span className="c">dependencias · niveles topológicos</span>
-          </div>
-          <DepGraph tickets={list} onOpenTicket={setOpenTicketId} />
-        </>
+        <DepGraph tickets={list} onOpenTicket={setOpenTicketId} />
       )}
 
       {/* Modal: nueva story */}
