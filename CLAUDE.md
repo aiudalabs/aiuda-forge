@@ -191,3 +191,12 @@ D8. **[MEDIO] Vocabulario de metodología hardcodeado en Go** (diverge de la fil
     el registry. Otros: timeout REAL es 20m hardcodeado (`main.go:50`), el 45m es solo env de despliegue;
     reaper puede duplicar llamada LLM pagada (>60s sin heartbeat); `mixed-lane → dev` solo loguea, sin señal UI;
     falta password-change (#10); imágenes de sandbox por-lane (#11/B2); R3 (desync story↔run borrado) pendiente.
+
+## Wave D — ESTADO (2026-06-26): D1–D7 + password-change RESUELTOS
+- D1 ✅ cross-tenant ownership (access.go) · D2 ✅ resolver $step.output fallback · D3 ✅ gate ausente falla
+- D4 ✅ soft-delete runs · D5 ✅ skills inyectados · D6 ✅ no cachear settings fallidos · D7 ✅ dep inexistente loguea
+- #10 ✅ POST /auth/change-password
+- PENDIENTES (refactors grandes, no fixes de barrido): metodología hardcodeada en Go (publish.go epics/sprints,
+  gate filename) = el refactor de "kernel 100% methodology-free"; imágenes de sandbox por-lane (#11/B2, infra);
+  R3 (reconcileStoryRunDesync en el orquestador); reaper-dup de llamada LLM (inherente a at-least-once, riesgoso);
+  señal UI de mixed-lane→dev (menor). Cada uno merece su propio esfuerzo enfocado.
