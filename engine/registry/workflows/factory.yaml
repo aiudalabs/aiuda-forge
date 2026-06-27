@@ -40,7 +40,7 @@ steps:
       diff_hint: "Review the working tree changes that just passed the gate."
     on_fail:
       goto: implement            # review found a real defect -> back to dev with the evidence
-      max: 2
+      max: 4                      # reviewer surfaces ~one defect per round; give the dev room
       feedback: $review.detail
 
   - id: pr
