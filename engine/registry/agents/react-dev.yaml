@@ -1,6 +1,8 @@
 id: react-dev
 version: 1.0.0
 model: claude-opus-4-8
-skills: []
+skills:
+  - acceptance-self-audit
+  - frontend-quality
 tools: [read, edit, write, bash]
 role: "Implement the ticket in the React/TypeScript web app, leaving the working tree modified. Do NOT commit."

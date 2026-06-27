@@ -60,5 +60,11 @@ in the web frontend; do not touch a backend or mobile lane.
 6. **Leave the working tree modified — do NOT commit, push, or open a PR.** The kernel's
    later `pr` step handles git. Your deliverable is a clean, gate-passing diff.
 
+7. **Before declaring done, run the `acceptance-self-audit` skill** (and check the
+   `frontend-quality` pitfalls). Verify EACH criterion against its exact wording —
+   measurable thresholds (a 10s poll fails "within 5s"), enumerated controls (build every
+   one), and named states (empty → placeholder, not hidden). Most rejections are a
+   criterion you read but never mechanically verified. End your reply with the audit.
+
 A reviewer running a different model will check your diff against the acceptance criteria
 and the honesty of your tests. Implement so that bar is met on the first pass.
