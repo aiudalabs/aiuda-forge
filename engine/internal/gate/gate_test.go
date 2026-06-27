@@ -60,6 +60,65 @@ func TestAntiTamperDetectsGateEdit(t *testing.T) {
 	}
 }
 
+// TestAbsentGateFails (D3): no .vibeforge-gate at run time must NOT pass. Without
+// the guard an absent gate yielded an empty command that exited 0 (trivial pass).
+func TestAbsentGateFails(t *testing.T) {
+	root := t.TempDir()
+	runID := "run_absent"
+	workdir := filepath.Join(root, runID)
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SealWorkdir(workdir); err != nil { // seal a gateless tree
+		t.Fatal(err)
+	}
+	runner := NewHardenedRunner()
+	runner.SandboxTemplate = sandbox.Config{Runtime: "local"}
+	step := workflow.Step{ID: "gate", Type: "gate", CommandFrom: "repo"}
+	res, err := runner.Run(context.Background(), step, nil, workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success {
+		t.Fatalf("absent gate must NOT pass, got %v / %q", res.Output, res.Detail)
+	}
+}
+
+// TestGateAfterGatelessSealIsTamper (D3): if nothing was sealed (no gate at seal),
+// a gate the agent introduces afterward must be rejected — the old guard skipped
+// the anti-tamper whenever the sealed hash was "".
+func TestGateAfterGatelessSealIsTamper(t *testing.T) {
+	root := t.TempDir()
+	runID := "run_introduced"
+	workdir := filepath.Join(root, runID)
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "test_a.py"), []byte("def test_a(): pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SealWorkdir(workdir); err != nil { // seal WITHOUT a gate
+		t.Fatal(err)
+	}
+	// Agent introduces a gate that would trivially pass.
+	if err := os.WriteFile(filepath.Join(workdir, GateFile), []byte("exit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewHardenedRunner()
+	runner.SandboxTemplate = sandbox.Config{Runtime: "local"}
+	step := workflow.Step{ID: "gate", Type: "gate", CommandFrom: "repo"}
+	res, err := runner.Run(context.Background(), step, nil, workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success {
+		t.Fatalf("gate introduced after a gateless seal must NOT pass")
+	}
+	if tamper, _ := res.Output["tamper"].(bool); !tamper {
+		t.Fatalf("expected tamper flag, got %v", res.Output)
+	}
+}
+
 // TestSuiteIntegrityDetectsDeletedTests: if the agent deletes a test file after
 // the seal, the test marker count drops and integrity fails.
 func TestSuiteIntegrityDetectsDeletedTests(t *testing.T) {

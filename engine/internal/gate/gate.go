@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"forge/internal/sandbox"
 )
@@ -111,9 +112,14 @@ func sealPath(metaRoot, runID string) string {
 	return filepath.Join(metaRoot, runID+".seal.json")
 }
 
-// CheckIntegrity compares the current tree against the sealed snapshot.
+// CheckIntegrity compares the current tree against the sealed snapshot. Any change
+// to the gate hash is tampering — INCLUDING ""→x: the old guard `sealed.GateHash
+// != ""` let a gateless seal accept ANY gate the agent introduced afterward, so the
+// anti-tamper evaporated exactly when nothing was sealed (D3). (A both-gateless
+// case — sealed "" and current "" — is rejected earlier in Run, since a gate must
+// exist at all to pass.)
 func CheckIntegrity(sealed, current Integrity) error {
-	if sealed.GateHash != "" && current.GateHash != sealed.GateHash {
+	if current.GateHash != sealed.GateHash {
 		return ErrTampered
 	}
 	if current.TestCount < sealed.TestCount {
@@ -141,6 +147,14 @@ func Run(ctx context.Context, sb sandbox.Sandbox, workdir, metaRoot, runID, comm
 	current, snapErr := Snapshot(workdir, nil)
 	if snapErr != nil {
 		return Result{}, snapErr
+	}
+	// D3: a missing or empty gate must NOT pass. Without this an absent
+	// .vibeforge-gate yields an empty command that execs to exit 0 (a trivial
+	// pass), and the anti-tamper is a no-op when nothing was sealed — so the
+	// integrity floor evaporated exactly when there was no gate to enforce. A real
+	// gate must exist (current.GateHash != "") and carry a command.
+	if current.GateHash == "" || strings.TrimSpace(command) == "" {
+		return Result{Passed: false, Output: "no .vibeforge-gate present — a gate must exist to pass", Sandbox: sb.Kind()}, nil
 	}
 	if hasSeal {
 		if cerr := CheckIntegrity(sealed, current); cerr != nil {
