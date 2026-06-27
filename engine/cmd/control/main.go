@@ -68,14 +68,19 @@ func main() {
 	// project) takes effect; TARGET_REMOTE is the fallback.
 	a.Engine.OnSeed = func(runID, workdir string) error {
 		remote := fallbackRemote
+		sprintID := ""
 
-		// Prefer the repo from the run's trigger payload when present.
+		// Prefer the repo from the run's trigger payload when present; capture the
+		// sprint id so the seed can resume that sprint's branch (resumable sprints).
 		run, err := a.Store.GetRun(runID)
 		if err == nil && run.Payload != "" {
 			var payload map[string]any
 			if json.Unmarshal([]byte(run.Payload), &payload) == nil {
 				if r, ok := payload["repo"].(string); ok && r != "" {
 					remote = r
+				}
+				if s, ok := payload["sprint_id"].(string); ok {
+					sprintID = s
 				}
 			}
 		}
@@ -90,10 +95,10 @@ func main() {
 		if out, err := exec.Command("git", "clone", "--quiet", remote, workdir).CombinedOutput(); err != nil {
 			return fmt.Errorf("clone target: %v: %s", err, out)
 		}
-		// GitHub Flow: base the run's work on `dev` so it includes prior MERGED
-		// sprints (merge-gated deps). If `dev` doesn't exist (older/foreign repos),
-		// fall back to the default branch already checked out and log it.
-		checkoutDev(workdir, remote)
+		// GitHub Flow: base the run's work on `dev` (prior MERGED sprints) — or
+		// RESUME this sprint's own branch if it has unmerged work from a prior run,
+		// rebased onto current dev (resumable sprints).
+		seedSprintBranch(workdir, sprintID)
 		return gate.SealWorkdir(workdir)
 	}
 
@@ -177,6 +182,42 @@ func exitText(out []byte, err error) string {
 		return err.Error()
 	}
 	return s
+}
+
+// gitC runs a git command in workdir, returning combined output.
+func gitC(workdir string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", workdir}, args...)...).CombinedOutput()
+	return string(out), err
+}
+
+// seedSprintBranch makes a run CONTINUE its sprint's branch instead of redoing the
+// sprint from scratch (resumable sprints — a human team doesn't restart on a failed
+// review, it keeps the branch). The branch is deterministic per sprint
+// (vibeforge/sprint_<id>):
+//   - exists on origin → check it out and REBASE onto current dev (so it picks up
+//     newly-merged sprints); on a rebase conflict, abort and start FRESH from dev
+//     (the stale branch is overwritten by the pr step's push -f, one branch/sprint).
+//   - no sprint id (story mode) or no prior branch → a fresh branch off dev, as before.
+func seedSprintBranch(workdir, sprintID string) {
+	if sprintID == "" {
+		checkoutDev(workdir, "") // story mode: base on dev (prior merged work)
+		return
+	}
+	branch := "vibeforge/sprint_" + sprintID
+	if ls, _ := gitC(workdir, "ls-remote", "--heads", "origin", branch); strings.Contains(ls, "refs/heads/"+branch) {
+		if _, err := gitC(workdir, "checkout", "-B", branch, "origin/"+branch); err == nil {
+			if out, err := gitC(workdir, "-c", "user.email=kernel@vibeforge", "-c", "user.name=vibeforge", "rebase", "origin/dev"); err == nil {
+				log.Printf("seed: sprint %s RESUMED from existing branch (rebased onto dev)", sprintID)
+				return
+			} else {
+				_, _ = gitC(workdir, "rebase", "--abort")
+				log.Printf("seed: sprint %s rebase onto dev conflicted (%s) — starting FRESH from dev", sprintID, exitText([]byte(out), err))
+			}
+		}
+	}
+	if _, err := gitC(workdir, "checkout", "-B", branch, "origin/dev"); err != nil {
+		_, _ = gitC(workdir, "checkout", "-B", branch) // no origin/dev → name off the default branch
+	}
 }
 
 // loopbackAddr rewrites a bind address to loopback so an auth-less server is

@@ -35,7 +35,12 @@ func NewRunner() *Runner {
 // Run implements workflow.Runner.
 func (r *Runner) Run(ctx context.Context, step workflow.Step, inputs map[string]any, workdir string) (workflow.StepResult, error) {
 	runID := filepath.Base(workdir)
+	// Branch is per-SPRINT when the step carries a sprint ref (resumable sprints:
+	// the same branch is reused/force-pushed across a sprint's runs), else per-run.
 	branch := "vibeforge/" + runID
+	if s, ok := inputs["branch_ref"].(string); ok && s != "" {
+		branch = "vibeforge/sprint_" + s
+	}
 
 	if !isGitRepo(ctx, workdir) {
 		// No repo seeded (e.g. stub flows): record a synthetic local PR so the

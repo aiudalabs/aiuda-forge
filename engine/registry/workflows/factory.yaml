@@ -49,3 +49,4 @@ steps:
     inputs:
       base: dev                  # GitHub Flow: the factory targets `dev` (mirrors design.yaml's docs_pr)
       ticket: $trigger.ticket
+      branch_ref: $trigger.sprint_id   # resumable sprints: one branch per sprint (vibeforge/sprint_<id>)
