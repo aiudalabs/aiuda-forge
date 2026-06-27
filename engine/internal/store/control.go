@@ -34,28 +34,22 @@ func (s *Store) CancelRun(runID string) error {
 	return s.SetRunStatus(runID, StatusCancelled)
 }
 
-// DeleteRun removes a run and all of its tasks and events.
+// DeleteRun SOFT-deletes a run (D4): it stamps deleted_at so the run vanishes from
+// listings but its row, tasks and events are RETAINED — for audit, and so a story
+// still pointing at this run_id can resolve instead of being orphaned. Hard
+// deletion is deliberately not done: a terminal run vanishing from the kernel DB
+// left stories dangling and erased history (the "design run disappeared" incident).
 func (s *Store) DeleteRun(runID string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM events WHERE run_id=?`, runID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM tasks WHERE run_id=?`, runID); err != nil {
-		return err
-	}
-	res, err := tx.Exec(`DELETE FROM runs WHERE id=?`, runID)
+	res, err := s.db.Exec(`UPDATE runs SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at=0`,
+		s.now(), s.now(), runID)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return ErrNotFound
+		return ErrNotFound // missing or already deleted
 	}
-	return tx.Commit()
+	return nil
 }
 
 // ReopenRun moves a terminal run back to RUNNING for a retry. Legal path:

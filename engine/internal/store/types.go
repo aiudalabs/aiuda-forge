@@ -44,7 +44,8 @@ type Run struct {
 	WorkflowID string `json:"workflow_id"`
 	Status     Status `json:"status"`
 	Payload    string `json:"payload"`    // trigger payload, JSON
-	ProjectID  string `json:"project_id"` // the project this run belongs to (audit A1)
+	ProjectID  string `json:"project_id"`           // the project this run belongs to (audit A1)
+	DeletedAt  int64  `json:"deleted_at,omitempty"` // 0 = live; >0 = soft-deleted (D4)
 	CreatedAt  int64  `json:"created_at"`
 	UpdatedAt  int64  `json:"updated_at"`
 }

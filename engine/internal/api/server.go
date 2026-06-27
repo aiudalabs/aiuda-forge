@@ -220,6 +220,12 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusNotFound, "run not found: "+id) // 404, not 403 (no existence leak)
 		return
 	}
+	if run.DeletedAt != 0 {
+		// Soft-deleted (D4): gone to clients, but the row + tasks + events are
+		// retained in the DB for audit and so dependents never dangle.
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
 	tasks, _ := s.Store.TasksForRun(id)
 	if tasks == nil {
 		tasks = []*store.Task{}

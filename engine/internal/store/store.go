@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS runs (
   status      TEXT NOT NULL,
   payload     TEXT NOT NULL DEFAULT '{}',
   project_id  TEXT NOT NULL DEFAULT '',
+  deleted_at  INTEGER NOT NULL DEFAULT 0,
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
@@ -92,6 +93,9 @@ var projectIDMigrations = []string{
 	// available_at gates the claim query so a transient-retry (R1: provider limit)
 	// can defer re-claim by a backoff. Pre-existing DBs predate the column.
 	`ALTER TABLE tasks ADD COLUMN available_at INTEGER NOT NULL DEFAULT 0`,
+	// deleted_at soft-deletes runs (D4): a deleted run is retained (audit + so a
+	// story still pointing at its run_id resolves) but hidden from listings.
+	`ALTER TABLE runs ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0`,
 }
 
 // DefaultProjectID is the project existing (pre-multi-tenant) rows are backfilled
@@ -192,8 +196,8 @@ func (s *Store) CreateRun(id, workflowID, projectID, payload string) (*Run, erro
 // GetRun loads a run by id.
 func (s *Store) GetRun(id string) (*Run, error) {
 	r := &Run{}
-	err := s.db.QueryRow(`SELECT id, workflow_id, status, payload, project_id, created_at, updated_at FROM runs WHERE id=?`, id).
-		Scan(&r.ID, &r.WorkflowID, &r.Status, &r.Payload, &r.ProjectID, &r.CreatedAt, &r.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id, workflow_id, status, payload, project_id, deleted_at, created_at, updated_at FROM runs WHERE id=?`, id).
+		Scan(&r.ID, &r.WorkflowID, &r.Status, &r.Payload, &r.ProjectID, &r.DeletedAt, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -213,7 +217,8 @@ func (s *Store) ListRuns(status Status) ([]*Run, error) {
 // (empty = all projects, for admin/back-compat), newest first (audit A1).
 func (s *Store) ListRunsByProject(status Status, projectID string) ([]*Run, error) {
 	q := `SELECT id, workflow_id, status, payload, project_id, created_at, updated_at FROM runs`
-	var where []string
+	// Soft-deleted runs (D4) never appear in listings.
+	where := []string{"deleted_at=0"}
 	var args []any
 	if status != "" {
 		where = append(where, "status=?")
