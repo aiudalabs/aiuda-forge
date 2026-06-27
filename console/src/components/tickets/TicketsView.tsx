@@ -56,7 +56,7 @@ export function TicketsView() {
   const openTicket = openTicketId ? list.find((t) => t.id === openTicketId) ?? null : null;
 
   return (
-    <div className="wrap">
+    <div className={`wrap${view !== "tabla" ? " bleed" : ""}`}>
       <div className="sectitle">
         <h2>Tickets</h2>
         <span className="c">store nativo · backlog</span>

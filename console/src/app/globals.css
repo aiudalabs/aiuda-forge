@@ -2393,3 +2393,11 @@ header.top .sp {
   padding: 3px 8px;
   color: var(--ink3);
 }
+
+/* Full-bleed Tickets views (Kanban/Grafo) — use the whole page like JIRA (U6). */
+.wrap.bleed {
+  max-width: none;
+}
+.wrap.bleed .dag-wrap {
+  height: calc(100vh - 230px);
+}

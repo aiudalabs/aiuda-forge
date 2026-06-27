@@ -112,8 +112,8 @@ function KanbanColumn({ config, tickets, onOpenTicket }: KanbanColumnProps) {
   return (
     <div
       style={{
-        flex: "0 0 200px",
-        minWidth: 0,
+        flex: "1 1 240px",
+        minWidth: 200,
         display: "flex",
         flexDirection: "column",
         gap: 0,
@@ -152,7 +152,7 @@ function KanbanColumn({ config, tickets, onOpenTicket }: KanbanColumnProps) {
           display: "flex",
           flexDirection: "column",
           gap: 8,
-          maxHeight: 420,
+          maxHeight: "calc(100vh - 290px)",
           overflowY: "auto",
           paddingBottom: 4,
           paddingRight: 2,
@@ -210,7 +210,7 @@ export function KanbanBoard({ tickets, onOpenTicket }: KanbanBoardProps) {
         overflowX: "auto",
       }}
     >
-      <div style={{ display: "flex", gap: 14, minWidth: "max-content" }}>
+      <div style={{ display: "flex", gap: 14 }}>
         {COLUMNS.map((col) => (
           <KanbanColumn
             key={col.status}
