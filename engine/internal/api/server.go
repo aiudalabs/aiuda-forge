@@ -304,7 +304,12 @@ func (s *Server) requeueSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) controlStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"paused": s.Engine.IsPaused()})
+	// paused_until > 0 means the pause is the credit circuit-breaker (auto-resume at
+	// that unix-millis time); 0 with paused=true means a manual/indefinite pause.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"paused":       s.Engine.IsPaused(),
+		"paused_until": s.Engine.PausedUntil(),
+	})
 }
 
 func (s *Server) pause(w http.ResponseWriter, r *http.Request) {

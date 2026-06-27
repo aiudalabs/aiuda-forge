@@ -3,6 +3,10 @@ package workflow
 import (
 	"context"
 	"errors"
+	"log"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"forge/internal/store"
@@ -109,12 +113,69 @@ func (e *Engine) resolveAwaiting(runID, stepID string, to store.Status, result S
 func (e *Engine) Pause() { e.paused.Store(true) }
 
 // Resume re-enables claims.
-func (e *Engine) Resume() { e.paused.Store(false) }
+func (e *Engine) Resume() { e.paused.Store(false); e.pausedUntil.Store(0) }
 
 // IsPaused reports the pause state.
 func (e *Engine) IsPaused() bool { return e.paused.Load() }
 
+// PausedUntil returns the auto-resume time (unix millis) if the pause was a credit
+// circuit-breaker, or 0 for a manual/indefinite pause.
+func (e *Engine) PausedUntil() int64 { return e.pausedUntil.Load() }
+
+// PauseUntil is the credit circuit-breaker: a provider usage/session limit pauses
+// the WHOLE factory (no worker claims new steps) until resumeAt, then auto-resumes.
+// Re-arming while already paused keeps the LATER resume time. This stops the thrash
+// of firing/retrying into an exhausted-credits wall.
+func (e *Engine) PauseUntil(resumeAt int64, reason string) {
+	if cur := e.pausedUntil.Load(); cur >= resumeAt && e.paused.Load() {
+		return // already paused at least this long
+	}
+	e.pausedUntil.Store(resumeAt)
+	if !e.paused.Swap(true) {
+		log.Printf("engine: circuit-breaker PAUSED until %s — %s", time.UnixMilli(resumeAt).UTC().Format("15:04 MST"), reason)
+	}
+}
+
 // paused is declared on Engine in engine.go via embedding atomic.Bool below.
+
+// ---- credit circuit-breaker --------------------------------------------------
+
+var sessionLimitRe = regexp.MustCompile(`(?i)session limit|usage limit|hit your .*limit`)
+var resetTimeRe = regexp.MustCompile(`(?i)resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)`)
+
+// creditLimit detects a provider usage/credit limit in a step's error OR result
+// text (the limit shows up both ways: an execution error, and an agent that reports
+// "You've hit your session limit" as its own verdict). It returns the auto-resume
+// time (unix millis), parsed from "resets 4am (UTC)" so the factory waits exactly
+// until the window opens; if unparseable it falls back to a 30-min backoff (the
+// breaker re-arms on the next hit, so even a wrong guess self-corrects).
+func creditLimit(errText, resultText string, now time.Time) (resumeAt int64, ok bool) {
+	text := errText + "\n" + resultText
+	if !sessionLimitRe.MatchString(text) {
+		return 0, false
+	}
+	resumeAt = now.Add(30 * time.Minute).UnixMilli() // fallback
+	if m := resetTimeRe.FindStringSubmatch(text); m != nil {
+		h, _ := strconv.Atoi(m[1])
+		min := 0
+		if m[2] != "" {
+			min, _ = strconv.Atoi(m[2])
+		}
+		if strings.EqualFold(m[3], "pm") && h != 12 {
+			h += 12
+		}
+		if strings.EqualFold(m[3], "am") && h == 12 {
+			h = 0
+		}
+		u := now.UTC()
+		reset := time.Date(u.Year(), u.Month(), u.Day(), h, min, 0, 0, time.UTC)
+		if !reset.After(u) {
+			reset = reset.Add(24 * time.Hour) // next occurrence of that wall-clock time
+		}
+		resumeAt = reset.UnixMilli()
+	}
+	return resumeAt, true
+}
 
 // ---- background loops --------------------------------------------------------
 
@@ -130,8 +191,17 @@ func (e *Engine) WorkerLoop(ctx context.Context, workerID string) {
 		default:
 		}
 		if e.IsPaused() {
-			time.Sleep(20 * time.Millisecond)
-			continue
+			// Circuit-breaker auto-resume: once the credit window has elapsed, the
+			// first worker to flip the flag logs and re-enables claims.
+			if until := e.pausedUntil.Load(); until > 0 && time.Now().UnixMilli() >= until {
+				if e.paused.Swap(false) {
+					e.pausedUntil.Store(0)
+					log.Printf("engine: circuit-breaker auto-resumed (credit window elapsed)")
+				}
+			} else {
+				time.Sleep(250 * time.Millisecond)
+				continue
+			}
 		}
 		busy, err := e.ExecuteOne(ctx, workerID)
 		if err != nil || !busy {

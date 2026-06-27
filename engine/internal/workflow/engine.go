@@ -27,6 +27,9 @@ type Engine struct {
 	WorkdirRoot string
 	runners     map[string]Runner
 	paused      atomic.Bool
+	// pausedUntil is the auto-resume time (unix millis) when the pause was triggered
+	// by a provider credit/usage limit (the circuit breaker). 0 = manual/indefinite.
+	pausedUntil atomic.Int64
 
 	// HeartbeatInterval is how often a running step pings liveness. Must be well
 	// under the reaper's stale window. 0 -> 15s default.
@@ -173,6 +176,18 @@ func (e *Engine) ExecuteOne(ctx context.Context, workerID string) (bool, error) 
 
 	result, runErr := runner.Run(stepCtx, step, inputs, e.Workdir(task.RunID))
 	stopHeartbeat()
+	// Credit circuit-breaker: a provider usage/session limit — whether it surfaced as
+	// an execution error OR as the agent's own verdict text ("You've hit your session
+	// limit") — pauses the WHOLE factory until the window resets, so we stop firing
+	// and retrying into an exhausted-credits wall. The step's own fate (transient
+	// requeue or on_fail) still applies; it simply waits for the auto-resume.
+	errText := ""
+	if runErr != nil {
+		errText = runErr.Error()
+	}
+	if resumeAt, ok := creditLimit(errText, result.Detail, time.Now()); ok {
+		e.PauseUntil(resumeAt, "provider usage limit")
+	}
 	if runErr != nil {
 		// Execution error (not a logical failure) — record and fail the step.
 		return true, e.reportAndAdvance(wf, task, StepResult{Success: false, Detail: "runner error: " + runErr.Error()})
