@@ -55,11 +55,20 @@ export function TicketsView() {
   const list = tickets ?? [];
   const openTicket = openTicketId ? list.find((t) => t.id === openTicketId) ?? null : null;
 
+  // Single, view-aware descriptor — avoids repeating "store nativo · backlog" on top
+  // of a second "Kanban / Grafo DAG" sub-header (they were redundant).
+  const viewDesc =
+    view === "kanban"
+      ? "Kanban · agrupado por estado"
+      : view === "grafo"
+        ? "Grafo DAG · dependencias · niveles topológicos"
+        : "store nativo · backlog";
+
   return (
     <div className={`wrap${view !== "tabla" ? " bleed" : ""}`}>
       <div className="sectitle">
         <h2>Tickets</h2>
-        <span className="c">store nativo · backlog</span>
+        <span className="c">{viewDesc}</span>
         <span className="sp" />
         <span className="tag">{list.length} stories</span>
 
