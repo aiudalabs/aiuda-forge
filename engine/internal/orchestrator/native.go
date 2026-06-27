@@ -511,7 +511,19 @@ func (s *NativeScheduler) modeFor(ctx context.Context, cache map[string]projectM
 	}
 	unit, mode, err := s.cp.ProjectSettings(ctx, projectID)
 	if err != nil {
-		log.Printf("native-scheduler: read settings for project %q (defaulting sprint/manual): %v", projectID, err)
+		// D6: do NOT cache a failed read. Caching the sprint/manual default on a
+		// transient API blip pinned the project to manual for the rest of the cycle,
+		// silently pausing `auto` merges. Use defaults for THIS lookup only; the
+		// next cycle retries the real settings.
+		log.Printf("native-scheduler: read settings for project %q (using defaults this cycle, not caching): %v", projectID, err)
+		u, m := unit, mode
+		if u == "" {
+			u = "sprint"
+		}
+		if m == "" {
+			m = "manual"
+		}
+		return projectMode{executionUnit: u, mergeMode: m}
 	}
 	if unit == "" {
 		unit = "sprint"

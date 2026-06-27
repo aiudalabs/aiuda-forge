@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -1180,7 +1181,12 @@ func (s *Store) depsDone(deps []string) (bool, error) {
 		var st Status
 		err := s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, dep).Scan(&st)
 		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil // dep doesn't exist yet → not done
+			// D7: a dep pointing at a story that does not exist is corrupt data (deps
+			// are validated at publish). Treat it as "not done" so it gates rather
+			// than crashes — but LOG it: previously this deadlocked the dependent
+			// silently with no signal that the graph was broken.
+			log.Printf("tickets: dep %q does not exist — dependent story is gated (corrupt dep graph?)", dep)
+			return false, nil
 		}
 		if err != nil {
 			return false, err
