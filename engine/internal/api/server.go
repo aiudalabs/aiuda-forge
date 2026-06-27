@@ -79,6 +79,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /auth/login", s.needAuth(s.login))
 	m.HandleFunc("POST /auth/logout", s.needAuth(s.logout))
 	m.HandleFunc("GET /auth/me", s.needAuth(s.me))
+	m.HandleFunc("POST /auth/change-password", s.needAuth(s.changePassword))
 	// registry CRUD (compose/edit/list/delete agents, skills, workflows — no-code).
 	// Generic by {kind}: workflows|agents|skills. PUT/POST validate against the
 	// SAME parser the kernel uses, so a saved manifest is always runnable.

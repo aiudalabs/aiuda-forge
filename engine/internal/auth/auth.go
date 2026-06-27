@@ -161,6 +161,42 @@ func (s *Store) Authenticate(email, password string) (User, Session, error) {
 	return u, sess, nil
 }
 
+// ChangePassword verifies the user's current password and replaces it with a fresh
+// bcrypt hash. All of the user's sessions are then invalidated — a password change
+// logs the user out everywhere, so they must sign in again (D8/#10).
+func (s *Store) ChangePassword(userID, oldPassword, newPassword string) error {
+	if newPassword == "" {
+		return errors.New("new password is required")
+	}
+	var hash string
+	err := s.db.QueryRow(`SELECT password_hash FROM users WHERE id=?`, userID).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(oldPassword)) != nil {
+		return ErrBadCredential
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE users SET password_hash=? WHERE id=?`, string(newHash), userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE user_id=?`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // dummyHash is a valid bcrypt hash of a random string, used only to equalize
 // Authenticate's timing for non-existent users. It is not a credential.
 const dummyHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"

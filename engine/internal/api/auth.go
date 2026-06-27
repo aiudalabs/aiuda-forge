@@ -94,6 +94,33 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"user": toUserView(u)})
 }
 
+// changePassword lets a logged-in user rotate their own password (D8/#10). It
+// requires a user session (not the service token), verifies the current password,
+// and invalidates all of the user's sessions so they re-authenticate.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	u, err := s.Auth.UserForToken(bearer(r))
+	if err != nil {
+		httpErr(w, http.StatusForbidden, "change-password requires a user session")
+		return
+	}
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := s.Auth.ChangePassword(u.ID, req.OldPassword, req.NewPassword); err != nil {
+		if errors.Is(err, auth.ErrBadCredential) {
+			httpErr(w, http.StatusUnauthorized, "current password is incorrect")
+			return
+		}
+		httpErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changed": true})
+}
+
 // bearer extracts the token from an Authorization: Bearer header.
 func bearer(r *http.Request) string {
 	const prefix = "Bearer "
