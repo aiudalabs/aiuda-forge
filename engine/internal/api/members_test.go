@@ -125,6 +125,39 @@ func TestAcceptInviteEmailMustMatch(t *testing.T) {
 	}
 }
 
+// A viewer is read-only: changing settings requires editor+ (write-gating).
+func TestViewerCannotChangeSettings(t *testing.T) {
+	s, au, pr := membersServer(t)
+	owner, _ := au.CreateUser("owner@example.com", "password123")
+	viewer, _ := au.CreateUser("viewer@example.com", "password123")
+	if _, err := pr.Create(projects.Project{ID: "p1", OwnerID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pr.AddMember("p1", viewer.ID, projects.RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	// Viewer attempts to change settings → 403.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/projects/p1/settings", strings.NewReader(`{"merge_mode":"auto"}`))
+	req.SetPathValue("id", "p1")
+	req = req.WithContext(httpx.WithUserID(context.Background(), viewer.ID))
+	s.putProjectSettings(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("viewer settings status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	// An editor on the same project may.
+	editor, _ := au.CreateUser("editor@example.com", "password123")
+	_ = pr.AddMember("p1", editor.ID, projects.RoleEditor)
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("PUT", "/projects/p1/settings", strings.NewReader(`{"merge_mode":"auto"}`))
+	req2.SetPathValue("id", "p1")
+	req2 = req2.WithContext(httpx.WithUserID(context.Background(), editor.ID))
+	s.putProjectSettings(rec2, req2)
+	if rec2.Code != 200 {
+		t.Fatalf("editor settings status = %d, want 200; body=%s", rec2.Code, rec2.Body.String())
+	}
+}
+
 // The project owner cannot be removed or demoted.
 func TestOwnerProtected(t *testing.T) {
 	s, au, pr := membersServer(t)

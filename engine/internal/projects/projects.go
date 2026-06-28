@@ -219,6 +219,19 @@ func (s *Store) ListByOwner(ownerID string) ([]Project, error) {
 	return s.query(projectCols+` WHERE owner_id=? ORDER BY created_at DESC`, ownerID)
 }
 
+// ListForMember returns every project the user can access under the roles model
+// (v1.2): projects where they hold ANY membership (owner·editor·viewer), unioned
+// with projects whose legacy owner_id is them (back-compat for rows predating the
+// members table). This is what GET /projects scopes to so a shared editor/viewer
+// sees the projects invited to them, not only ones they created.
+func (s *Store) ListForMember(userID string) ([]Project, error) {
+	q := projectCols + `
+		WHERE id IN (SELECT project_id FROM project_members WHERE user_id=?)
+		   OR owner_id=?
+		ORDER BY created_at DESC`
+	return s.query(q, userID, userID)
+}
+
 func (s *Store) query(q string, args ...any) ([]Project, error) {
 	rows, err := s.db.Query(q, args...)
 	if err != nil {

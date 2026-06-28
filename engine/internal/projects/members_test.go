@@ -72,6 +72,37 @@ func TestAddMemberUpsert(t *testing.T) {
 	}
 }
 
+// ListForMember returns owned projects AND projects the user was invited to.
+func TestListForMember(t *testing.T) {
+	st := openTemp(t)
+	// usr-a owns p1; usr-b owns p2 and invites usr-a as viewer.
+	if _, err := st.Create(projects.Project{ID: "p1", OwnerID: "usr-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Create(projects.Project{ID: "p2", OwnerID: "usr-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember("p2", "usr-a", projects.RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListForMember("usr-a")
+	if err != nil {
+		t.Fatalf("ListForMember: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, p := range got {
+		ids[p.ID] = true
+	}
+	if !ids["p1"] || !ids["p2"] {
+		t.Fatalf("usr-a should see p1 (owned) + p2 (member), got %v", ids)
+	}
+	// usr-b sees only p2 (not p1).
+	got2, _ := st.ListForMember("usr-b")
+	if len(got2) != 1 || got2[0].ID != "p2" {
+		t.Fatalf("usr-b should see only p2, got %+v", got2)
+	}
+}
+
 func TestRoleAtLeast(t *testing.T) {
 	cases := []struct {
 		have, min string

@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"forge/internal/projects"
 )
 
 // needBrain guards the assistant routes — 503 until a Brain is wired (the control
@@ -33,9 +35,11 @@ func (s *Server) assistantSend(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "message required")
 		return
 	}
-	// v1.1: access is owner-only (canAccessProject), so the caller is the owner.
-	// The role string is the hook v1.2's owner/editor/viewer gating plugs into.
-	convID, err := s.Brain.Send(id, "owner", req.Message)
+	// v1.2: pass the caller's REAL role so the Brain's per-tool MinRole gating
+	// (viewer<editor<owner) applies — a viewer can ask/read but not act, an editor
+	// can run reversible actions, only an owner can do owner-gated ones.
+	role, _ := s.roleForProject(r.Context(), id)
+	convID, err := s.Brain.Send(id, role, req.Message)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -73,6 +77,12 @@ func (s *Server) assistantResolve(w http.ResponseWriter, r *http.Request, approv
 	id, actionID := r.PathValue("id"), r.PathValue("actionId")
 	if !s.canAccessProject(r.Context(), id) {
 		httpErr(w, http.StatusNotFound, "project not found: "+id)
+		return
+	}
+	// Approving/rejecting a proposed mutating action is a write — a viewer may read
+	// the conversation but not resolve actions (v1.2 gating).
+	if !s.requireRole(r.Context(), id, projects.RoleEditor) {
+		httpErr(w, http.StatusForbidden, "resolving an action requires editor or owner")
 		return
 	}
 	if err := s.Brain.Resolve(actionID, approved); err != nil {
