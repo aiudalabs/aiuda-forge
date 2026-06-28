@@ -1055,6 +1055,17 @@ func (s *NativeScheduler) advanceRunningStories(ctx context.Context, running []N
 // skips the story — preventing double-fire. The story's project_id is stamped on
 // the run payload so the factory run is scoped (audit A1). Returns actions taken.
 func (s *NativeScheduler) fireReadyStories(ctx context.Context, ready []NativeTicket) int {
+	if len(ready) == 0 {
+		return 0
+	}
+	// Budget gate (F2): one entitlement check for the project — if the plan is
+	// exhausted or the spend cap tripped, fire nothing this cycle (no tokens burned on
+	// unauthorized work). Per-feature accounting happens at merge; the spend cap backs
+	// up a burst.
+	if allowed, reason, _ := s.cp.Entitlement(ctx, ready[0].ProjectID); !allowed {
+		log.Printf("native-scheduler: project %s: billing denied (%s) — holding %d ready stories", ready[0].ProjectID, reason, len(ready))
+		return 0
+	}
 	actions := 0
 	for _, t := range ready {
 		// Atomically claim backlog → running before firing. If another scheduler
@@ -1282,6 +1293,12 @@ func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool 
 				}
 			}
 		}
+	}
+
+	// Budget gate (F2): the project's billing workspace must allow ≥1 more feature.
+	if allowed, reason, _ := s.cp.Entitlement(ctx, sp.ProjectID); !allowed {
+		log.Printf("native-scheduler: sprint %s: billing denied (%s) — not firing", sp.ID, reason)
+		return false
 	}
 
 	// ClaimSprint returns the claimed IDs in topo order, but we re-fetch the full

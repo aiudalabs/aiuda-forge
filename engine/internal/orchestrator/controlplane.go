@@ -149,6 +149,35 @@ func (c *cpClient) ProjectSettings(ctx context.Context, projectID string) (execu
 	return s.ExecutionUnit, s.MergeMode, nil
 }
 
+// Entitlement GETs /projects/{id}/entitlement — the billing budget gate. A non-200
+// or decode error defaults to allowed=true (fail-open): a billing-side problem must
+// never stall the factory.
+func (c *cpClient) Entitlement(ctx context.Context, projectID string) (bool, string, error) {
+	if projectID == "" {
+		projectID = "default"
+	}
+	req, err := c.authReq(ctx, http.MethodGet, c.baseURL+"/projects/"+projectID+"/entitlement", nil)
+	if err != nil {
+		return true, "", nil
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return true, "", nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return true, "", nil
+	}
+	var e struct {
+		Allowed bool   `json:"allowed"`
+		Reason  string `json:"reason"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&e); err != nil {
+		return true, "", nil
+	}
+	return e.Allowed, e.Reason, nil
+}
+
 // RunPRURL GETs /runs/{id} and extracts the PR URL the run's `pr` step opened.
 // The pr step records "pr(github): opened <url>" in its result detail; this finds
 // the pr-type step and parses that URL. Returns "" (nil error) when no pr step

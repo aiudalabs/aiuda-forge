@@ -50,6 +50,18 @@ type fakeControlPlane struct {
 	projectModes map[string]projectMode // per-project settings override (audit A2); absent → defaults above
 	prURLs       map[string]string      // runID → PR URL the run "opened"
 	prStepFailed map[string]bool        // runID → pr step FAILED (H1: DONE run, no usable PR)
+	denyBilling  bool                   // when true, Entitlement denies (budget gate test)
+}
+
+// Entitlement implements the budget gate. Defaults to allowed so existing tests are
+// unaffected; the billing-gate test sets denyBilling=true.
+func (f *fakeControlPlane) Entitlement(_ context.Context, _ string) (bool, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.denyBilling {
+		return false, "plan exhausted", nil
+	}
+	return true, "", nil
 }
 
 type firedRun struct {

@@ -1392,3 +1392,34 @@ func TestNativeResyncsFailedStoryWithRevivedRun(t *testing.T) {
 		t.Fatalf("S3 (never fired, no run) must stay failed, got %s", got)
 	}
 }
+
+// TestNativeBudgetGateBlocksWhenDenied: the billing budget gate stops firing when
+// the workspace's entitlement is denied (plan exhausted / spend cap), and resumes
+// once allowed — no tokens burned on unauthorized work.
+func TestNativeBudgetGateBlocksWhenDenied(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "feature", status: "backlog", projectID: "p1"},
+	)
+	cp := &fakeControlPlane{denyBilling: true} // story mode (default), billing denies
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
+	ctx := context.Background()
+
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 0 {
+		t.Fatalf("billing-denied project must fire nothing, got %d", cp.firedCount())
+	}
+	if got := provider.statusOf("S1"); got != "backlog" {
+		t.Fatalf("denied story must stay backlog (not claimed), got %s", got)
+	}
+
+	// Plan allows again → it fires.
+	cp.denyBilling = false
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("after billing allows, should fire once, got %d", cp.firedCount())
+	}
+}

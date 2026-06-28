@@ -58,6 +58,12 @@ type GitHub interface {
 // control-plane; tests use a fake.
 type ControlPlane interface {
 	FireRun(ctx context.Context, workflow string, payload any) (runID string, err error)
+	// Entitlement asks whether a project's billing workspace may start one more
+	// billable feature (the budget gate). allowed=false means the plan is exhausted /
+	// the spend cap tripped — the scheduler must NOT fire, to avoid burning tokens on
+	// unauthorized work. Errors / unconfigured billing default to allowed=true so a
+	// billing outage never wedges the factory.
+	Entitlement(ctx context.Context, projectID string) (allowed bool, reason string, err error)
 	// RunStatus returns the current status of a run ("RUNNING", "DONE",
 	// "FAILED", …) so the orchestrator can advance a ticket once its run finishes.
 	RunStatus(ctx context.Context, runID string) (status string, err error)
