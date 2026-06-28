@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS projects (
   merge_mode     TEXT NOT NULL DEFAULT 'manual',
   created_at     INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS project_members (
+  project_id TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, user_id)
+);
 `
 
 // migrations add the multi-tenant columns to project DBs predating them (audit
@@ -162,6 +169,11 @@ func (s *Store) Create(p Project) (Project, error) {
 			return Project{}, fmt.Errorf("%w: %s", ErrExists, p.ID)
 		}
 		return Project{}, err
+	}
+	// The creator is the project's owner — also recorded as a member so the roles
+	// model (owner·editor·viewer) has a row from day one.
+	if p.OwnerID != "" {
+		_ = s.AddMember(p.ID, p.OwnerID, RoleOwner)
 	}
 	return p, nil
 }
