@@ -36,6 +36,9 @@ type StoryProvider interface {
 	Ready(ctx context.Context) ([]NativeTicket, error)
 	// Running returns stories currently executing.
 	Running(ctx context.Context) ([]NativeTicket, error)
+	// Failed returns stories in the terminal failed state. The scheduler uses this
+	// to detect a story whose run later REVIVED (R3) and re-sync it to running.
+	Failed(ctx context.Context) ([]NativeTicket, error)
 	// Claim atomically transitions a story from backlog → running.
 	// Returns true if this caller claimed it, false if already taken.
 	Claim(ctx context.Context, id string) (bool, error)
@@ -152,6 +155,11 @@ func (p *NativeHTTPProvider) Ready(ctx context.Context) ([]NativeTicket, error) 
 // Running GETs /tickets and returns stories whose status is "running".
 func (p *NativeHTTPProvider) Running(ctx context.Context) ([]NativeTicket, error) {
 	return p.filterTickets(ctx, "running")
+}
+
+// Failed GETs /tickets and returns stories whose status is "failed" (R3).
+func (p *NativeHTTPProvider) Failed(ctx context.Context) ([]NativeTicket, error) {
+	return p.filterTickets(ctx, "failed")
 }
 
 func (p *NativeHTTPProvider) filterTickets(ctx context.Context, status string) ([]NativeTicket, error) {
@@ -567,10 +575,17 @@ func (s *NativeScheduler) modeFor(ctx context.Context, cache map[string]projectM
 func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 	modeCache := map[string]projectMode{}
 
-	// Merge-reconcile first: advance any in_review work whose PR has merged (and,
+	// Re-sync first (R3): a story can be marked failed when its run ends FAILED, but
+	// the kernel reaper may then requeue a stale step and the run goes RUNNING again.
+	// The orchestrator only flips story→running in its own FireRun, so such a story
+	// stays failed with a live run (and an orphaned PR). Detect and re-sync before
+	// anything else so the completion loop picks it up this cycle.
+	actions := s.reconcileRevivedRuns(ctx)
+
+	// Merge-reconcile next: advance any in_review work whose PR has merged (and,
 	// per the project's merge_mode, merge the PRs ourselves) BEFORE firing, so a
 	// dependent can unblock in the same cycle its prerequisite's PR lands.
-	actions := s.reconcileMerges(ctx, modeCache)
+	actions += s.reconcileMerges(ctx, modeCache)
 
 	// Fire ready work, grouped by project so each project runs under its own
 	// execution_unit. Both lists are read once and partitioned by project_id.
@@ -679,6 +694,41 @@ func groupSprintsByProject(sprints []NativeSprint) map[string][]NativeSprint {
 // once per project (modeCache) and read fresh each cycle so a toggle takes effect
 // without a restart. A nil gh client or an unrecorded PR leaves the work in_review.
 // Errors are logged and skipped — the work simply waits for the next cycle.
+// reconcileRevivedRuns re-syncs a story that was marked failed but whose run has
+// since revived (R3). When the kernel reaper requeues a stale step, the run goes
+// back to RUNNING, but a story the orchestrator already failed (e.g. via the
+// merge/park path) stays failed — stranding live work and orphaning its PR. For
+// each failed story whose run is RUNNING again, flip it back to running so the
+// normal completion loop advances it. In sprint mode every story of the sprint
+// shares the run_id, so all of them re-sync together. Returns the count re-synced.
+func (s *NativeScheduler) reconcileRevivedRuns(ctx context.Context) int {
+	failed, err := s.provider.Failed(ctx)
+	if err != nil {
+		log.Printf("native-scheduler: list failed stories (R3 re-sync): %v", err)
+		return 0
+	}
+	n := 0
+	for _, t := range failed {
+		if t.RunID == "" {
+			continue // never fired — a real design/backlog failure, not a desync
+		}
+		status, err := s.cp.RunStatus(ctx, t.RunID)
+		if err != nil {
+			continue // transient; try again next cycle
+		}
+		if status != "RUNNING" {
+			continue // run is genuinely terminal (FAILED/CANCELLED/DONE) — leave failed
+		}
+		if err := s.provider.MarkRunning(ctx, t.ID, t.RunID); err != nil {
+			log.Printf("native-scheduler: R3 re-sync story %s -> running: %v", t.ID, err)
+			continue
+		}
+		log.Printf("native-scheduler: story %s was failed but run %s is RUNNING — re-synced to running (R3)", t.ID, t.RunID)
+		n++
+	}
+	return n
+}
+
 func (s *NativeScheduler) reconcileMerges(ctx context.Context, modeCache map[string]projectMode) int {
 	if s.gh == nil {
 		return 0

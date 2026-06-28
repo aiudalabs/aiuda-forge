@@ -75,6 +75,21 @@ func (p *fakeStoryProvider) Running(_ context.Context) ([]NativeTicket, error) {
 	return out, nil
 }
 
+// Failed returns the fake's failed stories (R3 re-sync source).
+func (p *fakeStoryProvider) Failed(_ context.Context) ([]NativeTicket, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []NativeTicket
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.status != "failed" {
+			continue
+		}
+		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status, RunID: s.runID, Deps: s.deps, SprintID: s.sprintID, ProjectID: s.projectID})
+	}
+	return out, nil
+}
+
 // Claim atomically transitions a story from backlog → running.
 // Returns true if this caller won the claim, false if already taken.
 func (p *fakeStoryProvider) Claim(_ context.Context, id string) (bool, error) {
@@ -96,6 +111,10 @@ func (p *fakeStoryProvider) MarkRunning(_ context.Context, id, runID string) err
 	if !ok {
 		return nil
 	}
+	// Mirror the real provider: PUT status=running + run_id. In the normal flow the
+	// story is already running (from Claim) so this is a no-op; for the R3 re-sync
+	// it performs the legal failed→running transition.
+	s.status = "running"
 	s.runID = runID
 	return nil
 }
@@ -1342,5 +1361,34 @@ func TestNativeSprintDefersUntilDocsOnDev(t *testing.T) {
 	}
 	if cp.firedCount() != 1 {
 		t.Fatalf("sprint did not fire after docs landed on dev: got %d fires, want 1", cp.firedCount())
+	}
+}
+
+// TestNativeResyncsFailedStoryWithRevivedRun reproduces R3: a story marked failed
+// whose run later REVIVED (the reaper requeued a stale step → run back to RUNNING)
+// must be re-synced to running. A story whose run is genuinely terminal stays failed.
+func TestNativeResyncsFailedStoryWithRevivedRun(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "revived", status: "failed", runID: "run-alive"},
+		&fakeStory{id: "S2", title: "really dead", status: "failed", runID: "run-dead"},
+		&fakeStory{id: "S3", title: "design fail", status: "failed", runID: ""}, // never fired
+	)
+	cp := &fakeControlPlane{statuses: map[string]string{
+		"run-alive": "RUNNING", // revived
+		"run-dead":  "FAILED",  // genuinely terminal
+	}}
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.statusOf("S1"); got != "running" {
+		t.Fatalf("S1 (failed story, run RUNNING) should re-sync to running, got %s", got)
+	}
+	if got := provider.statusOf("S2"); got != "failed" {
+		t.Fatalf("S2 (run genuinely FAILED) must stay failed, got %s", got)
+	}
+	if got := provider.statusOf("S3"); got != "failed" {
+		t.Fatalf("S3 (never fired, no run) must stay failed, got %s", got)
 	}
 }
