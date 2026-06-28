@@ -8,6 +8,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -722,7 +723,13 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	if cost, ok := body["cost_usd"].(float64); ok && cost > 0 {
 		if run, err := s.Store.GetRun(task.RunID); err == nil {
 			if wsID, ok := s.workspaceForProject(run.ProjectID); ok {
-				_, _ = s.Billing.AddCost(wsID, id, cost)
+				if total, tripped, _ := s.Billing.AddCost(wsID, id, cost); tripped {
+					// Admin alert (step 4): this workspace crossed our hard spend cap and
+					// is now paused — the entitlement gate will stop its further runs.
+					log.Printf("billing: workspace %s spend cap tripped at $%.2f — paused", wsID, total)
+					_, _ = s.Store.AppendEvent(task.RunID, id, "billing.spend_cap_tripped",
+						map[string]any{"workspace": wsID, "cost_usd_incurred": total})
+				}
 			}
 		}
 	}

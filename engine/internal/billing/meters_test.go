@@ -7,10 +7,10 @@ func TestAddCostSumsIncludingFailed(t *testing.T) {
 	st := openTest(t)
 	w, _ := st.WorkspaceForOwner("usr-1")
 	// A failed task's cost still counts (it's money we spent).
-	if _, err := st.AddCost(w.ID, "task-failed", 0.40); err != nil {
+	if _, _, err := st.AddCost(w.ID, "task-failed", 0.40); err != nil {
 		t.Fatal(err)
 	}
-	total, err := st.AddCost(w.ID, "task-done", 0.60)
+	total, _, err := st.AddCost(w.ID, "task-done", 0.60)
 	if err != nil {
 		t.Fatal(err)
 	}

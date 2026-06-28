@@ -1,6 +1,9 @@
 package billing
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // FeatureKind is whether a billed feature consumed an included allowance or overage.
 type FeatureKind string
@@ -13,31 +16,43 @@ const (
 // AddCost records the real token cost of ONE task into the workspace's active cycle
 // — meter (a), what we ACTUALLY spend, INCLUDING failed/cancelled tasks (every task
 // reports usage). Writes a cost_events row for audit and bumps the cycle aggregate.
-// Returns the new cycle total so the spend-cap guard (step 4) can act on it.
-func (s *Store) AddCost(workspaceID, taskID string, costUSD float64) (float64, error) {
+// Returns the new cycle total and capTripped=true when this cost just pushed the
+// workspace over OUR hard spend cap (step 4) — in which case the workspace is paused
+// (the entitlement gate then denies it) so the caller can raise an admin alert. The
+// spend cap is independent of the customer's entitlement: it protects US from a bug
+// or abuse that runs up token cost regardless of what the customer is billed.
+func (s *Store) AddCost(workspaceID, taskID string, costUSD float64) (newTotal float64, capTripped bool, err error) {
 	c, err := s.ActiveCycle(workspaceID)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if costUSD <= 0 {
-		return c.CostUSDIncurred, nil
+		return c.CostUSDIncurred, false, nil
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`INSERT INTO cost_events(workspace_id, cycle_id, task_id, cost_usd, created_at) VALUES(?,?,?,?,?)`,
 		workspaceID, c.ID, taskID, costUSD, s.now()); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if _, err := tx.Exec(`UPDATE billing_cycles SET cost_usd_incurred = cost_usd_incurred + ? WHERE id=?`, costUSD, c.ID); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return c.CostUSDIncurred + costUSD, nil
+	newTotal = c.CostUSDIncurred + costUSD
+
+	// Hard spend cap (our backstop): pause the workspace the moment real cost crosses it.
+	w, gerr := s.GetWorkspace(workspaceID)
+	if gerr == nil && w.SpendCapUSD > 0 && newTotal >= w.SpendCapUSD && !w.Paused {
+		_ = s.SetPaused(workspaceID, true, fmt.Sprintf("spend cap reached: $%.2f incurred ≥ $%.2f cap", newTotal, w.SpendCapUSD))
+		capTripped = true
+	}
+	return newTotal, capTripped, nil
 }
 
 // CountFeature records ONE billable feature for a story that reached DONE — meter
