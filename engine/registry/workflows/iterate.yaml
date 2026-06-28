@@ -1,0 +1,33 @@
+# Iterate workflow — add features / improve a SHIPPED product WITHOUT recreating it.
+# The run is seeded from the project's repo at `dev` (the control plane's OnSeed
+# resolves the repo from project_id when the trigger carries only project_id +
+# instructions — e.g. a Brain-launched iteration). The iteration-planner reads the
+# existing PRD/architecture/backlog from that `dev` checkout and emits a DELTA
+# backlog (new sprints/stories only). handoff publishes it; publish APPENDS (existing
+# ids are skipped), so the factory builds the delta on top of dev.
+id: iterate
+version: 1.0.0
+steps:
+  - id: plan
+    type: design
+    agent: iteration-planner
+    inputs:
+      change_request: $trigger.instructions   # the feature/improvement to add
+      output: docs/backlog.yaml                # the DELTA backlog (new ids only)
+
+  - id: plan_gate
+    type: human_gate
+    inputs:
+      reason: "Revisa el backlog DELTA (docs/backlog.yaml) — las nuevas historias/sprints a construir sobre el producto ya desplegado. Aprueba para publicarlo al ticket store, o rechaza con feedback."
+    on_fail:
+      goto: plan
+      feedback: $plan_gate.detail
+
+  # Publish the delta into the native ticket store (idempotent append — existing
+  # stories/sprints are untouched; the new ones become buildable backlog).
+  - id: handoff
+    type: ticket_publish
+    inputs:
+      backlog: docs/backlog.yaml
+      repo: $trigger.repo               # empty for a Brain run → OnSeed resolves from project_id
+      project_id: $trigger.project_id
