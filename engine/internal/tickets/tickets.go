@@ -184,6 +184,21 @@ var projectIDMigrations = []string{
 // Store is the ticket store backed by a sqlite database.
 type Store struct {
 	db *sql.DB
+	// OnStoryDone, if set, fires after a story transitions to done (story OR sprint
+	// mode), with its project/story/run ids. The app wires it to billing.CountFeature
+	// (a billable feature = a story that reached done). Idempotency is the callback's
+	// job. This decouples tickets from billing (no import).
+	OnStoryDone func(projectID, storyID, runID string)
+}
+
+// fireStoryDone notifies the OnStoryDone hook for a story that just reached done.
+func (s *Store) fireStoryDone(id string) {
+	if s.OnStoryDone == nil {
+		return
+	}
+	if st, err := s.GetStory(id); err == nil {
+		s.OnStoryDone(st.ProjectID, st.ID, st.RunID)
+	}
 }
 
 // Open opens (creating if needed) the sqlite database at path and applies the
@@ -1079,8 +1094,27 @@ func (s *Store) ClaimSprint(sprintID string) (claimed []string, ok bool, err err
 // on work that was in no merged PR. A running story must never be marked done by a
 // sprint-wide merge; it waits for its own in_review parking first.
 func (s *Store) MarkSprintDone(sprintID string) error {
-	_, err := s.db.Exec(`UPDATE stories SET status='done' WHERE sprint_id=? AND status='in_review'`, sprintID)
-	return err
+	// Capture which stories are about to flip in_review→done so billing can count
+	// each as a feature (the bulk UPDATE bypasses transition()). The hook is idempotent.
+	var ids []string
+	if s.OnStoryDone != nil {
+		if rows, err := s.db.Query(`SELECT id FROM stories WHERE sprint_id=? AND status='in_review'`, sprintID); err == nil {
+			for rows.Next() {
+				var id string
+				if rows.Scan(&id) == nil {
+					ids = append(ids, id)
+				}
+			}
+			rows.Close()
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE stories SET status='done' WHERE sprint_id=? AND status='in_review'`, sprintID); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		s.fireStoryDone(id)
+	}
+	return nil
 }
 
 // MarkSprintFailed advances all of a sprint's non-terminal stories to failed. A
@@ -1124,7 +1158,11 @@ func (s *Store) MarkInReview(id, prURL string) error {
 // Guarded: only an in_review story may reach done — a still-running story is never
 // flipped done, so "done" always means a merged PR (B1/B2).
 func (s *Store) MarkDone(id string) error {
-	return s.transition(id, StatusDone, "")
+	if err := s.transition(id, StatusDone, ""); err != nil {
+		return err
+	}
+	s.fireStoryDone(id) // billing: count the billable feature (idempotent)
+	return nil
 }
 
 // MarkSprintInReview moves all of a sprint's RUNNING stories to in_review and

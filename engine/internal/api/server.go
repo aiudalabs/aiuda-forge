@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"forge/internal/auth"
+	"forge/internal/billing"
 	"forge/internal/brain"
 	"forge/internal/httpx"
 	"forge/internal/projects"
@@ -36,7 +37,26 @@ type Server struct {
 	Projects *projects.Store // nil when ProjectsDB is not configured
 	Auth     *auth.Store     // nil when AuthDB is not configured
 	Brain    *brain.Brain    // nil when ANTHROPIC_API_KEY is not configured
+	Billing  *billing.Store  // nil when billing is not configured
 	mux      *http.ServeMux
+}
+
+// workspaceForProject resolves a project's billing workspace via its owner. Returns
+// ok=false for an unowned/system project or when billing isn't wired — callers then
+// skip billing (internal/demo runs never trip metering).
+func (s *Server) workspaceForProject(projectID string) (string, bool) {
+	if s.Billing == nil || s.Projects == nil || projectID == "" {
+		return "", false
+	}
+	p, err := s.Projects.Get(projectID)
+	if err != nil || p.OwnerID == "" {
+		return "", false
+	}
+	ws, err := s.Billing.WorkspaceForOwner(p.OwnerID)
+	if err != nil {
+		return "", false
+	}
+	return ws.ID, true
 }
 
 // NewServer builds and routes a Server. The settings store lives next to the
@@ -693,5 +713,16 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = s.Store.AppendEvent(task.RunID, id, "step.usage", body)
+
+	// Billing meter (a): accrue this task's REAL token cost to the workspace's cycle
+	// — including failed tasks (every task reports usage). Resolve the workspace from
+	// the run's project → owner; skip silently for internal/unowned runs.
+	if cost, ok := body["cost_usd"].(float64); ok && cost > 0 {
+		if run, err := s.Store.GetRun(task.RunID); err == nil {
+			if wsID, ok := s.workspaceForProject(run.ProjectID); ok {
+				_, _ = s.Billing.AddCost(wsID, id, cost)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
