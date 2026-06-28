@@ -162,6 +162,10 @@ func (s *Server) routes() {
 	// webhook (public, verified by the bot secret header).
 	m.HandleFunc("POST /channels/{connector}/link-code", s.issueLinkCode)
 	m.HandleFunc("POST /webhooks/telegram", s.telegramWebhook)
+	// Per-project channel links (list any-member; manage editor+).
+	m.HandleFunc("GET /projects/{id}/channels", s.needProjects(s.listChannels))
+	m.HandleFunc("POST /projects/{id}/channels", s.needProjects(s.linkChannel))
+	m.HandleFunc("DELETE /projects/{id}/channels", s.needProjects(s.unlinkChannel))
 	// Brain — the per-project conversational assistant (needBrain → 503 if no key).
 	m.HandleFunc("POST /projects/{id}/assistant", s.needProjects(s.needBrain(s.assistantSend)))
 	m.HandleFunc("GET /projects/{id}/assistant/history", s.needProjects(s.needBrain(s.assistantHistory)))
