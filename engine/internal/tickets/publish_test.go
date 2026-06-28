@@ -107,6 +107,83 @@ func TestPublishRunnerHappyPath(t *testing.T) {
 	}
 }
 
+// depends_onFixture mirrors the canonical backlog but uses the `depends_on` alias
+// a drifting planner prompt (the iteration-planner bug) emitted instead of `deps`.
+const dependsOnFixture = `
+epic:
+  id: E1
+  title: "Foundation"
+stories:
+  - id: S1-01
+    title: "Auth service"
+    body: "Implement the authentication service."
+    acceptance: "Users can log in."
+    owner: dev
+    sprint_id: SP1
+    depends_on: []
+  - id: S1-02
+    title: "User CRUD"
+    body: "REST endpoints for users."
+    acceptance: "All endpoints return correct codes."
+    owner: dev
+    sprint_id: SP1
+    depends_on: [S1-01]
+`
+
+// Regression: a backlog using `depends_on` (instead of `deps`) must still produce
+// stories WITH their dependencies — otherwise every story is dependency-free and the
+// whole backlog fires in parallel (the serviciospty UI-redesign incident).
+func TestPublishRunnerAcceptsDependsOnAlias(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	writeBacklog(t, workdir, "docs/backlog.yaml", dependsOnFixture)
+
+	res := runPublish(t, st, workdir, nil)
+	if !res.Success {
+		t.Fatalf("expected success, got detail: %s", res.Detail)
+	}
+	s2, err := st.GetStory("S1-02")
+	if err != nil {
+		t.Fatalf("GetStory S1-02: %v", err)
+	}
+	if len(s2.Deps) != 1 || s2.Deps[0] != "S1-01" {
+		t.Fatalf("S1-02 deps from depends_on: got %v, want [S1-01]", s2.Deps)
+	}
+}
+
+// `deps` wins when both keys are present (canonical takes precedence).
+func TestPublishRunnerDepsWinsOverDependsOn(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	writeBacklog(t, workdir, "docs/backlog.yaml", `
+epic: { id: E1, title: "F" }
+stories:
+  - id: S1-01
+    title: "A"
+    body: "a"
+    acceptance: "ok"
+    owner: dev
+    sprint_id: SP1
+    deps: []
+  - id: S1-02
+    title: "B"
+    body: "b"
+    acceptance: "ok"
+    owner: dev
+    sprint_id: SP1
+    deps: [S1-01]
+    depends_on: [S1-99]
+`)
+	res := runPublish(t, st, workdir, nil)
+	if !res.Success {
+		t.Fatalf("expected success, got: %s", res.Detail)
+	}
+	s2, _ := st.GetStory("S1-02")
+	if len(s2.Deps) != 1 || s2.Deps[0] != "S1-01" {
+		t.Fatalf("deps should win over depends_on: got %v, want [S1-01]", s2.Deps)
+	}
+}
+
 // TestPublishRunnerDerivesSprints: a backlog with sprint_id but NO `sprints:`
 // section must still materialize the Sprint rows, otherwise sprint-batched mode
 // (ReadySprints iterates the sprints table) would never fire.
