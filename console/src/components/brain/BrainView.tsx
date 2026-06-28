@@ -78,7 +78,7 @@ export function BrainView() {
 
   // Autoscroll to the newest content.
   useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
+    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
   }, [messages, streaming, actions]);
 
   const send = useCallback(async () => {
@@ -112,54 +112,55 @@ export function BrainView() {
   );
 
   if (!projectId) {
-    return <div className="wrap">Selecciona un proyecto para hablar con el Brain.</div>;
+    return <div className="brain"><p className="brain-empty">Selecciona un proyecto para hablar con el Brain.</p></div>;
   }
 
   return (
-    <div className="brain" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <div ref={scroller} style={{ flex: 1, overflowY: "auto", padding: "16px 0", minHeight: 0 }}>
-        {messages.length === 0 && !streaming && (
-          <p style={{ opacity: 0.6 }}>
-            Soy el Brain de este proyecto. Pídeme: <em>&ldquo;resume el estado&rdquo;</em>,{" "}
-            <em>&ldquo;para la ejecución&rdquo;</em>, <em>&ldquo;¿por qué falló el último run?&rdquo;</em> o{" "}
-            <em>&ldquo;agrega tal funcionalidad&rdquo;</em>.
-          </p>
-        )}
-        {messages.map((m, i) => (
-          <Bubble key={i} role={m.role} content={m.content} />
-        ))}
-        {streaming && <Bubble role="assistant" content={streaming} />}
-        {actions.map((a) => (
-          <ActionCard key={a.action_id} action={a} onResolve={resolve} />
-        ))}
-        {busy && !streaming && <p style={{ opacity: 0.5 }}>· pensando…</p>}
-        {error && <p style={{ color: "#c0392b" }}>{error}</p>}
-      </div>
+    <div className="brain">
+      <div className="brain-inner">
+        <div ref={scroller} className="brain-scroll">
+          {messages.length === 0 && !streaming && (
+            <p className="brain-empty">
+              Soy el Brain de este proyecto. Pídeme: <em>&ldquo;resume el estado&rdquo;</em>,{" "}
+              <em>&ldquo;para la ejecución&rdquo;</em>, <em>&ldquo;¿por qué falló el último run?&rdquo;</em> o{" "}
+              <em>&ldquo;agrega tal funcionalidad&rdquo;</em>.
+            </p>
+          )}
+          {messages.map((m, i) => (
+            <Bubble key={i} role={m.role} content={m.content} />
+          ))}
+          {streaming && <Bubble role="assistant" content={streaming} />}
+          {actions.map((a) => (
+            <ActionCard key={a.action_id} action={a} onResolve={resolve} />
+          ))}
+          {busy && !streaming && <p className="brain-think">· pensando…</p>}
+          {error && <p className="brain-err">{error}</p>}
+        </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-        style={{ display: "flex", gap: 8, padding: "12px 0", borderTop: "1px solid #2a2a2a" }}
-      >
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void send();
-            }
+        <form
+          className="brain-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send();
           }}
-          placeholder="Escribe un mensaje… (Enter envía, Shift+Enter salto de línea)"
-          rows={2}
-          style={{ flex: 1, resize: "none", padding: 8 }}
-        />
-        <button type="submit" disabled={busy || !input.trim()}>
-          Enviar
-        </button>
-      </form>
+        >
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            placeholder="Escribe un mensaje…  (Enter envía · Shift+Enter salto de línea)"
+            rows={2}
+          />
+          <button type="submit" className="btn primary" disabled={busy || !input.trim()}>
+            Enviar
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -167,17 +168,8 @@ export function BrainView() {
 function Bubble({ role, content }: { role: string; content: string }) {
   const isUser = role === "user";
   return (
-    <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", margin: "8px 0" }}>
-      <div
-        style={{
-          maxWidth: "80%",
-          padding: "10px 14px",
-          borderRadius: 12,
-          background: isUser ? "#2563eb" : "#1b1b1b",
-          color: isUser ? "#fff" : "inherit",
-          border: isUser ? "none" : "1px solid #2a2a2a",
-        }}
-      >
+    <div className={`brain-row ${isUser ? "user" : "assistant"}`}>
+      <div className={`brain-bubble ${isUser ? "user" : "assistant"}`}>
         {isUser ? content : <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>}
       </div>
     </div>
@@ -186,14 +178,18 @@ function Bubble({ role, content }: { role: string; content: string }) {
 
 function ActionCard({ action, onResolve }: { action: ProposedAction; onResolve: (a: ProposedAction, approve: boolean) => void }) {
   return (
-    <div style={{ margin: "8px 0", padding: 12, border: "1px solid #b8860b", borderRadius: 10, background: "#1a1710" }}>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>El Brain propone una acción: {action.tool}</div>
-      <pre style={{ fontSize: 12, opacity: 0.85, whiteSpace: "pre-wrap", margin: "4px 0 8px" }}>
-        {JSON.stringify(action.args, null, 2)}
-      </pre>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => onResolve(action, true)}>Aprobar</button>
-        <button onClick={() => onResolve(action, false)}>Rechazar</button>
+    <div className="brain-action">
+      <div className="h">
+        El Brain propone una acción <span className="tool">{action.tool}</span>
+      </div>
+      <pre>{JSON.stringify(action.args, null, 2)}</pre>
+      <div className="acts">
+        <button className="btn primary sm" onClick={() => onResolve(action, true)}>
+          Aprobar
+        </button>
+        <button className="btn ghost sm" onClick={() => onResolve(action, false)}>
+          Rechazar
+        </button>
       </div>
     </div>
   );
