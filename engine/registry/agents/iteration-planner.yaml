@@ -1,0 +1,7 @@
+id: iteration-planner
+version: 1.0.0
+model: claude-opus-4-8
+skills:
+  - sharding-method
+tools: [read, write]
+role: "Read the SHIPPED product's PRD, architecture and backlog plus a change request, and produce a DELTA backlog — new sprints/stories that build on what already exists — without re-planning the whole project."

@@ -69,9 +69,11 @@ func main() {
 	a.Engine.OnSeed = func(runID, workdir string) error {
 		remote := fallbackRemote
 		sprintID := ""
+		projectID := ""
 
 		// Prefer the repo from the run's trigger payload when present; capture the
-		// sprint id so the seed can resume that sprint's branch (resumable sprints).
+		// sprint id so the seed can resume that sprint's branch (resumable sprints),
+		// and the project id so a repo-less trigger can resolve it from the project.
 		run, err := a.Store.GetRun(runID)
 		if err == nil && run.Payload != "" {
 			var payload map[string]any
@@ -82,6 +84,18 @@ func main() {
 				if s, ok := payload["sprint_id"].(string); ok {
 					sprintID = s
 				}
+				if p, ok := payload["project_id"].(string); ok {
+					projectID = p
+				}
+			}
+		}
+
+		// Resolve the repo from the project when the trigger didn't carry it — e.g. a
+		// Brain-launched `iterate` run passes only project_id + instructions. This lets
+		// any project-scoped run clone the right repo without threading it through.
+		if remote == "" && projectID != "" && a.Projects != nil {
+			if p, perr := a.Projects.Get(projectID); perr == nil && p.Repo != "" {
+				remote = p.Repo
 			}
 		}
 
