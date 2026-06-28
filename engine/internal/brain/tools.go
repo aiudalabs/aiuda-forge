@@ -61,6 +61,14 @@ var registry = map[string]toolDef{
 			return jsonStr(map[string]any{"paused": paused, "paused_until": until}), nil
 		},
 	},
+	"get_state": {
+		Tool: Tool{Name: "get_state", Description: "The CURRENT live state of this project, digested: whether the engine is paused, the ACTIVE runs (queued/running/awaiting), the steps awaiting approval, and a count of old terminal runs. ALWAYS call this to answer 'how is it going / what's running / is it paused' — do NOT infer state from list_runs (which dumps every old failed/cancelled run and leads to wrong conclusions).", InputSchema: obj(nil)},
+		Kind: Reversible, MinRole: "viewer",
+		Run: func(ops ControlOps, projectID string, _ json.RawMessage) (string, error) {
+			st, err := ops.ActiveState(projectID)
+			return jsonStr(st), err
+		},
+	},
 	"get_metrics": {
 		Tool: Tool{Name: "get_metrics", Description: "Run counts by status for this project — a progress summary.", InputSchema: obj(nil)},
 		Kind: Reversible, MinRole: "viewer",
