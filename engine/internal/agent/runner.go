@@ -22,7 +22,13 @@ type StepRunner struct {
 	Backend Backend
 	Agents  Loader
 	Auth    Auth
-	Timeout time.Duration
+	// Timeout is the ABSOLUTE backstop wall-clock per agent call (catches a
+	// pathological infinite-but-active loop). IdleTimeout is the primary watchdog:
+	// a healthy agent streams events continuously, so we kill on INACTIVITY (no
+	// output for IdleTimeout) rather than total time — long-but-progressing tasks
+	// survive while hung ones die fast.
+	Timeout     time.Duration
+	IdleTimeout time.Duration
 
 	// Sandboxed runs the agent INSIDE a per-task sandbox (docker with egress
 	// allowlist, or the local fallback) on a .git-less copy of the worktree, then
@@ -44,7 +50,9 @@ type StepRunner struct {
 
 // NewStepRunner builds an agent step runner.
 func NewStepRunner(backend Backend, agents Loader) *StepRunner {
-	return &StepRunner{Backend: backend, Agents: agents, Timeout: 20 * time.Minute}
+	// Absolute backstop generous (2h) so a long-but-progressing task isn't guillotined;
+	// the idle watchdog (8m of no streamed output → stalled) is the real guard.
+	return &StepRunner{Backend: backend, Agents: agents, Timeout: 2 * time.Hour, IdleTimeout: 8 * time.Minute}
 }
 
 // Run implements workflow.Runner.
@@ -83,6 +91,7 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 		SystemPrompt: manifest.Persona,
 		Workdir:      workdir,
 		Timeout:      r.Timeout,
+		IdleTimeout:  r.IdleTimeout,
 		Auth:         r.Auth,
 	}
 

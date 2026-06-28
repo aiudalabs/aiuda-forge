@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -94,15 +95,48 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	// was requested — `--rm` only cleans up on a normal exit.
 	done := make(chan struct{})
 	defer close(done)
+	// activity is poked on every streamed line; the watchdog resets the idle timer
+	// on each poke. A healthy agent streams continuously (tool calls, text), so it
+	// never trips the idle timer; a hung/stalled one goes silent and gets killed in
+	// IdleTimeout instead of waiting out the whole absolute wall.
+	activity := make(chan struct{}, 1)
+	var stalled atomic.Bool
+	kill := func() {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // negative pid = process group
+		}
+		killContainer(opts.CIDFile)
+	}
 	go func() {
-		select {
-		case <-runCtx.Done():
-			if cmd.Process != nil {
-				// Negative pid = the whole process group.
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		var idleC <-chan time.Time
+		var idleTimer *time.Timer
+		if opts.IdleTimeout > 0 {
+			idleTimer = time.NewTimer(opts.IdleTimeout)
+			idleC = idleTimer.C
+			defer idleTimer.Stop()
+		}
+		for {
+			select {
+			case <-runCtx.Done(): // absolute backstop OR external cancel
+				kill()
+				return
+			case <-done:
+				return
+			case <-activity:
+				if idleTimer != nil {
+					if !idleTimer.Stop() {
+						select {
+						case <-idleTimer.C:
+						default:
+						}
+					}
+					idleTimer.Reset(opts.IdleTimeout)
+				}
+			case <-idleC: // no streamed output for IdleTimeout → stalled
+				stalled.Store(true)
+				kill()
+				return
 			}
-			killContainer(opts.CIDFile)
-		case <-done:
 		}
 	}()
 
@@ -111,6 +145,11 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024) // large lines (tool payloads)
 	for scanner.Scan() {
+		// Heartbeat: every line of output keeps the agent alive (non-blocking poke).
+		select {
+		case activity <- struct{}{}:
+		default:
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
@@ -133,8 +172,13 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	scanErr := scanner.Err()
 	waitErr := cmd.Wait()
 
+	// A stalled kill (idle watchdog) takes precedence: it's the actionable failure
+	// ("the agent hung", not "the task is too long for the wall").
+	if stalled.Load() {
+		return result, fmt.Errorf("claude stalled: no streamed output for %s", opts.IdleTimeout)
+	}
 	if err := runCtx.Err(); err == context.DeadlineExceeded {
-		return result, fmt.Errorf("claude timed out after %s", opts.Timeout)
+		return result, fmt.Errorf("claude hit the absolute timeout of %s", opts.Timeout)
 	} else if err == context.Canceled {
 		return result, context.Canceled
 	}
