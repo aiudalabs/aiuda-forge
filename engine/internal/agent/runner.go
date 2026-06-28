@@ -34,6 +34,12 @@ type StepRunner struct {
 
 	// Emit, if set, receives streamed events for the live-log (step.event).
 	Emit func(ev Event)
+
+	// RouteModel, if set, is the cost-routing policy (billing): given the step type
+	// and resolved agent id it returns a model id to use — consulted ABOVE the
+	// manifest default and BELOW an explicit per-step model. "" = no opinion. Wired
+	// by app.Build to billing.DefaultPolicy; keeps agent↔billing decoupled.
+	RouteModel func(stepType, agentID string) string
 }
 
 // NewStepRunner builds an agent step runner.
@@ -62,7 +68,10 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 		return workflow.StepResult{Success: false, Detail: "load agent: " + err.Error()}, nil
 	}
 
-	model := step.Model // cross-model override from the workflow YAML
+	model := step.Model // explicit per-step override from the workflow YAML wins
+	if model == "" && r.RouteModel != nil {
+		model = r.RouteModel(string(step.Type), agentID) // cost routing (billing policy)
+	}
 	if model == "" {
 		model = manifest.Model
 	}

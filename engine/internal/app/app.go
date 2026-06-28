@@ -14,6 +14,7 @@ import (
 	"forge/internal/agent"
 	"forge/internal/api"
 	"forge/internal/auth"
+	"forge/internal/billing"
 	"forge/internal/brain"
 	"forge/internal/gate"
 	"forge/internal/pr"
@@ -100,6 +101,13 @@ func Build(cfg Config) (*App, error) {
 
 	agentRunner := agent.NewStepRunner(backend, agentLoader)
 	agentRunner.Auth = cfg.AgentAuth
+	// Cost routing (billing step 5): the margin lever. The policy assigns a cheaper
+	// model to decomposition/planning agents and a capable one to complex work,
+	// above the manifest default — lowering our token cost without changing price.
+	agentRunner.RouteModel = func(stepType, agentID string) string {
+		_, m := billing.DefaultPolicy.Resolve(stepType, agentID, "")
+		return m
+	}
 	if cfg.AgentTimeout > 0 {
 		agentRunner.Timeout = cfg.AgentTimeout
 	}
@@ -223,6 +231,29 @@ func Build(cfg Config) (*App, error) {
 		llm := brain.NewClient(key, os.Getenv("BRAIN_MODEL"))
 		emit := func(convID, typ string, data map[string]any) { _, _ = st.AppendEvent(convID, "", typ, data) }
 		srv.Brain = brain.New(llm, ops, bst, emit)
+	}
+
+	// Billing (SaaS metering + entitlements). Always on: it auto-creates a free
+	// workspace per owner. Meter (a) real token cost is accrued in the usage handler;
+	// meter (b) billable features via the ticket store's done hook (catches story- AND
+	// sprint-mode merges), resolving the workspace from the project's owner.
+	bill, billErr := billing.Open(filepath.Join(filepath.Dir(cfg.DBPath), "billing.db"))
+	if billErr != nil {
+		return nil, fmt.Errorf("billing store: %w", billErr)
+	}
+	srv.Billing = bill
+	if tix != nil && proj != nil {
+		tix.OnStoryDone = func(projectID, storyID, runID string) {
+			p, err := proj.Get(projectID)
+			if err != nil || p.OwnerID == "" {
+				return // unowned/system run → not billable
+			}
+			ws, err := bill.WorkspaceForOwner(p.OwnerID)
+			if err != nil {
+				return
+			}
+			_, _ = bill.CountFeature(ws.ID, storyID, runID)
+		}
 	}
 
 	workers := cfg.Workers
