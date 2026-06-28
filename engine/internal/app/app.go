@@ -265,8 +265,10 @@ func Build(cfg Config) (*App, error) {
 	// is picked up without a restart. Sends are async + best-effort (Delivery).
 	if proj != nil {
 		tg := telegram.New(func() string { return srv.Settings.MCPValue("telegram", "token") })
+		registry := channels.Registry{tg.Name(): tg}
+		srv.Channels = registry // inbound webhooks reply through the same connectors
 		delivery := &channels.Delivery{
-			Registry: channels.Registry{tg.Name(): tg},
+			Registry: registry,
 			Lookup: func(projectID, eventType string) ([]channels.Target, error) {
 				cs, err := proj.ChannelsForEvent(projectID, eventType)
 				if err != nil {

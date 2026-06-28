@@ -60,6 +60,10 @@ func publicPath(method, path string) bool {
 		return true
 	case "/auth/login", "/auth/register":
 		return method == http.MethodPost
+	case "/webhooks/telegram":
+		// Public route, but authenticated by the Telegram bot secret header
+		// (verified in the handler), not the session/service token.
+		return method == http.MethodPost
 	}
 	return false
 }

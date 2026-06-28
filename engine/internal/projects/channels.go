@@ -1,6 +1,10 @@
 package projects
 
-import "strings"
+import (
+	"database/sql"
+	"errors"
+	"strings"
+)
 
 // Channel is a project's link to an external channel (v1.3): which connector and
 // target (e.g. a Telegram chat id) receives which events. Events is a comma list of
@@ -25,6 +29,24 @@ func (s *Store) LinkChannel(projectID, connector, target, events string) error {
 		 ON CONFLICT(project_id, connector, target) DO UPDATE SET events=excluded.events`,
 		projectID, connector, target, events, s.now())
 	return err
+}
+
+// ProjectForChannel resolves which project a (connector, target) belongs to — the
+// reverse of LinkChannel. Used by the inbound webhook to route a chat's commands to
+// its project. Returns ("", false) if the target is linked to no project. If a
+// target were linked to several projects, the oldest wins (deterministic).
+func (s *Store) ProjectForChannel(connector, target string) (string, bool, error) {
+	var pid string
+	err := s.db.QueryRow(
+		`SELECT project_id FROM project_channels WHERE connector=? AND target=? ORDER BY created_at ASC LIMIT 1`,
+		connector, target).Scan(&pid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return pid, true, nil
 }
 
 // UnlinkChannel removes a channel link.

@@ -17,6 +17,7 @@ import (
 	"forge/internal/auth"
 	"forge/internal/billing"
 	"forge/internal/brain"
+	"forge/internal/channels"
 	"forge/internal/httpx"
 	"forge/internal/projects"
 	"forge/internal/settings"
@@ -39,7 +40,11 @@ type Server struct {
 	Auth     *auth.Store     // nil when AuthDB is not configured
 	Brain    *brain.Brain    // nil when ANTHROPIC_API_KEY is not configured
 	Billing  *billing.Store  // nil when billing is not configured
-	mux      *http.ServeMux
+	// Channels is the connector registry, used by inbound webhooks to reply to a
+	// channel (v1.3). Set by the app after construction; nil disables replies.
+	Channels  channels.Registry
+	linkCodes *linkCodeStore // short-lived codes binding a channel user to an account
+	mux       *http.ServeMux
 }
 
 // workspaceForProject resolves a project's billing workspace via its owner. Returns
@@ -66,7 +71,7 @@ func (s *Server) workspaceForProject(projectID string) (string, bool) {
 // (needTickets / needProjects guards).
 func NewServer(st *store.Store, eng *workflow.Engine, bus *Bus, reg *Registry, tix *tickets.Store, proj *projects.Store, au *auth.Store) *Server {
 	set, _ := settings.Open(filepath.Join(filepath.Dir(reg.Root), "settings.json"))
-	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, Tickets: tix, Projects: proj, Auth: au, mux: http.NewServeMux()}
+	s := &Server{Store: st, Engine: eng, Bus: bus, Registry: reg, Settings: set, Tickets: tix, Projects: proj, Auth: au, linkCodes: newLinkCodeStore(), mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -153,6 +158,10 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /invites/{token}/accept", s.needProjects(s.acceptInvite))
 	// Ticket import (v1.3): pull a source's issues into the backlog. Editor+ only.
 	m.HandleFunc("POST /projects/{id}/import/github", s.needProjects(s.importGitHub))
+	// Channels (v1.3): issue a link code (authenticated) + the inbound Telegram
+	// webhook (public, verified by the bot secret header).
+	m.HandleFunc("POST /channels/{connector}/link-code", s.issueLinkCode)
+	m.HandleFunc("POST /webhooks/telegram", s.telegramWebhook)
 	// Brain — the per-project conversational assistant (needBrain → 503 if no key).
 	m.HandleFunc("POST /projects/{id}/assistant", s.needProjects(s.needBrain(s.assistantSend)))
 	m.HandleFunc("GET /projects/{id}/assistant/history", s.needProjects(s.needBrain(s.assistantHistory)))
