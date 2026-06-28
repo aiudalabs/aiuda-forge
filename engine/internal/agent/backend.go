@@ -35,7 +35,8 @@ type Options struct {
 	AllowedTools []string      // claude tool names, e.g. Read, Edit, Write, Bash
 	SystemPrompt string        // persona, appended via --append-system-prompt
 	Workdir      string        // the agent's working tree (cwd of the child)
-	Timeout      time.Duration // hard wall; 0 = no timeout
+	Timeout      time.Duration // absolute backstop wall-clock; 0 = no absolute limit
+	IdleTimeout  time.Duration // kill if no streamed output for this long; 0 = disabled
 	Auth         Auth
 
 	// Sandbox, when set, runs the agent INSIDE the per-task sandbox (docker exec/
