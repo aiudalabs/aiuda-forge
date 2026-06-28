@@ -1,0 +1,110 @@
+package brain
+
+import (
+	"fmt"
+
+	"forge/internal/store"
+	"forge/internal/tickets"
+	"forge/internal/workflow"
+)
+
+// ControlOps is the set of control-plane operations the Brain's tools invoke,
+// in-process. Defined as an interface so tests fake it; production is EngineOps.
+type ControlOps interface {
+	Status() (paused bool, pausedUntil int64)
+	Pause()
+	Resume()
+	ListRuns(projectID string) ([]map[string]any, error)
+	GetRun(id string) (map[string]any, error)
+	CancelRun(id string) error
+	RetryRun(id string) error
+	RequeueRun(id string) (int, error)
+	StartRun(workflow string, payload map[string]any) (string, error)
+	ApproveStep(runID, step string) error
+	RejectStep(runID, step, reason string) error
+	Metrics(projectID string) (map[string]any, error)
+}
+
+// EngineOps is the production ControlOps, wired to the kernel Engine, store, and
+// native ticket store. It mirrors what the HTTP handlers do, called in-process.
+type EngineOps struct {
+	Engine  *workflow.Engine
+	Store   *store.Store
+	Tickets *tickets.Store
+}
+
+func (o EngineOps) Status() (bool, int64) { return o.Engine.IsPaused(), o.Engine.PausedUntil() }
+func (o EngineOps) Pause()                { o.Engine.Pause() }
+func (o EngineOps) Resume()               { o.Engine.Resume() }
+
+func (o EngineOps) ListRuns(projectID string) ([]map[string]any, error) {
+	runs, err := o.Store.ListRunsByProject("", projectID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, map[string]any{
+			"id": r.ID, "workflow": r.WorkflowID, "status": string(r.Status), "created_at": r.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (o EngineOps) GetRun(id string) (map[string]any, error) {
+	r, err := o.Store.GetRun(id)
+	if err != nil {
+		return nil, err
+	}
+	tasks, _ := o.Store.TasksForRun(id)
+	steps := make([]map[string]any, 0, len(tasks))
+	for _, t := range tasks {
+		step := map[string]any{"step": t.StepID, "type": t.Type, "status": string(t.Status)}
+		if t.Error != "" {
+			step["error"] = t.Error
+		}
+		// Surface a failed step's result so the Brain can diagnose without a second call.
+		if string(t.Status) == "FAILED" && t.Result != "" && t.Result != "{}" {
+			step["result"] = t.Result
+		}
+		steps = append(steps, step)
+	}
+	return map[string]any{
+		"id": r.ID, "workflow": r.WorkflowID, "status": string(r.Status),
+		"project_id": r.ProjectID, "steps": steps,
+	}, nil
+}
+
+func (o EngineOps) CancelRun(id string) error { return o.Store.CancelRun(id) }
+func (o EngineOps) RetryRun(id string) error  { return o.Engine.RetryRun(id) }
+
+func (o EngineOps) RequeueRun(id string) (int, error) {
+	if o.Tickets == nil {
+		return 0, fmt.Errorf("ticket store not configured")
+	}
+	return o.Tickets.RequeueByRun(id)
+}
+
+func (o EngineOps) StartRun(wf string, payload map[string]any) (string, error) {
+	return o.Engine.StartRun(wf, payload)
+}
+
+func (o EngineOps) ApproveStep(runID, step string) error { return o.Engine.ApproveStep(runID, step) }
+func (o EngineOps) RejectStep(runID, step, reason string) error {
+	return o.Engine.RejectStep(runID, step, reason)
+}
+
+// Metrics returns a compact status summary for a project (counts by run status).
+// Cost/token detail lives in the Spend view; the Brain only needs the shape of
+// progress to answer "resume el estado".
+func (o EngineOps) Metrics(projectID string) (map[string]any, error) {
+	runs, err := o.Store.ListRunsByProject("", projectID)
+	if err != nil {
+		return nil, err
+	}
+	byStatus := map[string]int{}
+	for _, r := range runs {
+		byStatus[string(r.Status)]++
+	}
+	return map[string]any{"runs_total": len(runs), "by_status": byStatus}, nil
+}
