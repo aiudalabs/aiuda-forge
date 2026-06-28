@@ -75,6 +75,21 @@ func (p *fakeStoryProvider) Running(_ context.Context) ([]NativeTicket, error) {
 	return out, nil
 }
 
+// Failed returns the fake's failed stories (R3 re-sync source).
+func (p *fakeStoryProvider) Failed(_ context.Context) ([]NativeTicket, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []NativeTicket
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.status != "failed" {
+			continue
+		}
+		out = append(out, NativeTicket{ID: s.id, Title: s.title, Status: s.status, RunID: s.runID, Deps: s.deps, SprintID: s.sprintID, ProjectID: s.projectID})
+	}
+	return out, nil
+}
+
 // Claim atomically transitions a story from backlog → running.
 // Returns true if this caller won the claim, false if already taken.
 func (p *fakeStoryProvider) Claim(_ context.Context, id string) (bool, error) {
@@ -96,6 +111,10 @@ func (p *fakeStoryProvider) MarkRunning(_ context.Context, id, runID string) err
 	if !ok {
 		return nil
 	}
+	// Mirror the real provider: PUT status=running + run_id. In the normal flow the
+	// story is already running (from Claim) so this is a no-op; for the R3 re-sync
+	// it performs the legal failed→running transition.
+	s.status = "running"
 	s.runID = runID
 	return nil
 }
@@ -392,6 +411,8 @@ type fakeMergeChecker struct {
 	mergeCalls    int
 	mergedNumbers []int
 	failMerge     bool // when true, MergePR returns an error (auto-merge failure path)
+	gateMissing   bool // when true, FileOnBranch reports the gate ABSENT on dev (#19)
+	fileChecks    int  // counts FileOnBranch calls (assert the #19 guard ran)
 }
 
 func newFakeMergeChecker() *fakeMergeChecker {
@@ -410,6 +431,16 @@ func (m *fakeMergeChecker) PRMerged(_ context.Context, _ string, number int) (bo
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.merged[number], nil
+}
+
+// FileOnBranch implements the optional BranchFileChecker (#19). Defaults to
+// present (gateMissing=false) so existing sprint-firing tests are unaffected;
+// the #19 test sets gateMissing=true to assert the scheduler defers firing.
+func (m *fakeMergeChecker) FileOnBranch(_ context.Context, _, _, _ string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fileChecks++
+	return !m.gateMissing, nil
 }
 
 func (m *fakeMergeChecker) MergePR(_ context.Context, _ string, number int) error {
@@ -1292,5 +1323,72 @@ func TestPerProjectMergeModeInOneCycle(t *testing.T) {
 	}
 	if got := provider.statusOf("MAN"); got != "in_review" {
 		t.Errorf("manual story must stay in_review (await human merge), got %s", got)
+	}
+}
+
+// TestNativeSprintDefersUntilDocsOnDev reproduces #19: a ready sprint must NOT
+// fire until the project's design docs (.vibeforge-gate) have been merged to dev.
+// With the gate absent the scheduler defers (no fire, story stays backlog); once
+// the docs PR lands the same sprint fires on the next cycle.
+func TestNativeSprintDefersUntilDocsOnDev(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "foundation", status: "backlog",
+			repo: "https://github.com/acme/x", sprintID: "SP1", projectID: "p1"},
+	)
+	cp := &fakeControlPlane{execUnit: "sprint"}
+	gh := newFakeMergeChecker()
+	gh.gateMissing = true // docs_pr not merged yet → dev has no gate
+	sched := NewNativeScheduler(provider, cp, "dev", gh)
+	ctx := context.Background()
+
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 0 {
+		t.Fatalf("sprint fired before docs on dev: got %d fires, want 0", cp.firedCount())
+	}
+	if gh.fileChecks == 0 {
+		t.Fatalf("#19 guard never ran — FileOnBranch was not consulted")
+	}
+	if got := provider.statusOf("S1"); got != "backlog" {
+		t.Fatalf("deferred sprint's story should stay backlog, got %s", got)
+	}
+
+	// Human merges the docs PR → dev now has the gate → the sprint fires.
+	gh.gateMissing = false
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("sprint did not fire after docs landed on dev: got %d fires, want 1", cp.firedCount())
+	}
+}
+
+// TestNativeResyncsFailedStoryWithRevivedRun reproduces R3: a story marked failed
+// whose run later REVIVED (the reaper requeued a stale step → run back to RUNNING)
+// must be re-synced to running. A story whose run is genuinely terminal stays failed.
+func TestNativeResyncsFailedStoryWithRevivedRun(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "revived", status: "failed", runID: "run-alive"},
+		&fakeStory{id: "S2", title: "really dead", status: "failed", runID: "run-dead"},
+		&fakeStory{id: "S3", title: "design fail", status: "failed", runID: ""}, // never fired
+	)
+	cp := &fakeControlPlane{statuses: map[string]string{
+		"run-alive": "RUNNING", // revived
+		"run-dead":  "FAILED",  // genuinely terminal
+	}}
+	sched := NewNativeScheduler(provider, cp, "dev", nil)
+
+	if _, err := sched.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.statusOf("S1"); got != "running" {
+		t.Fatalf("S1 (failed story, run RUNNING) should re-sync to running, got %s", got)
+	}
+	if got := provider.statusOf("S2"); got != "failed" {
+		t.Fatalf("S2 (run genuinely FAILED) must stay failed, got %s", got)
+	}
+	if got := provider.statusOf("S3"); got != "failed" {
+		t.Fatalf("S3 (never fired, no run) must stay failed, got %s", got)
 	}
 }

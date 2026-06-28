@@ -36,6 +36,9 @@ type StoryProvider interface {
 	Ready(ctx context.Context) ([]NativeTicket, error)
 	// Running returns stories currently executing.
 	Running(ctx context.Context) ([]NativeTicket, error)
+	// Failed returns stories in the terminal failed state. The scheduler uses this
+	// to detect a story whose run later REVIVED (R3) and re-sync it to running.
+	Failed(ctx context.Context) ([]NativeTicket, error)
 	// Claim atomically transitions a story from backlog → running.
 	// Returns true if this caller claimed it, false if already taken.
 	Claim(ctx context.Context, id string) (bool, error)
@@ -152,6 +155,11 @@ func (p *NativeHTTPProvider) Ready(ctx context.Context) ([]NativeTicket, error) 
 // Running GETs /tickets and returns stories whose status is "running".
 func (p *NativeHTTPProvider) Running(ctx context.Context) ([]NativeTicket, error) {
 	return p.filterTickets(ctx, "running")
+}
+
+// Failed GETs /tickets and returns stories whose status is "failed" (R3).
+func (p *NativeHTTPProvider) Failed(ctx context.Context) ([]NativeTicket, error) {
+	return p.filterTickets(ctx, "failed")
 }
 
 func (p *NativeHTTPProvider) filterTickets(ctx context.Context, status string) ([]NativeTicket, error) {
@@ -477,6 +485,21 @@ type PRStateChecker interface {
 	PRClosed(ctx context.Context, repoURL string, number int) (bool, error)
 }
 
+// BranchFileChecker is an OPTIONAL extension a MergeChecker may implement so the
+// scheduler can defer firing a sprint until the project's design docs are on `dev`
+// (#19). The design handoff publishes stories the instant design finishes, but the
+// docs_pr PR — which lands docs/ + `.vibeforge-gate` on dev — is merged by a human
+// afterwards. Firing before that merge clones a dev with no PRD/architecture/gate,
+// so draft_story has no spec and the gate seal fails. When the MergeChecker
+// implements this, fireSprint skips a sprint whose repo's dev lacks the gate file;
+// the sprint stays ready and fires on a later cycle once the docs PR lands. When
+// absent (e.g. local PR_MODE with a nil gh), the guard is a no-op.
+type BranchFileChecker interface {
+	// FileOnBranch reports whether path exists on branch of repoURL; an absent
+	// path/branch is (false, nil), not an error.
+	FileOnBranch(ctx context.Context, repoURL, branch, path string) (bool, error)
+}
+
 // NewNativeScheduler builds a NativeScheduler. gh may be nil to disable the
 // merge-reconcile loop (e.g. local PR_MODE where there are no GitHub PRs).
 func NewNativeScheduler(provider StoryProvider, cp ControlPlane, workflow string, gh MergeChecker) *NativeScheduler {
@@ -552,10 +575,17 @@ func (s *NativeScheduler) modeFor(ctx context.Context, cache map[string]projectM
 func (s *NativeScheduler) RunOnce(ctx context.Context) (int, error) {
 	modeCache := map[string]projectMode{}
 
-	// Merge-reconcile first: advance any in_review work whose PR has merged (and,
+	// Re-sync first (R3): a story can be marked failed when its run ends FAILED, but
+	// the kernel reaper may then requeue a stale step and the run goes RUNNING again.
+	// The orchestrator only flips story→running in its own FireRun, so such a story
+	// stays failed with a live run (and an orphaned PR). Detect and re-sync before
+	// anything else so the completion loop picks it up this cycle.
+	actions := s.reconcileRevivedRuns(ctx)
+
+	// Merge-reconcile next: advance any in_review work whose PR has merged (and,
 	// per the project's merge_mode, merge the PRs ourselves) BEFORE firing, so a
 	// dependent can unblock in the same cycle its prerequisite's PR lands.
-	actions := s.reconcileMerges(ctx, modeCache)
+	actions += s.reconcileMerges(ctx, modeCache)
 
 	// Fire ready work, grouped by project so each project runs under its own
 	// execution_unit. Both lists are read once and partitioned by project_id.
@@ -664,6 +694,41 @@ func groupSprintsByProject(sprints []NativeSprint) map[string][]NativeSprint {
 // once per project (modeCache) and read fresh each cycle so a toggle takes effect
 // without a restart. A nil gh client or an unrecorded PR leaves the work in_review.
 // Errors are logged and skipped — the work simply waits for the next cycle.
+// reconcileRevivedRuns re-syncs a story that was marked failed but whose run has
+// since revived (R3). When the kernel reaper requeues a stale step, the run goes
+// back to RUNNING, but a story the orchestrator already failed (e.g. via the
+// merge/park path) stays failed — stranding live work and orphaning its PR. For
+// each failed story whose run is RUNNING again, flip it back to running so the
+// normal completion loop advances it. In sprint mode every story of the sprint
+// shares the run_id, so all of them re-sync together. Returns the count re-synced.
+func (s *NativeScheduler) reconcileRevivedRuns(ctx context.Context) int {
+	failed, err := s.provider.Failed(ctx)
+	if err != nil {
+		log.Printf("native-scheduler: list failed stories (R3 re-sync): %v", err)
+		return 0
+	}
+	n := 0
+	for _, t := range failed {
+		if t.RunID == "" {
+			continue // never fired — a real design/backlog failure, not a desync
+		}
+		status, err := s.cp.RunStatus(ctx, t.RunID)
+		if err != nil {
+			continue // transient; try again next cycle
+		}
+		if status != "RUNNING" {
+			continue // run is genuinely terminal (FAILED/CANCELLED/DONE) — leave failed
+		}
+		if err := s.provider.MarkRunning(ctx, t.ID, t.RunID); err != nil {
+			log.Printf("native-scheduler: R3 re-sync story %s -> running: %v", t.ID, err)
+			continue
+		}
+		log.Printf("native-scheduler: story %s was failed but run %s is RUNNING — re-synced to running (R3)", t.ID, t.RunID)
+		n++
+	}
+	return n
+}
+
 func (s *NativeScheduler) reconcileMerges(ctx context.Context, modeCache map[string]projectMode) int {
 	if s.gh == nil {
 		return 0
@@ -1187,6 +1252,38 @@ func (s *NativeScheduler) advanceLooseStory(ctx context.Context, t NativeTicket)
 // for the whole sprint. Returns true if a run was fired. A lost claim (concurrent
 // scheduler), an empty story set, or any error short-circuits to false.
 func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool {
+	// #19 guard: don't fire before the project's design docs + gate are on `dev`.
+	// Peek the sprint's stories (read-only, no claim) to learn the repo, then check
+	// that `.vibeforge-gate` is present on dev. If the docs PR hasn't merged yet,
+	// defer: the sprint stays ready and fires next cycle once the docs land. The
+	// guard only runs when the MergeChecker can inspect a branch (GitHub mode);
+	// in local mode (nil/plain gh) it is a no-op so behavior is unchanged.
+	if fc, ok := s.gh.(BranchFileChecker); ok {
+		if peek, perr := s.provider.SprintStories(ctx, sp.ID); perr == nil {
+			repo := ""
+			for _, st := range peek {
+				if st.Repo != "" {
+					repo = st.Repo
+					break
+				}
+			}
+			// Only meaningful for GitHub repos (the guard inspects a branch via the
+			// GitHub API). A local/non-github repo (PR_MODE=local) has no dev-on-GitHub
+			// to check, so skip the guard and fire as before — never wedge local mode.
+			if repo != "" && strings.Contains(repo, "github.com") {
+				present, ferr := fc.FileOnBranch(ctx, repo, "dev", ".vibeforge-gate")
+				if ferr != nil {
+					log.Printf("native-scheduler: sprint %s: dev docs check failed (%v) — deferring fire", sp.ID, ferr)
+					return false
+				}
+				if !present {
+					log.Printf("native-scheduler: sprint %s: design docs not yet merged to dev (no .vibeforge-gate) — deferring fire", sp.ID)
+					return false
+				}
+			}
+		}
+	}
+
 	// ClaimSprint returns the claimed IDs in topo order, but we re-fetch the full
 	// stories (with body/accept/repo) below to build the ticket, so the IDs from
 	// the claim aren't needed here — only that the claim was won.

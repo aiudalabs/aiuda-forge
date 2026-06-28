@@ -869,7 +869,14 @@ function mapDesignRun(r: KernelRunWithSteps): DesignRun {
   // Construir fases derivando el estado de los steps cuando están disponibles.
   const steps = r.steps ?? [];
   const statusOf = (sid: string): DesignStepStatus => {
-    const s = steps.find((st) => st.step_id === sid);
+    // Use the LATEST instance of the step (#18). A retry leaves an older FAILED
+    // task plus a newer DONE; steps arrive created_at ASC, so find() (first match)
+    // would report the stale FAILED and the artifact would never render even
+    // though the phase re-completed. Keep the last match = the current attempt.
+    let s: (typeof steps)[number] | undefined;
+    for (const st of steps) {
+      if (st.step_id === sid) s = st;
+    }
     return (s?.status ?? "QUEUED") as DesignStepStatus;
   };
 
