@@ -1,10 +1,48 @@
 package projects_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"forge/internal/projects"
 )
+
+// A project predating the members table (owner_id set, no member row) gets its owner
+// backfilled as an 'owner' member when the store reopens.
+func TestBackfillOwnerMembersOnOpen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "projects.db")
+
+	st, err := projects.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Create(projects.Project{ID: "legacy", OwnerID: "usr-a"}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a legacy row: drop the owner's member row Create added.
+	if err := st.RemoveMember("legacy", "usr-a"); err != nil {
+		t.Fatal(err)
+	}
+	if members, _ := st.Members("legacy"); len(members) != 0 {
+		t.Fatalf("precondition: expected no members, got %v", members)
+	}
+	st.Close()
+
+	// Reopen → backfill should record the owner as a member.
+	st2, err := projects.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	members, err := st2.Members("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 1 || members[0].UserID != "usr-a" || members[0].Role != projects.RoleOwner {
+		t.Fatalf("backfill should record owner usr-a, got %+v", members)
+	}
+}
 
 // Creating a project records its owner as a member with role owner.
 func TestCreateRecordsOwnerMember(t *testing.T) {
