@@ -254,6 +254,15 @@ export interface MembersPayload {
   invites: Invite[];
 }
 
+// ── Channels (v1.3) ───────────────────────────────────────────────────────────
+export interface Channel {
+  project_id: string;
+  connector: string;
+  target: string;
+  events: string;
+  created_at: number;
+}
+
 // ── Project docs (Studio = Confluence, U1) ────────────────────────────────────
 // GET /projects/{id}/docs → { docs: DocEntry[], ref }
 // GET /projects/{id}/docs/file?path=docs/PRD.md → { content }

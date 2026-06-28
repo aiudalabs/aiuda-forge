@@ -49,6 +49,10 @@ body {
     linear-gradient(180deg, #faf8f4 0%, #f7f4ee 42%, #faf8f4 100%);
   background-attachment: fixed;
   min-height: 100vh;
+  /* Off-canvas panels (.drawer) sit beyond the right edge when closed
+     (translateX(102%)); clip horizontal overflow so they never create a
+     page-wide horizontal scrollbar. Vertical scroll is unaffected. */
+  overflow-x: hidden;
 }
 
 ::selection {
@@ -353,6 +357,93 @@ header.top .sp {
   max-width: 1720px;
   width: 100%;
   margin-inline: auto;
+}
+
+/* Form pages (settings, team, connectors): a comfortable centered column with
+   symmetric gutters, so every section aligns to the same bounds instead of one
+   section being full-width-centered and another a narrow left-hugging block. The
+   sections inside fill 100% of this column. */
+.form-col {
+  padding: clamp(20px, 2vw, 34px) clamp(20px, 2.4vw, 48px);
+  max-width: 1080px;
+  width: 100%;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+/* A section inside .form-col fills the column (the column owns width + padding). */
+.settings-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* MCP connections: a compact one-row-per-connection list that scales to many
+   (vs. the old 3-stacked-fields-per-connection). Click "edit" to expand inline. */
+.mcp-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.mcp-item {
+  border-bottom: 1px solid var(--stroke);
+}
+.mcp-item:last-child {
+  border-bottom: none;
+}
+.mcp-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 14px;
+}
+.mcp-row:hover {
+  background: var(--bg2);
+}
+.mcp-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-url {
+  color: var(--ink3);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-tok {
+  font-size: 11px;
+  color: var(--ink4);
+}
+.mcp-tok.on {
+  color: #2a6;
+}
+.mcp-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 14px 14px;
+  background: var(--bg);
+}
+.link {
+  background: none;
+  border: none;
+  color: #2563c0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.link.danger {
+  color: #c0392b;
 }
 
 /* Wide screens: dense surfaces (board, tickets, spend) breathe into the extra width. */

@@ -24,7 +24,7 @@ func membersServer(t *testing.T) (*Server, *auth.Store, *projects.Store) {
 		t.Fatalf("projects.Open: %v", err)
 	}
 	t.Cleanup(func() { au.Close(); pr.Close() })
-	return &Server{Auth: au, Projects: pr}, au, pr
+	return &Server{Auth: au, Projects: pr, linkCodes: newLinkCodeStore()}, au, pr
 }
 
 // Inviting an existing user adds them immediately; a non-owner cannot manage.

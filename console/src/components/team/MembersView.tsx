@@ -80,7 +80,7 @@ export function MembersView() {
 
   if (!activeId) {
     return (
-      <div className="wrap">
+      <div className="mwrap">
         <div className="placeholder">{t("team.selectProject")}</div>
         <style jsx>{styles}</style>
       </div>
@@ -88,7 +88,7 @@ export function MembersView() {
   }
 
   return (
-    <div className="wrap">
+    <div className="mwrap">
       <div className="sectitle">
         <h2>{t("team.title")}</h2>
         <span className="c">{t("team.subtitle")} · {project?.name ?? activeId}</span>
@@ -202,7 +202,7 @@ function roleLabel(r: Role, t: (key: string) => string): string {
 }
 
 const styles = `
-  .wrap { padding: 24px; max-width: 720px; display: flex; flex-direction: column; gap: 16px; }
+  .mwrap { width: 100%; display: flex; flex-direction: column; gap: 16px; }
   .sectitle h2 { margin: 0; font-weight: 900; font-size: 22px; }
   .sectitle .c { color: #888; font-size: 13px; }
   .hint { color: #666; font-size: 13px; margin: 0; }

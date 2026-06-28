@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE TABLE IF NOT EXISTS channel_identities (
+  connector        TEXT NOT NULL,
+  external_user_id TEXT NOT NULL,
+  user_id          TEXT NOT NULL,
+  created_at       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (connector, external_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_channel_identities_user ON channel_identities(user_id);
 `
 
 // Store is the auth store backed by a sqlite database.
@@ -273,6 +281,34 @@ func (s *Store) UserByEmail(email string) (User, error) {
 // member rows (which store only user ids) back to emails for the members list.
 func (s *Store) UserByID(id string) (User, error) {
 	return s.getUserByID(id)
+}
+
+// BindChannelIdentity links an external channel user (e.g. a Telegram user id) to an
+// aiuda-forge user. Upsert on (connector, external_user_id): re-linking moves the
+// binding to the new user. This is how a channel command is attributed to a real
+// user (v1.3) so multi-tenant/role gating applies.
+func (s *Store) BindChannelIdentity(connector, externalUserID, userID string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO channel_identities(connector, external_user_id, user_id, created_at) VALUES(?,?,?,?)
+		 ON CONFLICT(connector, external_user_id) DO UPDATE SET user_id=excluded.user_id`,
+		connector, externalUserID, userID, s.now().UnixMilli())
+	return err
+}
+
+// UserForChannelIdentity resolves an external channel user to its bound aiuda-forge
+// user id, or ("", false) if not linked.
+func (s *Store) UserForChannelIdentity(connector, externalUserID string) (string, bool, error) {
+	var uid string
+	err := s.db.QueryRow(
+		`SELECT user_id FROM channel_identities WHERE connector=? AND external_user_id=?`,
+		connector, externalUserID).Scan(&uid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return uid, true, nil
 }
 
 func (s *Store) getUserByEmail(email string) (User, error) {

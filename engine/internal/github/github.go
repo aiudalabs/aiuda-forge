@@ -43,6 +43,45 @@ func defaultRunner(ctx context.Context, workdir string, name string, args ...str
 // ErrRepoExists is returned by CreateRepo when the repository already exists.
 var ErrRepoExists = errors.New("repository already exists")
 
+// Issue is a GitHub issue, as fetched for ticket import (v1.3).
+type Issue struct {
+	Number int     `json:"number"`
+	Title  string  `json:"title"`
+	Body   string  `json:"body"`
+	State  string  `json:"state"`
+	URL    string  `json:"url"`
+	Labels []Label `json:"labels"`
+}
+
+// Label is a GitHub issue label.
+type Label struct {
+	Name string `json:"name"`
+}
+
+// ListIssues returns the OPEN issues of repoURL via `gh issue list`. Pull requests
+// are excluded by gh's issue list. The caller maps these into backlog stories
+// (v1.3 import); idempotency is handled there via external_ref.
+func (c *Client) ListIssues(ctx context.Context, repoURL string) ([]Issue, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.runner(ctx, "", "gh", "issue", "list", "--repo", slug,
+		"--state", "open", "--limit", "500", "--json", "number,title,body,state,url,labels")
+	if err != nil {
+		return nil, fmt.Errorf("gh issue list (%s): %w: %s", slug, err, strings.TrimSpace(out))
+	}
+	var issues []Issue
+	if err := json.Unmarshal([]byte(out), &issues); err != nil {
+		return nil, fmt.Errorf("decode gh issue list (%s): %w", slug, err)
+	}
+	return issues, nil
+}
+
+// Slug returns the owner/repo slug for repoURL (exported helper for importers that
+// need to build a stable external_ref like "github:owner/repo#42").
+func Slug(repoURL string) (string, error) { return slugFromURL(repoURL) }
+
 // CreateRepo creates a GitHub repository org/name and returns its HTTPS URL.
 // If the repo already exists it returns ErrRepoExists (not a crash).
 func (c *Client) CreateRepo(ctx context.Context, org, name, description string, private bool) (string, error) {

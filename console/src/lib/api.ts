@@ -1032,3 +1032,59 @@ export async function acceptInvite(token: string): Promise<{ project_id: string;
 
 // Member/Invite re-exported through types; referenced here to satisfy the imports.
 export type { Member, Invite };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Channels & import (v1.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { Channel } from "./types";
+
+/** GET /projects/{id}/channels — canales vinculados del proyecto. */
+export async function listChannels(projectId: string): Promise<Channel[]> {
+  const res = await http<{ channels: Channel[] }>(`/projects/${projectId}/channels`);
+  return res.channels ?? [];
+}
+
+/** POST /projects/{id}/channels — vincula connector+target (editor+). */
+export async function linkChannel(projectId: string, connector: string, target: string, events = "*"): Promise<void> {
+  await http<unknown>(`/projects/${projectId}/channels`, {
+    method: "POST",
+    body: JSON.stringify({ connector, target, events }),
+  });
+}
+
+/** DELETE /projects/{id}/channels?connector=&target= — desvincula. */
+export async function unlinkChannel(projectId: string, connector: string, target: string): Promise<void> {
+  const qs = new URLSearchParams({ connector, target }).toString();
+  await http<unknown>(`/projects/${projectId}/channels?${qs}`, { method: "DELETE" });
+}
+
+/** POST /channels/{connector}/link-code — código para vincular tu cuenta al bot. */
+export async function issueLinkCode(connector: string): Promise<{ code: string; expires_in: number; instructions: string }> {
+  return http<{ code: string; expires_in: number; instructions: string }>(`/channels/${connector}/link-code`, {
+    method: "POST",
+  });
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  story_ids: string[];
+}
+
+/** POST /projects/{id}/import/github — importa issues de GitHub al backlog (editor+). */
+export async function importGitHub(projectId: string, repo?: string): Promise<ImportResult> {
+  return http<ImportResult>(`/projects/${projectId}/import/github`, {
+    method: "POST",
+    body: JSON.stringify(repo ? { repo } : {}),
+  });
+}
+
+/** POST /projects/{id}/channels/test — envía un mensaje de prueba por el conector real. */
+export async function testChannels(projectId: string): Promise<{ sent: number; failed: number; error: string }> {
+  return http<{ sent: number; failed: number; error: string }>(`/projects/${projectId}/channels/test`, {
+    method: "POST",
+  });
+}
+
+export type { Channel };
