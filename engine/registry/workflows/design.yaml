@@ -98,6 +98,14 @@ steps:
       prd: $prd.text
       architecture: $architecture.text
       output: docs/backlog.yaml
+    on_fail:
+      # A failed/timed-out backlog generation must NOT nuke the whole design run
+      # (#15). The two-level backlog already keeps this step light, but a large
+      # project can still exceed the agent timeout — retry once, hinting the
+      # scrum-master to stay lean (over-generation is the usual cause).
+      goto: backlog
+      max: 1
+      feedback: "La generación anterior del backlog falló o excedió el tiempo. Genera un backlog MÁS LEAN y enfocado al MVP: prioriza el happy-path central, agrupa en menos sprints y difiere lo nice-to-have. Mantén el nivel de ESQUELETO (título + user-story + acceptance + deps + owner + sprint) — sin specs de implementación; esas las expande el story-detailer just-in-time."
 
   - id: backlog_gate
     type: human_gate

@@ -378,15 +378,27 @@ func (s *Server) artifacts(w http.ResponseWriter, r *http.Request) {
 		notFound(w, err)
 		return
 	}
+	// Pick the LATEST instance of this step, preferring a DONE one (#18). A retry
+	// leaves an older FAILED task plus a newer DONE; tasks come back created_at ASC,
+	// so returning the first match would serve the stale/empty FAILED artifact even
+	// though the phase re-completed. Iterate keeping the best: a DONE always beats a
+	// non-DONE, and among equals the later (more recent) wins.
+	var best *store.Task
 	for _, t := range tasks {
-		if t.StepID == kind {
-			var result map[string]any
-			_ = json.Unmarshal([]byte(t.Result), &result)
-			writeJSON(w, http.StatusOK, map[string]any{"run": id, "kind": kind, "result": result})
-			return
+		if t.StepID != kind {
+			continue
+		}
+		if best == nil || t.Status == store.StatusDone || best.Status != store.StatusDone {
+			best = t
 		}
 	}
-	httpErr(w, http.StatusNotFound, "no artifact for step "+kind)
+	if best == nil {
+		httpErr(w, http.StatusNotFound, "no artifact for step "+kind)
+		return
+	}
+	var result map[string]any
+	_ = json.Unmarshal([]byte(best.Result), &result)
+	writeJSON(w, http.StatusOK, map[string]any{"run": id, "kind": kind, "result": result})
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
