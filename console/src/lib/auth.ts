@@ -114,6 +114,24 @@ export async function me(): Promise<LoginUser | null> {
   }
 }
 
+/**
+ * POST /auth/change-password — rota la contraseña del usuario logueado. Verifica la
+ * actual; en éxito el backend invalida todas las sesiones (hay que re-loguear). Lanza
+ * Error con mensaje claro en contraseña actual incorrecta (401) u otra validación.
+ */
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${API_URL}/auth/change-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  });
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("La contraseña actual es incorrecta.");
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `No se pudo cambiar la contraseña (${res.status}).`);
+  }
+}
+
 /** POST /auth/logout — invalida la sesión en el servidor y borra el token local. */
 export async function logout(): Promise<void> {
   const t = getToken();
