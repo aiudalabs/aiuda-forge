@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"forge/internal/auth"
+	"forge/internal/brain"
 	"forge/internal/httpx"
 	"forge/internal/projects"
 	"forge/internal/settings"
@@ -34,6 +35,7 @@ type Server struct {
 	Tickets  *tickets.Store
 	Projects *projects.Store // nil when ProjectsDB is not configured
 	Auth     *auth.Store     // nil when AuthDB is not configured
+	Brain    *brain.Brain    // nil when ANTHROPIC_API_KEY is not configured
 	mux      *http.ServeMux
 }
 
@@ -116,6 +118,11 @@ func (s *Server) routes() {
 	// docs/ (source of truth that outlives an ephemeral design run).
 	m.HandleFunc("GET /projects/{id}/docs", s.needProjects(s.listProjectDocs))
 	m.HandleFunc("GET /projects/{id}/docs/file", s.needProjects(s.getProjectDoc))
+	// Brain — the per-project conversational assistant (needBrain → 503 if no key).
+	m.HandleFunc("POST /projects/{id}/assistant", s.needProjects(s.needBrain(s.assistantSend)))
+	m.HandleFunc("GET /projects/{id}/assistant/history", s.needProjects(s.needBrain(s.assistantHistory)))
+	m.HandleFunc("POST /projects/{id}/assistant/actions/{actionId}/approve", s.needProjects(s.needBrain(s.assistantApprove)))
+	m.HandleFunc("POST /projects/{id}/assistant/actions/{actionId}/reject", s.needProjects(s.needBrain(s.assistantReject)))
 
 	// Native ticket store. Registered unconditionally and guarded per-request:
 	// Tickets may be nil (no TicketsDB configured) — needTickets returns 503 in that case.

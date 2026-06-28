@@ -8,11 +8,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"forge/internal/agent"
 	"forge/internal/api"
 	"forge/internal/auth"
+	"forge/internal/brain"
 	"forge/internal/gate"
 	"forge/internal/pr"
 	"forge/internal/projects"
@@ -207,6 +209,21 @@ func Build(cfg Config) (*App, error) {
 	bus := api.NewBus(st)
 	reg := api.NewRegistry(cfg.RegistryRoot)
 	srv := api.NewServer(st, eng, bus, reg, tix, proj, au)
+
+	// Brain (optional): the per-project conversational assistant. Wired only when a
+	// dedicated ANTHROPIC_API_KEY is present; otherwise its routes return 503. It
+	// runs the tool-use loop in-process against the engine/store, and streams over
+	// the same event bus (emit → AppendEvent scoped to a conversation id).
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		bst, bErr := brain.Open(filepath.Join(filepath.Dir(cfg.DBPath), "brain.db"))
+		if bErr != nil {
+			return nil, fmt.Errorf("brain store: %w", bErr)
+		}
+		ops := brain.EngineOps{Engine: eng, Store: st, Tickets: tix}
+		llm := brain.NewClient(key, os.Getenv("BRAIN_MODEL"))
+		emit := func(convID, typ string, data map[string]any) { _, _ = st.AppendEvent(convID, "", typ, data) }
+		srv.Brain = brain.New(llm, ops, bst, emit)
+	}
 
 	workers := cfg.Workers
 	if workers <= 0 {
