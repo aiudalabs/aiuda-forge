@@ -5,6 +5,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { useRealtime } from "@/lib/hooks";
+import { I18nProvider } from "@/lib/i18n";
 
 function Realtime() {
   useRealtime();
@@ -23,8 +24,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={client}>
-      <Realtime />
-      {children}
+      <I18nProvider>
+        <Realtime />
+        {children}
+      </I18nProvider>
     </QueryClientProvider>
   );
 }

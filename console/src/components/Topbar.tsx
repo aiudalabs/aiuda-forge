@@ -9,11 +9,13 @@ import { sectionForPath } from "@/lib/sections";
 import { useApiMode, useNotifications, useSpendToday } from "@/lib/hooks";
 import { useActiveProjectId } from "@/lib/activeProject";
 import { logout } from "@/lib/auth";
+import { useT } from "@/lib/i18n";
 
 export function Topbar() {
   const path = usePathname();
   const router = useRouter();
   const section = sectionForPath(path);
+  const t = useT();
   const projectId = useActiveProjectId();
   const { data: spend } = useSpendToday(projectId);
   const { data: mode } = useApiMode();
@@ -25,25 +27,25 @@ export function Topbar() {
   return (
     <header className="top">
       <div>
-        <div className="eyebrow acc">{section.eyebrow}</div>
-        <div className="h1">{section.title}</div>
+        <div className="eyebrow acc">{t(`nav.${section.key}.eyebrow`)}</div>
+        <div className="h1">{t(`nav.${section.key}.title`)}</div>
       </div>
       <div className="sp" />
 
       {mode && (
-        <span className={`modebadge ${mode}`} title={mode === "mock" ? "Datos de ejemplo (API no detectada)" : "Conectado al control-plane"}>
-          {mode === "mock" ? "● mock" : "● en vivo"}
+        <span className={`modebadge ${mode}`} title={mode === "mock" ? t("top.mockHint") : t("top.liveHint")}>
+          {mode === "mock" ? t("top.mock") : t("top.live")}
         </span>
       )}
 
       <div className="cost">
-        <span className="dot" /> hoy <b>${(spend?.cost ?? 0).toFixed(2)}</b> ·{" "}
-        <b className="mono">{spend?.tokens ?? "—"} tok</b>
+        <span className="dot" /> {t("top.today")} <b>${(spend?.cost ?? 0).toFixed(2)}</b> ·{" "}
+        <b className="mono">{spend?.tokens ?? "—"} {t("top.tokens")}</b>
       </div>
 
       <button
         className="bell"
-        title={count ? `${count} corrida(s) requieren atención` : "Sin notificaciones"}
+        title={count ? `${count} ${t("top.needsAttention")}` : t("top.none")}
         onClick={() => setOpen((o) => !o)}
       >
         🔔{count > 0 && <span className="badge-n">{count}</span>}
@@ -51,9 +53,9 @@ export function Topbar() {
 
       {open && (
         <div className="notif-pop" onMouseLeave={() => setOpen(false)}>
-          <div className="nh">Notificaciones</div>
+          <div className="nh">{t("top.notifications")}</div>
           {count === 0 ? (
-            <div className="notif-empty">Nada requiere tu atención.</div>
+            <div className="notif-empty">{t("top.noNotifications")}</div>
           ) : (
             notifications.map((n) => (
               <div
@@ -69,7 +71,7 @@ export function Topbar() {
                 <div>
                   <div style={{ fontWeight: 600 }}>{n.title}</div>
                   <div style={{ color: "var(--ink4)", fontSize: 12 }}>
-                    {n.kind === "awaiting" ? "Espera aprobación" : "Falló"} · {n.ts}
+                    {n.kind === "awaiting" ? t("top.awaiting") : t("top.failed")} · {n.ts}
                   </div>
                 </div>
               </div>
@@ -80,7 +82,7 @@ export function Topbar() {
 
       <button
         className="ava"
-        title="Cerrar sesión"
+        title={t("top.logout")}
         onClick={async () => {
           await logout();
           window.location.href = "/login";

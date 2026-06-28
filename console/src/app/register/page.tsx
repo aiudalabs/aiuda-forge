@@ -6,8 +6,11 @@
 
 import { useState } from "react";
 import { register } from "@/lib/auth";
+import { useT } from "@/lib/i18n";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export default function RegisterPage() {
+  const t = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +20,7 @@ export default function RegisterPage() {
     e.preventDefault();
     setError(null);
     if (password.length < 8) {
-      setError("La contraseña debe tener al menos 8 caracteres.");
+      setError(t("auth.passwordTooShort"));
       return;
     }
     setBusy(true);
@@ -27,7 +30,7 @@ export default function RegisterPage() {
       const next = params.get("next");
       window.location.href = next ? decodeURIComponent(next) : "/";
     } catch (err) {
-      setError(err instanceof Error ? err.message : "El registro falló.");
+      setError(err instanceof Error ? err.message : t("auth.registerFailed"));
       setBusy(false);
     }
   }
@@ -48,13 +51,11 @@ export default function RegisterPage() {
           gap: 16,
         }}
       >
-        <h1 style={{ fontWeight: 900, fontSize: 24, margin: 0 }}>Crear cuenta</h1>
-        <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
-          Regístrate para usar Aiuda Factory.
-        </p>
+        <h1 style={{ fontWeight: 900, fontSize: 24, margin: 0 }}>{t("auth.registerTitle")}</h1>
+        <p style={{ margin: 0, color: "#666", fontSize: 14 }}>{t("auth.registerSubtitle")}</p>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
-          Email
+          {t("auth.email")}
           <input
             type="email"
             autoComplete="username"
@@ -66,7 +67,7 @@ export default function RegisterPage() {
         </label>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
-          Contraseña
+          {t("auth.password")}
           <input
             type="password"
             autoComplete="new-password"
@@ -76,7 +77,7 @@ export default function RegisterPage() {
             onChange={(e) => setPassword(e.target.value)}
             style={inputStyle}
           />
-          <span style={{ color: "#999", fontSize: 11 }}>Mínimo 8 caracteres.</span>
+          <span style={{ color: "#999", fontSize: 11 }}>{t("auth.passwordHint")}</span>
         </label>
 
         {error && (
@@ -99,15 +100,17 @@ export default function RegisterPage() {
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "Creando…" : "Crear cuenta"}
+          {busy ? t("auth.creating") : t("auth.create")}
         </button>
 
         <p style={{ margin: 0, fontSize: 13, color: "#666", textAlign: "center" }}>
-          ¿Ya tienes cuenta?{" "}
+          {t("auth.haveAccount")}{" "}
           <a href="/login" style={{ color: "#E8440A", fontWeight: 600 }}>
-            Inicia sesión
+            {t("auth.signIn")}
           </a>
         </p>
+
+        <LanguageSwitcher />
       </form>
     </div>
   );

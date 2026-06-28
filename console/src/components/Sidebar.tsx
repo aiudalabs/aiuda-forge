@@ -9,26 +9,30 @@ import { useRouter } from "next/navigation";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Logo } from "./Logo";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { SECTIONS, sectionForPath } from "@/lib/sections";
 import { useActiveProject } from "@/lib/activeProject";
+import { useT } from "@/lib/i18n";
 
 export function Sidebar() {
   const path = usePathname();
   const active = sectionForPath(path).key;
+  const t = useT();
 
   return (
     <aside className="nav">
       <Logo />
-      <div className="navsec">Fábrica</div>
+      <div className="navsec">{t("nav.factory")}</div>
       <nav>
         {SECTIONS.map((s) => (
           <Link key={s.key} href={s.href} className={active === s.key ? "on" : ""}>
             <span className="ic">{s.icon}</span>
-            <span className="lbl">{s.label}</span>
+            <span className="lbl">{t(`nav.${s.key}.label`)}</span>
           </Link>
         ))}
       </nav>
       <ProjectSwitcher />
+      <LanguageSwitcher compact />
     </aside>
   );
 }
@@ -42,6 +46,7 @@ function ProjectSwitcher() {
   const { project, projects, setActiveId, isLoading } = useActiveProject();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   // Cerrar al hacer clic fuera o con Escape.
   useEffect(() => {
@@ -64,15 +69,15 @@ function ProjectSwitcher() {
   if (!isLoading && projects.length === 0) {
     return (
       <div className="proj" onClick={() => router.push("/studio")} role="button" tabIndex={0}>
-        <div className="eyebrow">Proyecto</div>
+        <div className="eyebrow">{t("nav.project")}</div>
         <div className="nm">
-          <span style={{ color: "var(--ink4)" }}>Crear el primero →</span>
+          <span style={{ color: "var(--ink4)" }}>{t("nav.createFirst")}</span>
         </div>
       </div>
     );
   }
 
-  const label = project?.name ?? (isLoading ? "Cargando…" : "Selecciona un proyecto");
+  const label = project?.name ?? (isLoading ? t("nav.loading") : t("nav.selectProject"));
 
   return (
     <div className="proj-switch" ref={rootRef}>
@@ -103,7 +108,7 @@ function ProjectSwitcher() {
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <div className="eyebrow">Proyecto</div>
+        <div className="eyebrow">{t("nav.project")}</div>
         <div className="nm">
           <span>{label}</span>
           <span>▾</span>

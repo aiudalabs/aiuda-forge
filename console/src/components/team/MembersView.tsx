@@ -11,11 +11,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
 import { me } from "@/lib/auth";
 import { useActiveProject } from "@/lib/activeProject";
+import { useT } from "@/lib/i18n";
 import type { Role } from "@/lib/types";
 
 export function MembersView() {
   const { activeId, project } = useActiveProject();
   const qc = useQueryClient();
+  const t = useT();
 
   const meQuery = useQuery({ queryKey: ["me"], queryFn: () => me() });
   const membersQuery = useQuery({
@@ -54,32 +56,32 @@ export function MembersView() {
       if (res.status === "invited" && res.invite_path) {
         const link = `${window.location.origin}${res.invite_path}`;
         navigator.clipboard?.writeText(link).catch(() => {});
-        setNotice(`Invitación creada — link copiado: ${link}`);
+        setNotice(`${t("team.inviteCreated")}: ${link}`);
       } else {
-        setNotice(`${res.email} añadido como ${roleLabel(res.role)}.`);
+        setNotice(`${res.email} ${t("team.added")} ${roleLabel(res.role, t)}.`);
       }
       refresh();
     },
-    onError: (e) => setError(e instanceof Error ? e.message : "No se pudo invitar."),
+    onError: (e) => setError(e instanceof Error ? e.message : t("team.cannotInvite")),
   });
 
   const changeRole = useMutation({
     mutationFn: ({ userId, r }: { userId: string; r: Role }) =>
       api.updateMemberRole(activeId as string, userId, r),
     onSuccess: refresh,
-    onError: (e) => setError(e instanceof Error ? e.message : "No se pudo cambiar el rol."),
+    onError: (e) => setError(e instanceof Error ? e.message : t("team.cannotChangeRole")),
   });
 
   const remove = useMutation({
     mutationFn: (userId: string) => api.removeMember(activeId as string, userId),
     onSuccess: refresh,
-    onError: (e) => setError(e instanceof Error ? e.message : "No se pudo quitar."),
+    onError: (e) => setError(e instanceof Error ? e.message : t("team.cannotRemove")),
   });
 
   if (!activeId) {
     return (
       <div className="wrap">
-        <div className="placeholder">Selecciona un proyecto para gestionar su equipo.</div>
+        <div className="placeholder">{t("team.selectProject")}</div>
         <style jsx>{styles}</style>
       </div>
     );
@@ -88,20 +90,20 @@ export function MembersView() {
   return (
     <div className="wrap">
       <div className="sectitle">
-        <h2>Equipo</h2>
-        <span className="c">miembros · roles · invitaciones · {project?.name ?? activeId}</span>
+        <h2>{t("team.title")}</h2>
+        <span className="c">{t("team.subtitle")} · {project?.name ?? activeId}</span>
       </div>
 
       {!isOwner && (
         <p className="hint">
-          Tu rol: <strong>{roleLabel(myRole || "viewer")}</strong>. Sólo el owner del
-          proyecto puede gestionar miembros.
+          {t("team.yourRole")}: <strong>{roleLabel(myRole || "viewer", t)}</strong>.{" "}
+          {t("team.ownerOnly")}
         </p>
       )}
 
       {isOwner && (
         <section className="card">
-          <h3>Invitar</h3>
+          <h3>{t("team.invite")}</h3>
           <div className="inviteRow">
             <input
               type="email"
@@ -111,21 +113,18 @@ export function MembersView() {
               className="inp"
             />
             <select value={role} onChange={(e) => setRole(e.target.value as Role)} className="inp sel">
-              <option value="editor">Editor</option>
-              <option value="viewer">Viewer</option>
+              <option value="editor">{t("role.editor")}</option>
+              <option value="viewer">{t("role.viewer")}</option>
             </select>
             <button
               className="btn"
               disabled={!email || invite.isPending}
               onClick={() => invite.mutate()}
             >
-              {invite.isPending ? "Invitando…" : "Invitar"}
+              {invite.isPending ? t("team.inviting") : t("team.invite")}
             </button>
           </div>
-          <p className="micro">
-            Si el email ya tiene cuenta, se añade al instante. Si no, se crea un link de
-            invitación (se copia al portapapeles) para compartir.
-          </p>
+          <p className="micro">{t("team.inviteHint")}</p>
         </section>
       )}
 
@@ -133,9 +132,9 @@ export function MembersView() {
       {error && <div className="notice err">{error}</div>}
 
       <section className="card">
-        <h3>Miembros ({members.length})</h3>
+        <h3>{t("team.members")} ({members.length})</h3>
         {membersQuery.isLoading ? (
-          <div className="placeholder">Cargando…</div>
+          <div className="placeholder">{t("common.loading")}</div>
         ) : (
           <ul className="list">
             {members.map((m) => {
@@ -149,15 +148,15 @@ export function MembersView() {
                       onChange={(e) => changeRole.mutate({ userId: m.user_id, r: e.target.value as Role })}
                       className="inp sel small"
                     >
-                      <option value="editor">Editor</option>
-                      <option value="viewer">Viewer</option>
+                      <option value="editor">{t("role.editor")}</option>
+                      <option value="viewer">{t("role.viewer")}</option>
                     </select>
                   ) : (
-                    <span className={`badge ${m.role}`}>{roleLabel(m.role)}</span>
+                    <span className={`badge ${m.role}`}>{roleLabel(m.role, t)}</span>
                   )}
                   {isOwner && !isProjectOwner && (
                     <button className="link danger" onClick={() => remove.mutate(m.user_id)}>
-                      Quitar
+                      {t("team.remove")}
                     </button>
                   )}
                 </li>
@@ -169,22 +168,22 @@ export function MembersView() {
 
       {invites.length > 0 && (
         <section className="card">
-          <h3>Invitaciones pendientes ({invites.length})</h3>
+          <h3>{t("team.pendingInvites")} ({invites.length})</h3>
           <ul className="list">
             {invites.map((inv) => (
               <li key={inv.token} className="row">
                 <span className="email">{inv.email}</span>
-                <span className={`badge ${inv.role}`}>{roleLabel(inv.role)}</span>
+                <span className={`badge ${inv.role}`}>{roleLabel(inv.role, t)}</span>
                 {isOwner && (
                   <button
                     className="link"
                     onClick={() => {
                       const link = `${window.location.origin}/invite/${inv.token}`;
                       navigator.clipboard?.writeText(link).catch(() => {});
-                      setNotice(`Link copiado: ${link}`);
+                      setNotice(`${t("team.linkCopied")}: ${link}`);
                     }}
                   >
-                    Copiar link
+                    {t("team.copyLink")}
                   </button>
                 )}
               </li>
@@ -198,8 +197,8 @@ export function MembersView() {
   );
 }
 
-function roleLabel(r: Role): string {
-  return r === "owner" ? "Owner" : r === "editor" ? "Editor" : "Viewer";
+function roleLabel(r: Role, t: (key: string) => string): string {
+  return t(`role.${r}`);
 }
 
 const styles = `
