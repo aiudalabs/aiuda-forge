@@ -1,14 +1,13 @@
 "use client";
 
-// Página de login (audit C1). Email + password → POST /auth/login → guarda el
-// token y redirige al destino (?next) o al board. En modo mock (API caída) no se
-// requiere login; el AuthGate ya deja pasar, pero si alguien llega aquí, el form
-// sigue funcionando contra la API real cuando exista.
+// Página de registro (v1.2 roles). Email + password → POST /auth/register → guarda
+// el token y aterriza logueado en el destino (?next) o el board. Alta self-service:
+// cualquiera puede crear una cuenta y luego ser invitado a proyectos por su email.
 
 import { useState } from "react";
-import { login } from "@/lib/auth";
+import { register } from "@/lib/auth";
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -17,28 +16,24 @@ export default function LoginPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (password.length < 8) {
+      setError("La contraseña debe tener al menos 8 caracteres.");
+      return;
+    }
     setBusy(true);
     try {
-      await login(email, password);
-      // Volver al destino original si venía en ?next, si no al board (/).
+      await register(email, password);
       const params = new URLSearchParams(window.location.search);
       const next = params.get("next");
       window.location.href = next ? decodeURIComponent(next) : "/";
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login falló.");
+      setError(err instanceof Error ? err.message : "El registro falló.");
       setBusy(false);
     }
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "#FAF8F4",
-      }}
-    >
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#FAF8F4" }}>
       <form
         onSubmit={onSubmit}
         style={{
@@ -53,9 +48,9 @@ export default function LoginPage() {
           gap: 16,
         }}
       >
-        <h1 style={{ fontWeight: 900, fontSize: 24, margin: 0 }}>Aiuda Factory</h1>
+        <h1 style={{ fontWeight: 900, fontSize: 24, margin: 0 }}>Crear cuenta</h1>
         <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
-          Inicia sesión para acceder a la consola.
+          Regístrate para usar Aiuda Factory.
         </p>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
@@ -74,12 +69,14 @@ export default function LoginPage() {
           Contraseña
           <input
             type="password"
-            autoComplete="current-password"
+            autoComplete="new-password"
             required
+            minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             style={inputStyle}
           />
+          <span style={{ color: "#999", fontSize: 11 }}>Mínimo 8 caracteres.</span>
         </label>
 
         {error && (
@@ -102,13 +99,13 @@ export default function LoginPage() {
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "Entrando…" : "Entrar"}
+          {busy ? "Creando…" : "Crear cuenta"}
         </button>
 
         <p style={{ margin: 0, fontSize: 13, color: "#666", textAlign: "center" }}>
-          ¿No tienes cuenta?{" "}
-          <a href="/register" style={{ color: "#E8440A", fontWeight: 600 }}>
-            Crear una
+          ¿Ya tienes cuenta?{" "}
+          <a href="/login" style={{ color: "#E8440A", fontWeight: 600 }}>
+            Inicia sesión
           </a>
         </p>
       </form>
