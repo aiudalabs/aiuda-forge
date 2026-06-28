@@ -166,6 +166,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /projects/{id}/channels", s.needProjects(s.listChannels))
 	m.HandleFunc("POST /projects/{id}/channels", s.needProjects(s.linkChannel))
 	m.HandleFunc("DELETE /projects/{id}/channels", s.needProjects(s.unlinkChannel))
+	m.HandleFunc("POST /projects/{id}/channels/test", s.needProjects(s.testChannels))
 	// Brain — the per-project conversational assistant (needBrain → 503 if no key).
 	m.HandleFunc("POST /projects/{id}/assistant", s.needProjects(s.needBrain(s.assistantSend)))
 	m.HandleFunc("GET /projects/{id}/assistant/history", s.needProjects(s.needBrain(s.assistantHistory)))

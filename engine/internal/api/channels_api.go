@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"forge/internal/channels"
 	"forge/internal/projects"
 )
 
@@ -77,4 +78,47 @@ func (s *Server) unlinkChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"unlinked": true})
+}
+
+// testChannels handles POST /projects/{id}/channels/test: send a test message to all
+// the project's linked channels THROUGH the real connector (same token/path the live
+// delivery uses), so a user can verify the wiring end-to-end. Editor+ only.
+func (s *Server) testChannels(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireRole(r.Context(), id, projects.RoleEditor) {
+		httpErr(w, http.StatusForbidden, "testing channels requires editor or owner")
+		return
+	}
+	if s.Channels == nil {
+		httpErr(w, http.StatusServiceUnavailable, "channels not configured")
+		return
+	}
+	chans, err := s.Projects.Channels(id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ev := channels.Event{
+		Type:      "channel.test",
+		ProjectID: id,
+		Title:     "✅ Aiuda Factory · prueba de canal",
+		Detail:    "Si ves esto, las notificaciones de este proyecto funcionan. 🚀",
+	}
+	var sent, failed int
+	var firstErr string
+	for _, ch := range chans {
+		conn := s.Channels.Get(ch.Connector)
+		if conn == nil {
+			continue
+		}
+		if err := conn.Notify(r.Context(), ch.Target, ev); err != nil {
+			failed++
+			if firstErr == "" {
+				firstErr = err.Error()
+			}
+			continue
+		}
+		sent++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sent": sent, "failed": failed, "error": firstErr})
 }
