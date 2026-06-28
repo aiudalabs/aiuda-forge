@@ -134,7 +134,24 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("ensure default project: %w", err)
 	}
+	// Backfill owner memberships (v1.2 roles): projects created before the
+	// project_members table have no owner row, so the owner wouldn't appear in the
+	// members list. Record each owner_id as an 'owner' member. Idempotent.
+	if err := s.backfillOwnerMembers(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("backfill owner members: %w", err)
+	}
 	return s, nil
+}
+
+// backfillOwnerMembers ensures every owned project has its owner_id recorded as an
+// 'owner' member. INSERT OR IGNORE skips projects already carrying the row.
+func (s *Store) backfillOwnerMembers() error {
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO project_members(project_id, user_id, role, created_at)
+		 SELECT id, owner_id, ?, created_at FROM projects WHERE owner_id != ''`,
+		RoleOwner)
+	return err
 }
 
 // Close closes the underlying database.
