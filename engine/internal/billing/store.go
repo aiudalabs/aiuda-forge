@@ -17,7 +17,8 @@ type Workspace struct {
 	ID               string  `json:"id"`
 	OwnerUserID      string  `json:"owner_user_id"`
 	PlanID           string  `json:"plan_id"`
-	SpendCapUSD      float64 `json:"spend_cap_usd"`
+	SpendCapUSD      float64 `json:"spend_cap_usd"`     // OUR hard cap on real token cost (step 4)
+	OverageCapUSD    float64 `json:"overage_cap_usd"`   // the CUSTOMER's cap on overage spend; 0 = unlimited
 	LifetimeFeatures int     `json:"lifetime_features"`
 	Paused           bool    `json:"paused"`
 	PausedReason     string  `json:"paused_reason"`
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   owner_user_id     TEXT NOT NULL UNIQUE,
   plan_id           TEXT NOT NULL DEFAULT 'free',
   spend_cap_usd     REAL NOT NULL DEFAULT 0,
+  overage_cap_usd   REAL NOT NULL DEFAULT 0,
   lifetime_features INTEGER NOT NULL DEFAULT 0,
   paused            INTEGER NOT NULL DEFAULT 0,
   paused_reason     TEXT NOT NULL DEFAULT '',
@@ -119,9 +121,9 @@ func newID(prefix string) string {
 // returns a sentinel system workspace so internal runs never trip billing.
 func (s *Store) WorkspaceForOwner(ownerID string) (Workspace, error) {
 	var w Workspace
-	err := s.db.QueryRow(`SELECT id, owner_user_id, plan_id, spend_cap_usd, lifetime_features, paused, paused_reason, created_at
+	err := s.db.QueryRow(`SELECT id, owner_user_id, plan_id, spend_cap_usd, overage_cap_usd, lifetime_features, paused, paused_reason, created_at
 		FROM workspaces WHERE owner_user_id=?`, ownerID).
-		Scan(&w.ID, &w.OwnerUserID, &w.PlanID, &w.SpendCapUSD, &w.LifetimeFeatures, &w.Paused, &w.PausedReason, &w.CreatedAt)
+		Scan(&w.ID, &w.OwnerUserID, &w.PlanID, &w.SpendCapUSD, &w.OverageCapUSD, &w.LifetimeFeatures, &w.Paused, &w.PausedReason, &w.CreatedAt)
 	if err == nil {
 		return w, nil
 	}
@@ -133,8 +135,8 @@ func (s *Store) WorkspaceForOwner(ownerID string) (Workspace, error) {
 		ID: newID("ws"), OwnerUserID: ownerID, PlanID: plan.ID,
 		SpendCapUSD: plan.DefaultSpendCapUSD, CreatedAt: s.now(),
 	}
-	_, err = s.db.Exec(`INSERT INTO workspaces(id, owner_user_id, plan_id, spend_cap_usd, lifetime_features, paused, paused_reason, created_at)
-		VALUES(?,?,?,?,?,?,?,?)`, w.ID, w.OwnerUserID, w.PlanID, w.SpendCapUSD, 0, 0, "", w.CreatedAt)
+	_, err = s.db.Exec(`INSERT INTO workspaces(id, owner_user_id, plan_id, spend_cap_usd, overage_cap_usd, lifetime_features, paused, paused_reason, created_at)
+		VALUES(?,?,?,?,?,?,?,?,?)`, w.ID, w.OwnerUserID, w.PlanID, w.SpendCapUSD, 0, 0, 0, "", w.CreatedAt)
 	if err != nil {
 		// A concurrent create (UNIQUE on owner) — re-read the winner.
 		if w2, e2 := s.getWorkspaceByOwner(ownerID); e2 == nil {
@@ -147,18 +149,18 @@ func (s *Store) WorkspaceForOwner(ownerID string) (Workspace, error) {
 
 func (s *Store) getWorkspaceByOwner(ownerID string) (Workspace, error) {
 	var w Workspace
-	err := s.db.QueryRow(`SELECT id, owner_user_id, plan_id, spend_cap_usd, lifetime_features, paused, paused_reason, created_at
+	err := s.db.QueryRow(`SELECT id, owner_user_id, plan_id, spend_cap_usd, overage_cap_usd, lifetime_features, paused, paused_reason, created_at
 		FROM workspaces WHERE owner_user_id=?`, ownerID).
-		Scan(&w.ID, &w.OwnerUserID, &w.PlanID, &w.SpendCapUSD, &w.LifetimeFeatures, &w.Paused, &w.PausedReason, &w.CreatedAt)
+		Scan(&w.ID, &w.OwnerUserID, &w.PlanID, &w.SpendCapUSD, &w.OverageCapUSD, &w.LifetimeFeatures, &w.Paused, &w.PausedReason, &w.CreatedAt)
 	return w, err
 }
 
 // GetWorkspace loads a workspace by id.
 func (s *Store) GetWorkspace(id string) (Workspace, error) {
 	var w Workspace
-	err := s.db.QueryRow(`SELECT id, owner_user_id, plan_id, spend_cap_usd, lifetime_features, paused, paused_reason, created_at
+	err := s.db.QueryRow(`SELECT id, owner_user_id, plan_id, spend_cap_usd, overage_cap_usd, lifetime_features, paused, paused_reason, created_at
 		FROM workspaces WHERE id=?`, id).
-		Scan(&w.ID, &w.OwnerUserID, &w.PlanID, &w.SpendCapUSD, &w.LifetimeFeatures, &w.Paused, &w.PausedReason, &w.CreatedAt)
+		Scan(&w.ID, &w.OwnerUserID, &w.PlanID, &w.SpendCapUSD, &w.OverageCapUSD, &w.LifetimeFeatures, &w.Paused, &w.PausedReason, &w.CreatedAt)
 	if err == sql.ErrNoRows {
 		return Workspace{}, fmt.Errorf("workspace not found: %s", id)
 	}
