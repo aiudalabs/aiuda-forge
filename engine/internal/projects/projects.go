@@ -85,6 +85,15 @@ CREATE TABLE IF NOT EXISTS project_invites (
   accepted_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_invites_project ON project_invites(project_id);
+CREATE TABLE IF NOT EXISTS project_channels (
+  project_id TEXT NOT NULL,
+  connector  TEXT NOT NULL,
+  target     TEXT NOT NULL,
+  events     TEXT NOT NULL DEFAULT '*',
+  created_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, connector, target)
+);
+CREATE INDEX IF NOT EXISTS idx_channels_project ON project_channels(project_id);
 `
 
 // migrations add the multi-tenant columns to project DBs predating them (audit
