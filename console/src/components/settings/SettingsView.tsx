@@ -274,7 +274,10 @@ function McpSection({
     <div className="card">
       <h3>{t("settings.mcp.title")}</h3>
       <div className="role">{t("settings.mcp.role")}</div>
-      {connections.map((conn, i) => (
+      {connections.map((conn, i) =>
+        // Telegram is configured in the dedicated "Conectores" section (v1.3), not
+        // here — hide it so the token isn't edited in two places. Index preserved.
+        conn.name.toLowerCase() === "telegram" ? null : (
         <div key={i} style={{ marginTop: 10 }}>
           <div className="field">
             <label>{t("settings.mcp.name")}</label>

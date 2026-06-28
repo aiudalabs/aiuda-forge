@@ -1080,4 +1080,11 @@ export async function importGitHub(projectId: string, repo?: string): Promise<Im
   });
 }
 
+/** POST /projects/{id}/channels/test — envía un mensaje de prueba por el conector real. */
+export async function testChannels(projectId: string): Promise<{ sent: number; failed: number; error: string }> {
+  return http<{ sent: number; failed: number; error: string }>(`/projects/${projectId}/channels/test`, {
+    method: "POST",
+  });
+}
+
 export type { Channel };
