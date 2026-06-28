@@ -101,6 +101,13 @@ func Build(cfg Config) (*App, error) {
 
 	agentRunner := agent.NewStepRunner(backend, agentLoader)
 	agentRunner.Auth = cfg.AgentAuth
+	// Cost routing (billing step 5): the margin lever. The policy assigns a cheaper
+	// model to decomposition/planning agents and a capable one to complex work,
+	// above the manifest default — lowering our token cost without changing price.
+	agentRunner.RouteModel = func(stepType, agentID string) string {
+		_, m := billing.DefaultPolicy.Resolve(stepType, agentID, "")
+		return m
+	}
 	if cfg.AgentTimeout > 0 {
 		agentRunner.Timeout = cfg.AgentTimeout
 	}
