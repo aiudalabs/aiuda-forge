@@ -126,7 +126,10 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if ownerID != "" {
-		list, err = s.Projects.ListByOwner(ownerID)
+		// v1.2 roles: a user sees every project they are a member of (owner·editor
+		// ·viewer), not only the ones they own — so invited collaborators see shared
+		// projects. A service-token/open-mode caller (no user) still sees all.
+		list, err = s.Projects.ListForMember(ownerID)
 	} else {
 		list, err = s.Projects.List()
 	}
@@ -158,6 +161,11 @@ func (s *Server) getProjectSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putProjectSettings(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// Changing execution settings is a write — viewers are read-only (v1.2 gating).
+	if !s.requireRole(r.Context(), id, projects.RoleEditor) {
+		httpErr(w, http.StatusForbidden, "changing settings requires editor or owner")
+		return
+	}
 	var in projects.Settings
 	if !readJSON(w, r, &in) {
 		return

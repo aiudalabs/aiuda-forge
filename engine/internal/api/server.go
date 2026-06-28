@@ -97,9 +97,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /analytics", s.metrics)
 	m.HandleFunc("GET /healthz", s.health)
 	m.HandleFunc("GET /readyz", s.health)
-	// Local auth (email+password). POST /auth/login is the one unauthenticated
-	// endpoint (exempted in the httpx.Auth middleware); logout/me require a token.
+	// Local auth (email+password). POST /auth/login and POST /auth/register are the
+	// unauthenticated endpoints (exempted in the httpx.Auth middleware); logout/me
+	// require a token.
 	m.HandleFunc("POST /auth/login", s.needAuth(s.login))
+	m.HandleFunc("POST /auth/register", s.needAuth(s.register))
 	m.HandleFunc("POST /auth/logout", s.needAuth(s.logout))
 	m.HandleFunc("GET /auth/me", s.needAuth(s.me))
 	m.HandleFunc("POST /auth/change-password", s.needAuth(s.changePassword))
@@ -143,6 +145,12 @@ func (s *Server) routes() {
 	// workspace billing/health view the dashboard reads.
 	m.HandleFunc("GET /projects/{id}/entitlement", s.needProjects(s.projectEntitlement))
 	m.HandleFunc("GET /projects/{id}/billing", s.needProjects(s.projectBilling))
+	// Members & invitations (v1.2 roles): list is any-member; manage is owner-only.
+	m.HandleFunc("GET /projects/{id}/members", s.needProjects(s.listMembers))
+	m.HandleFunc("POST /projects/{id}/members", s.needProjects(s.inviteMember))
+	m.HandleFunc("PUT /projects/{id}/members/{userId}", s.needProjects(s.updateMemberRole))
+	m.HandleFunc("DELETE /projects/{id}/members/{userId}", s.needProjects(s.removeMember))
+	m.HandleFunc("POST /invites/{token}/accept", s.needProjects(s.acceptInvite))
 	// Brain — the per-project conversational assistant (needBrain → 503 if no key).
 	m.HandleFunc("POST /projects/{id}/assistant", s.needProjects(s.needBrain(s.assistantSend)))
 	m.HandleFunc("GET /projects/{id}/assistant/history", s.needProjects(s.needBrain(s.assistantHistory)))

@@ -13,8 +13,11 @@ import { ActiveProjectProvider } from "@/lib/activeProject";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  // La página de login no lleva chrome ni gate (se renderiza sola).
-  if (pathname === "/login") return <>{children}</>;
+  // Páginas de auth/invitación: sin chrome ni sidebar (se renderizan solas). El
+  // gate público de estas rutas vive en AuthGate; aquí sólo quitamos el chrome.
+  if (pathname === "/login" || pathname === "/register" || pathname.startsWith("/invite/")) {
+    return <>{children}</>;
+  }
 
   // ActiveProjectProvider va dentro del gate (carga GET /projects solo autenticado)
   // y dentro de QueryClientProvider (layout) — useProjects necesita ambos. Scopea

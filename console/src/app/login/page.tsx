@@ -7,8 +7,11 @@
 
 import { useState } from "react";
 import { login } from "@/lib/auth";
+import { useT } from "@/lib/i18n";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export default function LoginPage() {
+  const t = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +28,7 @@ export default function LoginPage() {
       const next = params.get("next");
       window.location.href = next ? decodeURIComponent(next) : "/";
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login falló.");
+      setError(err instanceof Error ? err.message : t("auth.loginFailed"));
       setBusy(false);
     }
   }
@@ -33,12 +36,16 @@ export default function LoginPage() {
   return (
     <div
       style={{
+        position: "relative",
         minHeight: "100vh",
         display: "grid",
         placeItems: "center",
         background: "#FAF8F4",
       }}
     >
+      <div style={{ position: "absolute", top: 16, right: 16 }}>
+        <LanguageSwitcher />
+      </div>
       <form
         onSubmit={onSubmit}
         style={{
@@ -53,13 +60,11 @@ export default function LoginPage() {
           gap: 16,
         }}
       >
-        <h1 style={{ fontWeight: 900, fontSize: 24, margin: 0 }}>Aiuda Factory</h1>
-        <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
-          Inicia sesión para acceder a la consola.
-        </p>
+        <h1 style={{ fontWeight: 900, fontSize: 24, margin: 0 }}>{t("auth.loginTitle")}</h1>
+        <p style={{ margin: 0, color: "#666", fontSize: 14 }}>{t("auth.loginSubtitle")}</p>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
-          Email
+          {t("auth.email")}
           <input
             type="email"
             autoComplete="username"
@@ -71,7 +76,7 @@ export default function LoginPage() {
         </label>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
-          Contraseña
+          {t("auth.password")}
           <input
             type="password"
             autoComplete="current-password"
@@ -102,8 +107,15 @@ export default function LoginPage() {
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "Entrando…" : "Entrar"}
+          {busy ? t("auth.entering") : t("auth.enter")}
         </button>
+
+        <p style={{ margin: 0, fontSize: 13, color: "#666", textAlign: "center" }}>
+          {t("auth.noAccount")}{" "}
+          <a href="/register" style={{ color: "#E8440A", fontWeight: 600 }}>
+            {t("auth.createOne")}
+          </a>
+        </p>
       </form>
     </div>
   );

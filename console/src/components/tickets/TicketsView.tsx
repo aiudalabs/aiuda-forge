@@ -15,21 +15,13 @@ import { KanbanBoard } from "@/components/tickets/KanbanBoard";
 import { SprintsView } from "@/components/tickets/SprintsView";
 import { TicketDetail } from "@/components/tickets/TicketDetail";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 
 type TicketsView = "tabla" | "sprints" | "kanban" | "grafo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<TicketStatus, string> = {
-  backlog: "backlog",
-  ready: "listo",
-  running: "running",
-  in_review: "en revisión",
-  done: "done",
-  failed: "FALLIDO",
-};
 
 // Clase CSS para la pill de estado — reutiliza los mismos tokens del mockup.
 const STATUS_CLASS: Record<TicketStatus, string> = {
@@ -46,6 +38,7 @@ const STATUS_CLASS: Record<TicketStatus, string> = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function TicketsView() {
+  const t = useT();
   const projectId = useActiveProjectId();
   const { data: tickets, isLoading, isError, refetch } = useTickets(projectId);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
@@ -60,20 +53,20 @@ export function TicketsView() {
   // of a second "Kanban / Grafo DAG" sub-header (they were redundant).
   const viewDesc =
     view === "sprints"
-      ? "Sprints · el plan del proyecto"
+      ? t("tickets.desc.sprints")
       : view === "kanban"
-        ? "Kanban · agrupado por estado"
+        ? t("tickets.desc.kanban")
         : view === "grafo"
-          ? "Grafo DAG · dependencias · niveles topológicos"
-          : "store nativo · backlog";
+          ? t("tickets.desc.grafo")
+          : t("tickets.desc.tabla");
 
   return (
     <div className={`wrap${view === "kanban" || view === "grafo" ? " bleed" : ""}`}>
       <div className="sectitle">
-        <h2>Tickets</h2>
+        <h2>{t("tickets.title")}</h2>
         <span className="c">{viewDesc}</span>
         <span className="sp" />
-        <span className="tag">{list.length} stories</span>
+        <span className="tag">{t("tickets.storiesCount", { n: list.length })}</span>
 
         {/* Toggle Tabla / Kanban / Grafo */}
         <div
@@ -90,45 +83,45 @@ export function TicketsView() {
             <button
               key={v}
               className={`btn sm${view === v ? " primary" : " ghost"}`}
-              style={{ borderRadius: 7, textTransform: "capitalize", border: "none", boxShadow: "none" }}
+              style={{ borderRadius: 7, border: "none", boxShadow: "none" }}
               onClick={() => setView(v)}
             >
-              {v.charAt(0).toUpperCase() + v.slice(1)}
+              {t(`tickets.tab.${v}`)}
             </button>
           ))}
         </div>
 
         <button className="btn ghost sm" onClick={() => setShowNewStory(true)}>
-          + Nueva story
+          {t("tickets.newStory")}
         </button>
       </div>
 
       {isLoading ? (
         <div className="placeholder">
           <div className="ph-ic"><span className="spin" /></div>
-          Cargando tickets…
+          {t("tickets.loading")}
         </div>
       ) : isError ? (
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
-          No se pudo conectar al store de tickets.{" "}
+          {t("tickets.error")}{" "}
           <button className="btn ghost sm" onClick={() => refetch()}>
-            Reintentar
+            {t("tickets.retry")}
           </button>
         </div>
       ) : list.length === 0 ? (
         <div className="placeholder">
           <div className="ph-ic">☰</div>
-          Sin tickets todavía.
+          {t("tickets.empty")}
         </div>
       ) : view === "tabla" ? (
         <div className="ttable">
           <div className="trow">
-            <span>ID</span>
-            <span>Título</span>
-            <span>Depende de</span>
-            <span>Estado</span>
-            <span>Run</span>
+            <span>{t("tickets.col.id")}</span>
+            <span>{t("tickets.col.title")}</span>
+            <span>{t("tickets.col.deps")}</span>
+            <span>{t("tickets.col.status")}</span>
+            <span>{t("tickets.col.run")}</span>
           </div>
           {list.map((t) => (
             <TicketRow
@@ -186,14 +179,15 @@ function TicketRow({
   ticket: OrchestratorTicket;
   onOpenTicket: (id: string) => void;
 }) {
+  const t = useT();
   return (
-    <div className="trow click" onClick={() => onOpenTicket(ticket.id)} title="Ver detalle del ticket">
+    <div className="trow click" onClick={() => onOpenTicket(ticket.id)} title={t("tickets.rowTitle")}>
       <span className="id">{ticket.id}</span>
       <span className="ttl">{ticket.title}</span>
       <span className="dep">{ticket.deps && ticket.deps.length > 0 ? ticket.deps.join(", ") : "—"}</span>
       <span>
         <span className={`pill ${STATUS_CLASS[ticket.status]}`}>
-          {STATUS_LABEL[ticket.status]}
+          {t(`tickets.status.${ticket.status}`)}
         </span>
       </span>
       <span>
@@ -220,6 +214,7 @@ function NewStoryModal({
   existingIds: string[];
   onClose: () => void;
 }) {
+  const t = useT();
   const { data: epics } = useEpics();
   const createStory = useCreateStory();
 
@@ -252,11 +247,11 @@ function NewStoryModal({
     const trimmedTitle = title.trim();
 
     if (!trimmedId) {
-      setFormError("El ID es obligatorio.");
+      setFormError(t("tickets.modal.errId"));
       return;
     }
     if (!trimmedTitle) {
-      setFormError("El título es obligatorio.");
+      setFormError(t("tickets.modal.errTitle"));
       return;
     }
 
@@ -285,15 +280,15 @@ function NewStoryModal({
       aria-labelledby="new-story-title"
     >
       <div className="mh">
-        <h3 id="new-story-title">Nueva story</h3>
-        <button className="x" onClick={onClose} aria-label="Cerrar">
+        <h3 id="new-story-title">{t("tickets.modal.title")}</h3>
+        <button className="x" onClick={onClose} aria-label={t("tickets.modal.close")}>
           ✕
         </button>
       </div>
       <form className="mb" onSubmit={handleSubmit}>
         {/* ID */}
         <div className="field">
-          <label htmlFor="ns-id">ID</label>
+          <label htmlFor="ns-id">{t("tickets.modal.idLabel")}</label>
           <input
             id="ns-id"
             className="inp mono"
@@ -307,13 +302,13 @@ function NewStoryModal({
 
         {/* Título */}
         <div className="field">
-          <label htmlFor="ns-title">Título</label>
+          <label htmlFor="ns-title">{t("tickets.modal.titleLabel")}</label>
           <input
             id="ns-title"
             className="inp"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Descripción breve de la story"
+            placeholder={t("tickets.modal.titlePlaceholder")}
             required
           />
         </div>
@@ -321,7 +316,7 @@ function NewStoryModal({
         {/* Depende de — chips multi-select con los IDs existentes */}
         {existingIds.length > 0 && (
           <div className="field">
-            <label>Depende de</label>
+            <label>{t("tickets.modal.depsLabel")}</label>
             <div className="chips">
               {existingIds.map((eid) => (
                 <button
@@ -340,14 +335,14 @@ function NewStoryModal({
         {/* Epic — selector opcional */}
         {epics && epics.length > 0 && (
           <div className="field">
-            <label htmlFor="ns-epic">Epic (opcional)</label>
+            <label htmlFor="ns-epic">{t("tickets.modal.epicLabel")}</label>
             <select
               id="ns-epic"
               className="inp"
               value={epicId}
               onChange={(e) => setEpicId(e.target.value)}
             >
-              <option value="">— Sin epic —</option>
+              <option value="">{t("tickets.modal.epicNone")}</option>
               {epics.map((ep) => (
                 <option key={ep.id} value={ep.id}>
                   {ep.id} · {ep.title}
@@ -382,7 +377,7 @@ function NewStoryModal({
             style={{ flex: 1 }}
             onClick={onClose}
           >
-            Cancelar
+            {t("tickets.modal.cancel")}
           </button>
           <button
             type="submit"
@@ -390,7 +385,7 @@ function NewStoryModal({
             style={{ flex: 1 }}
             disabled={createStory.isPending}
           >
-            {createStory.isPending ? "Creando…" : "Crear story"}
+            {createStory.isPending ? t("tickets.modal.creating") : t("tickets.modal.create")}
           </button>
         </div>
       </form>

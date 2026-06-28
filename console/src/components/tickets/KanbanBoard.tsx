@@ -5,6 +5,7 @@
 // Columnas de solo lectura: el scheduler mueve las stories, no la UI.
 
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuración de columnas
@@ -12,18 +13,17 @@ import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
 
 interface ColumnConfig {
   status: TicketStatus;
-  label: string;
   pillClass: string;
   headerColor: string;
 }
 
 const COLUMNS: ColumnConfig[] = [
-  { status: "backlog",   label: "Backlog",     pillClass: "queued", headerColor: "var(--ink4)" },
-  { status: "ready",     label: "Listo",       pillClass: "run_",   headerColor: "var(--accent)" },
-  { status: "running",   label: "Running",     pillClass: "run_",   headerColor: "var(--navy)" },
-  { status: "in_review", label: "En revisión", pillClass: "queued", headerColor: "#7a5d00" },
-  { status: "done",      label: "Done",        pillClass: "done",   headerColor: "var(--emerald)" },
-  { status: "failed",    label: "Fallido",     pillClass: "fail",   headerColor: "#9a2020" },
+  { status: "backlog",   pillClass: "queued", headerColor: "var(--ink4)" },
+  { status: "ready",     pillClass: "run_",   headerColor: "var(--accent)" },
+  { status: "running",   pillClass: "run_",   headerColor: "var(--navy)" },
+  { status: "in_review", pillClass: "queued", headerColor: "#7a5d00" },
+  { status: "done",      pillClass: "done",   headerColor: "var(--emerald)" },
+  { status: "failed",    pillClass: "fail",   headerColor: "#9a2020" },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,12 +36,13 @@ interface StoryCardProps {
 }
 
 function StoryCard({ ticket, onOpenTicket }: StoryCardProps) {
+  const t = useT();
   return (
     <div
       className="card click"
       style={{ padding: "11px 13px", boxShadow: "none" }}
       onClick={() => onOpenTicket(ticket.id)}
-      title="Ver detalle del ticket"
+      title={t("tickets.rowTitle")}
     >
       <div
         style={{
@@ -109,6 +110,7 @@ interface KanbanColumnProps {
 }
 
 function KanbanColumn({ config, tickets, onOpenTicket }: KanbanColumnProps) {
+  const t = useT();
   return (
     <div
       style={{
@@ -132,7 +134,7 @@ function KanbanColumn({ config, tickets, onOpenTicket }: KanbanColumnProps) {
           className={`pill ${config.pillClass}`}
           style={{ fontSize: 10.5, padding: "3px 9px" }}
         >
-          {config.label}
+          {t(`tickets.col.${config.status}`)}
         </span>
         <span
           style={{
@@ -169,7 +171,7 @@ function KanbanColumn({ config, tickets, onOpenTicket }: KanbanColumnProps) {
               color: "var(--ink4)",
             }}
           >
-            Vacío
+            {t("tickets.column.empty")}
           </div>
         ) : (
           tickets.map((t) => (

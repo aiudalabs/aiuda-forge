@@ -262,6 +262,19 @@ func (s *Store) DeleteSession(token string) error {
 	return err
 }
 
+// UserByEmail resolves a user by email (normalized), returning ErrNotFound if no
+// such account exists. Used by the members/invites API to decide whether an invited
+// email is an existing user (add immediately) or a new one (issue an invite link).
+func (s *Store) UserByEmail(email string) (User, error) {
+	return s.getUserByEmail(normalizeEmail(email))
+}
+
+// UserByID resolves a user by id, returning ErrNotFound if unknown. Used to project
+// member rows (which store only user ids) back to emails for the members list.
+func (s *Store) UserByID(id string) (User, error) {
+	return s.getUserByID(id)
+}
+
 func (s *Store) getUserByEmail(email string) (User, error) {
 	var u User
 	err := s.db.QueryRow(`SELECT id, email, password_hash, created_at FROM users WHERE email=?`, email).

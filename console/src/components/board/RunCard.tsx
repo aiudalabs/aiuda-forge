@@ -6,21 +6,24 @@
 import type { Run, RunEvent } from "@/lib/types";
 import { StatusPill } from "./StatusPill";
 import { useApprove, useReject, useLiveEvents } from "@/lib/hooks";
+import { useT } from "@/lib/i18n";
 
 // RunLive — a single scannable activity line (replaces the raw terminal dump on the
 // card): a pulsing dot, the current step, and the latest human-readable event.
 function RunLive({ events, step }: { events: RunEvent[]; step?: string }) {
+  const t = useT();
   const last = [...events].reverse().find((e) => e.message && e.message.trim());
   return (
     <div className="run-live">
       <span className="run-live-dot" />
-      <span className="run-live-step">{step ? `paso: ${step}` : "trabajando…"}</span>
+      <span className="run-live-step">{step ? t("board.run.step", { step }) : t("board.run.working")}</span>
       {last?.message && <span className="run-live-msg">{last.message}</span>}
     </div>
   );
 }
 
 export function RunCard({ run, onOpen }: { run: Run; onOpen: (id: string) => void }) {
+  const t = useT();
   const approve = useApprove();
   const reject = useReject();
   const isRunning = run.status === "RUNNING";
@@ -35,8 +38,8 @@ export function RunCard({ run, onOpen }: { run: Run; onOpen: (id: string) => voi
   function doReject(e: React.MouseEvent) {
     e.stopPropagation();
     const reason = window.prompt(
-      "Motivo del rechazo (vuelve al agente como feedback, ronda de fix):",
-      "El review encontró un bug de unicode — cubrir ø/ß/中文.",
+      t("board.run.rejectPrompt"),
+      t("board.run.rejectPromptDefault"),
     );
     if (reason == null) return;
     reject.mutate([run.id, run.awaitingStep || "human_gate", reason]);
@@ -48,7 +51,7 @@ export function RunCard({ run, onOpen }: { run: Run; onOpen: (id: string) => voi
         <div className="tk">
           {run.ticket.id} · {run.id}
           {run.dependsOn?.length ? (
-            <span style={{ color: "var(--accent)" }}> · depende de {run.dependsOn.join(", ")}</span>
+            <span style={{ color: "var(--accent)" }}>{t("board.run.dependsOn", { deps: run.dependsOn.join(", ") })}</span>
           ) : null}
         </div>
         <div className="ti">{run.ticket.title}</div>
@@ -59,7 +62,7 @@ export function RunCard({ run, onOpen }: { run: Run; onOpen: (id: string) => voi
               {run.model ? ` · ${run.model}` : ""}
             </span>
           )}
-          {run.currentStep && isRunning && <span className="mono">paso: {run.currentStep}</span>}
+          {run.currentStep && isRunning && <span className="mono">{t("board.run.step", { step: run.currentStep })}</span>}
           {run.sandbox && <span>🔒 sandbox {run.sandbox}</span>}
           {run.badges.map((b, i) => (
             <span key={i}>{b.label}</span>
@@ -80,13 +83,13 @@ export function RunCard({ run, onOpen }: { run: Run; onOpen: (id: string) => voi
       {isAwaiting && (
         <div className="await-banner">
           <span className="t">
-            <b>Human gate</b> — pausada esperando tu visto bueno para abrir el PR.
+            <b>{t("board.run.humanGate")}</b> {t("board.run.humanGateRest")}
           </span>
           <button className="btn ghost sm" onClick={doReject} disabled={reject.isPending}>
-            Rechazar…
+            {t("board.run.reject")}
           </button>
           <button className="btn primary sm" onClick={doApprove} disabled={approve.isPending}>
-            {approve.isPending ? "Aprobando…" : "Revisar diff y aprobar"}
+            {approve.isPending ? t("board.run.approving") : t("board.run.reviewApprove")}
           </button>
         </div>
       )}

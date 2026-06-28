@@ -6,6 +6,7 @@
 
 import { useMetrics } from "@/lib/hooks";
 import { useActiveProjectId } from "@/lib/activeProject";
+import { useT } from "@/lib/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers de formato
@@ -31,6 +32,7 @@ function fmtNum(n: number) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SpendView() {
+  const t = useT();
   const projectId = useActiveProjectId();
   const { data, isLoading, isError } = useMetrics(projectId);
 
@@ -39,7 +41,7 @@ export function SpendView() {
       <div className="wrap">
         <div className="placeholder">
           <div className="ph-ic"><span className="spin" /></div>
-          Cargando métricas…
+          {t("spend.loading")}
         </div>
       </div>
     );
@@ -50,7 +52,7 @@ export function SpendView() {
       <div className="wrap">
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
-          No se pudo cargar las métricas.
+          {t("spend.error")}
         </div>
       </div>
     );
@@ -74,55 +76,55 @@ export function SpendView() {
   return (
     <div className="wrap">
       <div className="sectitle">
-        <h2>Gasto</h2>
-        <span className="c">tokens y $ · métricas en vivo</span>
+        <h2>{t("spend.title")}</h2>
+        <span className="c">{t("spend.subtitle")}</span>
       </div>
 
       {/* KPIs principales */}
       <div className="stats">
         <div className="stat">
-          <div className="eyebrow">Total acumulado</div>
+          <div className="eyebrow">{t("spend.kpi.total")}</div>
           <div className="n serif">{fmt$(data.total_cost_usd)}</div>
-          <div className="sub">todos los runs</div>
+          <div className="sub">{t("spend.kpi.total.sub")}</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Costo / PR aceptado</div>
+          <div className="eyebrow">{t("spend.kpi.costPerPr")}</div>
           <div className="n acc serif">{doneCount > 0 ? fmt$(costPerAccepted) : "—"}</div>
-          <div className="sub">cost-per-accepted-change</div>
+          <div className="sub">{t("spend.kpi.costPerPr.sub")}</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Aceptación</div>
+          <div className="eyebrow">{t("spend.kpi.acceptance")}</div>
           <div className="n em serif">{fmtPct(data.acceptance_rate ?? 0)}</div>
-          <div className="sub">runs → PR mergeable</div>
+          <div className="sub">{t("spend.kpi.acceptance.sub")}</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Runs DONE</div>
+          <div className="eyebrow">{t("spend.kpi.runsDone")}</div>
           <div className="n serif">{doneCount}</div>
-          <div className="sub">de {Object.values(data.by_status ?? {}).reduce((a, b) => a + b, 0)} totales</div>
+          <div className="sub">{t("spend.kpi.runsDone.sub", { n: Object.values(data.by_status ?? {}).reduce((a, b) => a + b, 0) })}</div>
         </div>
       </div>
 
       {/* Uso del agente — significativo incluso en suscripción (donde el $ puede ser 0). */}
       <div className="stats" style={{ marginTop: 0 }}>
         <div className="stat">
-          <div className="eyebrow">Llamadas al agente</div>
+          <div className="eyebrow">{t("spend.kpi.agentCalls")}</div>
           <div className="n serif">{fmtNum(data.agent_calls ?? 0)}</div>
-          <div className="sub">pasos que invocaron un modelo</div>
+          <div className="sub">{t("spend.kpi.agentCalls.sub")}</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Turns totales</div>
+          <div className="eyebrow">{t("spend.kpi.turns")}</div>
           <div className="n serif">{fmtNum(data.total_turns ?? 0)}</div>
-          <div className="sub">round-trips del agente</div>
+          <div className="sub">{t("spend.kpi.turns.sub")}</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Tokens entrada</div>
+          <div className="eyebrow">{t("spend.kpi.tokensIn")}</div>
           <div className="n serif">{tokensIn > 0 ? fmtNum(tokensIn) : "—"}</div>
-          <div className="sub">{tokensIn > 0 ? "incl. caché" : "desde el próximo run"}</div>
+          <div className="sub">{tokensIn > 0 ? t("spend.kpi.tokensIn.sub") : t("spend.kpi.tokens.fromNext")}</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Tokens salida</div>
+          <div className="eyebrow">{t("spend.kpi.tokensOut")}</div>
           <div className="n serif">{tokensOut > 0 ? fmtNum(tokensOut) : "—"}</div>
-          <div className="sub">{tokensOut > 0 ? "generados" : "desde el próximo run"}</div>
+          <div className="sub">{tokensOut > 0 ? t("spend.kpi.tokensOut.sub") : t("spend.kpi.tokens.fromNext")}</div>
         </div>
       </div>
 
@@ -130,7 +132,7 @@ export function SpendView() {
       {wfEntries.length > 0 && (
         <>
           <div className="sectitle">
-            <h2>Por workflow</h2>
+            <h2>{t("spend.byWorkflow")}</h2>
           </div>
           <div className="bars">
             {wfEntries.map(([name, cost]) => (
@@ -150,7 +152,7 @@ export function SpendView() {
       {stepEntries.length > 0 && (
         <>
           <div className="sectitle">
-            <h2>Por paso</h2>
+            <h2>{t("spend.byStep")}</h2>
           </div>
           <div className="bars">
             {stepEntries.map(([name, cost]) => (
@@ -170,7 +172,7 @@ export function SpendView() {
       {Object.keys(data.by_status ?? {}).length > 0 && (
         <>
           <div className="sectitle">
-            <h2>Runs por estado</h2>
+            <h2>{t("spend.byStatus")}</h2>
           </div>
           <div className="kv" style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "8px 0" }}>
             {Object.entries(data.by_status ?? {}).map(([status, count]) => (

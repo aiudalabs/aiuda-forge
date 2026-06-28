@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useT } from "@/lib/i18n";
 
 interface DocPage {
   file: string;
@@ -27,6 +28,7 @@ const PAGES: DocPage[] = [
 ];
 
 export function DocsView() {
+  const t = useT();
   const [active, setActive] = useState<string>(PAGES[0].file);
   const [content, setContent] = useState<string>("");
   const [state, setState] = useState<"loading" | "ok" | "missing">("loading");
@@ -54,12 +56,12 @@ export function DocsView() {
 
   return (
     <div className="wrap">
-      <div className="eyebrow acc">Documentación de la herramienta</div>
+      <div className="eyebrow acc">{t("docs.eyebrow")}</div>
       <h2 className="docs-h1">aiuda-forge</h2>
 
       <div className="docs-layout">
         <aside className="docs-tree">
-          <div className="docs-tree-head">Guía</div>
+          <div className="docs-tree-head">{t("docs.tree.head")}</div>
           <nav>
             {PAGES.map((p) => (
               <button
@@ -77,11 +79,11 @@ export function DocsView() {
         <section className="docs-reader">
           {state === "loading" ? (
             <div className="placeholder">
-              <span className="spin" /> cargando…
+              <span className="spin" /> {t("docs.loading")}
             </div>
           ) : state === "missing" ? (
             <div className="placeholder">
-              Esta página aún se está generando. Vuelve en un momento.
+              {t("docs.missing")}
             </div>
           ) : (
             <article className="docs-md artifact-md">

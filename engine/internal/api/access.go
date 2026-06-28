@@ -11,25 +11,47 @@ import (
 	"net/http"
 
 	"forge/internal/httpx"
+	"forge/internal/projects"
 )
 
-// canAccessProject reports whether the caller (identified on ctx) may access
-// projectID. A service-token caller (UserIDFromContext == "") is the system and
-// may access anything; a user session may access only a project it owns. With no
-// projects store configured, enforcement is off (single-tenant deployments).
-func (s *Server) canAccessProject(ctx context.Context, projectID string) bool {
+// roleForProject resolves the caller's role on projectID: owner·editor·viewer for a
+// member, or "" if they are not a member. A service-token caller (the orchestrator)
+// is the system → owner. With no projects store, enforcement is off → owner. The
+// second return is false only for a user session that is not a member.
+func (s *Server) roleForProject(ctx context.Context, projectID string) (string, bool) {
 	uid := httpx.UserIDFromContext(ctx)
 	if uid == "" {
-		return true // service token / system (orchestrator)
+		return projects.RoleOwner, true // service token / system (orchestrator)
 	}
 	if s.Projects == nil {
-		return true // no multi-tenant store → no enforcement
+		return projects.RoleOwner, true // no multi-tenant store → no enforcement
 	}
-	p, err := s.Projects.Get(projectID)
-	if err != nil {
+	role, err := s.Projects.MemberRole(projectID, uid)
+	if err != nil || role == "" {
+		return "", false
+	}
+	return role, true
+}
+
+// canAccessProject reports whether the caller (identified on ctx) may access
+// projectID. A service-token caller (UserIDFromContext == "") is the system and may
+// access anything; a user session may access a project on which it holds ANY role
+// (owner·editor·viewer). With no projects store configured, enforcement is off
+// (single-tenant deployments).
+func (s *Server) canAccessProject(ctx context.Context, projectID string) bool {
+	_, ok := s.roleForProject(ctx, projectID)
+	return ok
+}
+
+// requireRole reports whether the caller meets a minimum role on projectID (e.g.
+// requireRole(ctx, id, projects.RoleEditor) for a write). Read-access already implies
+// viewer; this gates writes (editor) and admin actions (owner).
+func (s *Server) requireRole(ctx context.Context, projectID, min string) bool {
+	role, ok := s.roleForProject(ctx, projectID)
+	if !ok {
 		return false
 	}
-	return p.OwnerID == uid
+	return projects.RoleAtLeast(role, min)
 }
 
 // runAccessible reports whether the caller may act on run id, by ownership of the

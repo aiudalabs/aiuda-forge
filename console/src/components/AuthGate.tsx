@@ -16,10 +16,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // La propia /login nunca se gatea (evita un bucle de redirección).
-      if (typeof window !== "undefined" && window.location.pathname === "/login") {
-        if (!cancelled) setReady(true);
-        return;
+      // Rutas públicas que no se gatean: /login y /register (evitan el bucle de
+      // redirección) y /invite/* (su página maneja su propio flujo de sesión).
+      if (typeof window !== "undefined") {
+        const p = window.location.pathname;
+        if (p === "/login" || p === "/register" || p.startsWith("/invite/")) {
+          if (!cancelled) setReady(true);
+          return;
+        }
       }
       // Con token ya guardado, dejamos pasar (un 401 posterior lo maneja lib/api).
       if (getToken()) {

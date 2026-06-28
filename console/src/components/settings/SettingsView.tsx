@@ -16,6 +16,7 @@ import {
   useSaveProjectSettings,
 } from "@/lib/hooks";
 import { useActiveProject } from "@/lib/activeProject";
+import { useT } from "@/lib/i18n";
 import type { ProjectSettings, SettingsPayload } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ function isMasked(v: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SettingsView() {
+  const t = useT();
   const { data, isLoading, isError } = useSettings();
   const save = useSaveSettings();
 
@@ -65,7 +67,7 @@ export function SettingsView() {
       <div className="wrap">
         <div className="placeholder">
           <div className="ph-ic"><span className="spin" /></div>
-          Cargando configuración…
+          {t("settings.loading")}
         </div>
       </div>
     );
@@ -76,7 +78,7 @@ export function SettingsView() {
       <div className="wrap">
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
-          No se pudo cargar la configuración.
+          {t("settings.loadError")}
         </div>
       </div>
     );
@@ -85,17 +87,17 @@ export function SettingsView() {
   return (
     <div className="wrap">
       <div className="sectitle">
-        <h2>Settings</h2>
-        <span className="c">global · conexiones · seguridad · sandbox</span>
+        <h2>{t("settings.title")}</h2>
+        <span className="c">{t("settings.subtitle")}</span>
         <span className="sp" />
         <button className="btn primary sm" onClick={handleSave} disabled={save.isPending}>
-          {save.isPending ? "Guardando…" : "Guardar"}
+          {save.isPending ? t("settings.saving") : t("settings.save")}
         </button>
       </div>
 
       {saved && (
         <div className="shellnote" style={{ borderColor: "var(--ok-line, #b8e4c5)", color: "var(--ok, #1a7a3a)" }}>
-          Configuración guardada.
+          {t("settings.savedNote")}
         </div>
       )}
 
@@ -149,6 +151,7 @@ export function SettingsView() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ProjectSettingsSection() {
+  const t = useT();
   const { project } = useActiveProject();
   const projectId = project?.id ?? null;
   const { data, isLoading, isError } = useProjectSettings(projectId);
@@ -186,9 +189,9 @@ function ProjectSettingsSection() {
   return (
     <div style={{ marginTop: 22 }}>
       <div className="sectitle">
-        <h2>Proyecto</h2>
+        <h2>{t("settings.project.title")}</h2>
         <span className="c">
-          {project ? `ejecución de ${project.name}` : "ejecución por proyecto"}
+          {project ? t("settings.project.execOf", { name: project.name }) : t("settings.project.execGeneric")}
         </span>
         <span className="sp" />
         <button
@@ -196,13 +199,13 @@ function ProjectSettingsSection() {
           onClick={handleSave}
           disabled={save.isPending || !form || !projectId}
         >
-          {save.isPending ? "Guardando…" : "Guardar"}
+          {save.isPending ? t("settings.saving") : t("settings.save")}
         </button>
       </div>
 
       {saved && (
         <div className="shellnote" style={{ borderColor: "var(--ok-line, #b8e4c5)", color: "var(--ok, #1a7a3a)" }}>
-          Configuración del proyecto guardada.
+          {t("settings.project.savedNote")}
         </div>
       )}
 
@@ -225,17 +228,17 @@ function ProjectSettingsSection() {
       {!projectId ? (
         <div className="placeholder">
           <div className="ph-ic">✦</div>
-          Selecciona un proyecto para configurar su ejecución.
+          {t("settings.project.selectPrompt")}
         </div>
       ) : isLoading || !form ? (
         <div className="placeholder">
           <div className="ph-ic"><span className="spin" /></div>
-          Cargando configuración del proyecto…
+          {t("settings.project.loading")}
         </div>
       ) : isError ? (
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
-          No se pudo cargar la configuración del proyecto.
+          {t("settings.project.loadError")}
         </div>
       ) : (
         <div className="grid3" style={{ gap: 16 }}>
@@ -266,14 +269,15 @@ function McpSection({
   connections: SettingsPayload["mcp"];
   onChange: (v: SettingsPayload["mcp"]) => void;
 }) {
+  const t = useT();
   return (
     <div className="card">
-      <h3>Tickets (MCP)</h3>
-      <div className="role">El backlog vive en JIRA/GitHub; la fábrica los lee por MCP.</div>
+      <h3>{t("settings.mcp.title")}</h3>
+      <div className="role">{t("settings.mcp.role")}</div>
       {connections.map((conn, i) => (
         <div key={i} style={{ marginTop: 10 }}>
           <div className="field">
-            <label>Nombre</label>
+            <label>{t("settings.mcp.name")}</label>
             <input
               className="inp"
               value={conn.name}
@@ -285,7 +289,7 @@ function McpSection({
             />
           </div>
           <div className="field">
-            <label>URL</label>
+            <label>{t("settings.mcp.url")}</label>
             <input
               className="inp mono"
               value={conn.url}
@@ -297,11 +301,11 @@ function McpSection({
             />
           </div>
           <div className="field">
-            <label>Token {isMasked(conn.token) && <span style={{ color: "var(--ink4)", fontSize: 11 }}>(enmascarado)</span>}</label>
+            <label>{t("settings.mcp.token")} {isMasked(conn.token) && <span style={{ color: "var(--ink4)", fontSize: 11 }}>{t("settings.masked")}</span>}</label>
             <input
               className="inp mono"
               type="password"
-              placeholder={isMasked(conn.token) ? "Sin cambios — dejar vacío para preservar" : ""}
+              placeholder={isMasked(conn.token) ? t("settings.maskedPlaceholder") : ""}
               value={isMasked(conn.token) ? "" : conn.token}
               onChange={(e) => {
                 const next = [...connections];
@@ -318,7 +322,7 @@ function McpSection({
         style={{ marginTop: 10 }}
         onClick={() => onChange([...connections, { name: "", url: "", token: "" }])}
       >
-        + Añadir conexión
+        {t("settings.mcp.add")}
       </button>
     </div>
   );
@@ -331,12 +335,13 @@ function AgentAuthSection({
   auth: SettingsPayload["agent_auth"];
   onChange: (v: SettingsPayload["agent_auth"]) => void;
 }) {
+  const t = useT();
   return (
     <div className="card">
-      <h3>Auth del agente</h3>
-      <div className="role">Cómo corre Claude dentro del sandbox.</div>
+      <h3>{t("settings.auth.title")}</h3>
+      <div className="role">{t("settings.auth.role")}</div>
       <div className="field" style={{ marginTop: 10 }}>
-        <label>Modo</label>
+        <label>{t("settings.auth.mode")}</label>
         <select
           className="inp"
           value={auth.mode}
@@ -348,12 +353,12 @@ function AgentAuthSection({
       </div>
       <div className="field">
         <label>
-          Secret {isMasked(auth.secret) && <span style={{ color: "var(--ink4)", fontSize: 11 }}>(enmascarado)</span>}
+          {t("settings.auth.secret")} {isMasked(auth.secret) && <span style={{ color: "var(--ink4)", fontSize: 11 }}>{t("settings.masked")}</span>}
         </label>
         <input
           className="inp mono"
           type="password"
-          placeholder={isMasked(auth.secret) ? "Sin cambios — dejar vacío para preservar" : ""}
+          placeholder={isMasked(auth.secret) ? t("settings.maskedPlaceholder") : ""}
           value={isMasked(auth.secret) ? "" : auth.secret}
           onChange={(e) => onChange({ ...auth, secret: e.target.value || MASKED })}
         />
@@ -369,27 +374,28 @@ function ExecutionUnitSection({
   unit: ProjectSettings["execution_unit"];
   onChange: (v: ProjectSettings["execution_unit"]) => void;
 }) {
+  const t = useT();
   return (
     <div className="card">
-      <h3>Unidad de ejecución</h3>
+      <h3>{t("settings.exec.title")}</h3>
       <div className="role">
-        Cómo la fábrica agrupa el trabajo en PRs.
+        {t("settings.exec.role")}
       </div>
       <div className="field" style={{ marginTop: 10 }}>
-        <label>Modo</label>
+        <label>{t("settings.exec.mode")}</label>
         <select
           className="inp"
           value={unit}
           onChange={(e) => onChange(e.target.value as ProjectSettings["execution_unit"])}
         >
-          <option value="sprint">por sprint — 1 PR por sprint (goal mode)</option>
-          <option value="story">por story — 1 PR por story</option>
+          <option value="sprint">{t("settings.exec.optSprint")}</option>
+          <option value="story">{t("settings.exec.optStory")}</option>
         </select>
       </div>
       <div className="role" style={{ marginTop: 8, fontSize: 12 }}>
         {unit === "sprint"
-          ? "Cada sprint se implementa en un solo run, sobre una rama, como un PR coherente."
-          : "Cada story se implementa por separado: un run y un PR por story."}
+          ? t("settings.exec.helpSprint")
+          : t("settings.exec.helpStory")}
       </div>
     </div>
   );
@@ -402,27 +408,28 @@ function MergeModeSection({
   mode: ProjectSettings["merge_mode"];
   onChange: (v: ProjectSettings["merge_mode"]) => void;
 }) {
+  const t = useT();
   return (
     <div className="card">
-      <h3>Modo de merge</h3>
+      <h3>{t("settings.merge.title")}</h3>
       <div className="role">
-        Quién hace merge del PR antes de desbloquear los sprints/stories dependientes.
+        {t("settings.merge.role")}
       </div>
       <div className="field" style={{ marginTop: 10 }}>
-        <label>Modo</label>
+        <label>{t("settings.merge.mode")}</label>
         <select
           className="inp"
           value={mode}
           onChange={(e) => onChange(e.target.value as ProjectSettings["merge_mode"])}
         >
-          <option value="manual">manual — un humano hace merge en GitHub</option>
-          <option value="auto">auto — la fábrica hace merge del PR</option>
+          <option value="manual">{t("settings.merge.optManual")}</option>
+          <option value="auto">{t("settings.merge.optAuto")}</option>
         </select>
       </div>
       <div className="role" style={{ marginTop: 8, fontSize: 12 }}>
         {mode === "auto"
-          ? "El PR ya pasó gate + review; la fábrica lo mergea y desbloquea los dependientes."
-          : "El trabajo queda en revisión hasta que alguien mergea el PR; ahí se desbloquean los dependientes."}
+          ? t("settings.merge.helpAuto")
+          : t("settings.merge.helpManual")}
       </div>
     </div>
   );
@@ -435,12 +442,13 @@ function SandboxSection({
   sandbox: SettingsPayload["sandbox"];
   onChange: (v: SettingsPayload["sandbox"]) => void;
 }) {
+  const t = useT();
   return (
     <div className="card">
-      <h3>Sandbox</h3>
-      <div className="role">Aislamiento de la ejecución.</div>
+      <h3>{t("settings.sandbox.title")}</h3>
+      <div className="role">{t("settings.sandbox.role")}</div>
       <div className="field" style={{ marginTop: 10 }}>
-        <label>Runtime</label>
+        <label>{t("settings.sandbox.runtime")}</label>
         <input
           className="inp"
           value={sandbox.runtime}
@@ -448,7 +456,7 @@ function SandboxSection({
         />
       </div>
       <div className="field">
-        <label>Imagen del agente</label>
+        <label>{t("settings.sandbox.image")}</label>
         <input
           className="inp mono"
           value={sandbox.image}

@@ -54,6 +54,10 @@ import type {
   SettingsPayload,
   StepStatus,
   Epic,
+  Member,
+  Invite,
+  MembersPayload,
+  Role,
 } from "./types";
 
 export type ApiMode = "real" | "mock";
@@ -980,3 +984,51 @@ export async function getArtifact(runId: string, stepId: string): Promise<string
   const r = res?.result;
   return r?.output?.text ?? r?.detail ?? r?.text ?? "";
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Members & invitations (v1.2 roles)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** GET /projects/{id}/members — miembros (email resuelto) + invites pendientes. */
+export async function listMembers(projectId: string): Promise<MembersPayload> {
+  const res = await http<MembersPayload>(`/projects/${projectId}/members`);
+  return { members: res.members ?? [], invites: res.invites ?? [] };
+}
+
+export interface InviteResult {
+  status: "added" | "invited";
+  email: string;
+  role: Role;
+  user_id?: string;
+  token?: string;
+  invite_path?: string;
+}
+
+/** POST /projects/{id}/members — invita por email+rol (owner-only en el backend). */
+export async function inviteMember(projectId: string, email: string, role: Role): Promise<InviteResult> {
+  return http<InviteResult>(`/projects/${projectId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+/** PUT /projects/{id}/members/{userId} — cambia el rol de un miembro. */
+export async function updateMemberRole(projectId: string, userId: string, role: Role): Promise<void> {
+  await http<unknown>(`/projects/${projectId}/members/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify({ role }),
+  });
+}
+
+/** DELETE /projects/{id}/members/{userId} — quita un miembro. */
+export async function removeMember(projectId: string, userId: string): Promise<void> {
+  await http<unknown>(`/projects/${projectId}/members/${userId}`, { method: "DELETE" });
+}
+
+/** POST /invites/{token}/accept — el usuario invitado acepta y se une al proyecto. */
+export async function acceptInvite(token: string): Promise<{ project_id: string; role: Role }> {
+  return http<{ project_id: string; role: Role }>(`/invites/${token}/accept`, { method: "POST" });
+}
+
+// Member/Invite re-exported through types; referenced here to satisfy the imports.
+export type { Member, Invite };

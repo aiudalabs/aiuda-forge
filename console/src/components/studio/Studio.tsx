@@ -9,6 +9,7 @@
 
 import { useState } from "react";
 import { useActiveProject } from "@/lib/activeProject";
+import { useT } from "@/lib/i18n";
 import { StudioDocs } from "./StudioDocs";
 import { StudioEntry } from "./StudioEntry";
 import { StudioView } from "./StudioView";
@@ -18,6 +19,7 @@ type Tab = "spec" | "design";
 export function Studio() {
   const { project, isLoading } = useActiveProject();
   const [tab, setTab] = useState<Tab>("spec");
+  const t = useT();
 
   // No project → the conversational entry. Launching a design auto-routes to the
   // Diseño tab so the user lands on the live flow instead of hunting for it.
@@ -29,10 +31,10 @@ export function Studio() {
     <>
       <div className="studio-tabs">
         <button className={`studio-tab${tab === "spec" ? " on" : ""}`} onClick={() => setTab("spec")}>
-          Especificación
+          {t("studio.tab.spec")}
         </button>
         <button className={`studio-tab${tab === "design" ? " on" : ""}`} onClick={() => setTab("design")}>
-          Diseño
+          {t("studio.tab.design")}
         </button>
       </div>
       {tab === "spec" ? <StudioDocs /> : <StudioView />}

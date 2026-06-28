@@ -228,6 +228,30 @@ export interface Project {
   name: string;
   description: string;
   repo: string; // GitHub https URL
+  owner_id?: string;
+}
+
+// ── Members & invitations (v1.2 roles) ────────────────────────────────────────
+export type Role = "owner" | "editor" | "viewer";
+
+export interface Member {
+  user_id: string;
+  email: string;
+  role: Role;
+}
+
+export interface Invite {
+  token: string;
+  project_id: string;
+  email: string;
+  role: Role;
+  created_at: number;
+  accepted_at: number;
+}
+
+export interface MembersPayload {
+  members: Member[];
+  invites: Invite[];
 }
 
 // ── Project docs (Studio = Confluence, U1) ────────────────────────────────────

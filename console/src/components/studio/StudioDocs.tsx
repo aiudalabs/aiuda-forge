@@ -13,23 +13,31 @@ import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
 import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
 import { useProjectDocs, useProjectDoc } from "@/lib/hooks";
+import { useT } from "@/lib/i18n";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
 
 // Friendly titles + a logical reading order for the known design artifacts. Unknown
-// files fall back to their filename and sort after the known ones.
-const DOC_META: Record<string, { title: string; icon: string; order: number }> = {
-  "BRIEF.md": { title: "Brief", icon: "✦", order: 1 },
-  "PRD.md": { title: "PRD · Requisitos", icon: "▤", order: 2 },
-  "ARCHITECTURE.md": { title: "Arquitectura", icon: "◫", order: 3 },
-  "UI_SCREENS.md": { title: "Pantallas UI", icon: "▢", order: 4 },
-  "backlog.yaml": { title: "Backlog", icon: "☰", order: 5 },
-  "mockups": { title: "Mockups", icon: "▨", order: 6 },
-  "SESSION.md": { title: "Sesión de diseño", icon: "◷", order: 7 },
+// files fall back to their filename and sort after the known ones. titleKey is an
+// i18n key; null means use the raw filename.
+const DOC_META: Record<string, { titleKey: string | null; icon: string; order: number }> = {
+  "BRIEF.md": { titleKey: "studio.docs.title.brief", icon: "✦", order: 1 },
+  "PRD.md": { titleKey: "studio.docs.title.prd", icon: "▤", order: 2 },
+  "ARCHITECTURE.md": { titleKey: "studio.docs.title.architecture", icon: "◫", order: 3 },
+  "UI_SCREENS.md": { titleKey: "studio.docs.title.uiScreens", icon: "▢", order: 4 },
+  "backlog.yaml": { titleKey: "studio.docs.title.backlog", icon: "☰", order: 5 },
+  "mockups": { titleKey: "studio.docs.title.mockups", icon: "▨", order: 6 },
+  "SESSION.md": { titleKey: "studio.docs.title.session", icon: "◷", order: 7 },
 };
 
 function meta(name: string) {
-  return DOC_META[name] ?? { title: name, icon: "·", order: 99 };
+  return DOC_META[name] ?? { titleKey: null, icon: "·", order: 99 };
+}
+
+// Resolve a doc's display title: translated for known files, raw filename otherwise.
+function metaTitle(name: string, t: (k: string) => string): string {
+  const m = meta(name);
+  return m.titleKey ? t(m.titleKey) : name;
 }
 
 function isMarkdown(path: string) {
@@ -43,7 +51,7 @@ function isHtml(path: string) {
 
 // MockupFrame renders an HTML mockup inline (sandboxed iframe) with a button to
 // open it full-screen in its own tab — "como una UI funcional".
-function MockupFrame({ content }: { content: string }) {
+function MockupFrame({ content, t }: { content: string; t: (k: string) => string }) {
   function openInTab() {
     const blob = new Blob([content], { type: "text/html" });
     const url = URL.createObjectURL(blob);
@@ -54,9 +62,9 @@ function MockupFrame({ content }: { content: string }) {
   return (
     <div className="docs-mockup">
       <div className="docs-mockup-bar">
-        <span className="docs-mockup-tag">Mockup interactivo</span>
+        <span className="docs-mockup-tag">{t("studio.docs.mockup.tag")}</span>
         <button className="btn ghost sm" onClick={openInTab}>
-          ⛶ Abrir a pantalla completa
+          {t("studio.docs.mockup.openFullscreen")}
         </button>
       </div>
       <iframe
@@ -70,6 +78,7 @@ function MockupFrame({ content }: { content: string }) {
 }
 
 export function StudioDocs() {
+  const t = useT();
   const { project, isLoading: projLoading } = useActiveProject();
   const projectId = project?.id ?? null;
   const { data: docs, isLoading, isError } = useProjectDocs(projectId);
@@ -93,7 +102,7 @@ export function StudioDocs() {
     return (
       <div className="wrap">
         <div className="placeholder">
-          <span className="spin" /> cargando proyecto…
+          <span className="spin" /> {t("studio.docs.loadingProject")}
         </div>
       </div>
     );
@@ -102,19 +111,19 @@ export function StudioDocs() {
   if (!project) {
     return (
       <div className="wrap">
-        <div className="placeholder">Selecciona un proyecto para ver su especificación.</div>
+        <div className="placeholder">{t("studio.docs.selectProject")}</div>
       </div>
     );
   }
 
   return (
     <div className="wrap">
-      <div className="eyebrow acc">Especificación del producto</div>
+      <div className="eyebrow acc">{t("studio.docs.eyebrow")}</div>
       <h2 className="docs-h1">
         {project.name}
         {project.repo && (
           <a className="docs-repo" href={project.repo} target="_blank" rel="noreferrer">
-            ↗ repo
+            {t("studio.docs.repo")}
           </a>
         )}
       </h2>
@@ -122,16 +131,16 @@ export function StudioDocs() {
       <div className="docs-layout">
         {/* Page tree */}
         <aside className="docs-tree">
-          <div className="docs-tree-head">Páginas</div>
+          <div className="docs-tree-head">{t("studio.docs.pages")}</div>
           {isLoading ? (
             <div className="docs-tree-empty">
-              <span className="spin" /> cargando…
+              <span className="spin" /> {t("studio.docs.loading")}
             </div>
           ) : files.length === 0 ? (
             <div className="docs-tree-empty">
-              Aún no hay specs en el repo.
+              {t("studio.docs.empty.line1")}
               <br />
-              Se generan en la fase de diseño.
+              {t("studio.docs.empty.line2")}
             </div>
           ) : (
             <nav>
@@ -142,7 +151,7 @@ export function StudioDocs() {
                   onClick={() => setSelected(d.path)}
                 >
                   <span className="docs-tree-ic">{meta(d.name).icon}</span>
-                  <span className="docs-tree-label">{meta(d.name).title}</span>
+                  <span className="docs-tree-label">{metaTitle(d.name, t)}</span>
                 </button>
               ))}
               {dirs.map((d) => {
@@ -155,7 +164,7 @@ export function StudioDocs() {
                     onClick={() => setSelected(target)}
                   >
                     <span className="docs-tree-ic">{meta(d.name).icon}</span>
-                    <span className="docs-tree-label">{meta(d.name).title}</span>
+                    <span className="docs-tree-label">{metaTitle(d.name, t)}</span>
                     <span className="docs-tree-badge">html</span>
                   </button>
                 );
@@ -167,15 +176,15 @@ export function StudioDocs() {
         {/* Reader */}
         <section className="docs-reader">
           {isError ? (
-            <div className="placeholder err">No se pudieron leer los docs del repo.</div>
+            <div className="placeholder err">{t("studio.docs.readError")}</div>
           ) : !active ? (
-            <div className="placeholder">Selecciona una página.</div>
+            <div className="placeholder">{t("studio.docs.selectPage")}</div>
           ) : docLoading ? (
             <div className="placeholder">
-              <span className="spin" /> cargando documento…
+              <span className="spin" /> {t("studio.docs.loadingDoc")}
             </div>
           ) : isHtml(active) ? (
-            <MockupFrame content={content ?? ""} />
+            <MockupFrame content={content ?? ""} t={t} />
           ) : isMarkdown(active) ? (
             <article className="docs-md artifact-md">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{content ?? ""}</ReactMarkdown>

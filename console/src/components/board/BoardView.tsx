@@ -11,18 +11,20 @@ import { RunCard } from "./RunCard";
 import { RunDrawer } from "./RunDrawer";
 import { useControlStatus, usePause, useResume, useRuns } from "@/lib/hooks";
 import { useActiveProjectId } from "@/lib/activeProject";
+import { useT } from "@/lib/i18n";
 import type { RunStatus } from "@/lib/types";
 
-const STATUS_OPTS: { value: RunStatus | "ALL" | "ATTENTION"; label: string }[] = [
-  { value: "ALL", label: "Todos" },
-  { value: "ATTENTION", label: "Necesita atención" },
-  { value: "RUNNING", label: "Running" },
-  { value: "AWAITING", label: "Awaiting" },
-  { value: "DONE", label: "Done" },
-  { value: "FAILED", label: "Failed" },
+const STATUS_OPTS: { value: RunStatus | "ALL" | "ATTENTION"; key: string }[] = [
+  { value: "ALL", key: "board.filter.all" },
+  { value: "ATTENTION", key: "board.filter.attention" },
+  { value: "RUNNING", key: "board.filter.running" },
+  { value: "AWAITING", key: "board.filter.awaiting" },
+  { value: "DONE", key: "board.filter.done" },
+  { value: "FAILED", key: "board.filter.failed" },
 ];
 
 export function BoardView() {
+  const t = useT();
   const params = useSearchParams();
   const projectId = useActiveProjectId();
   const { data: runs, isLoading, isError, refetch } = useRuns(projectId);
@@ -70,38 +72,39 @@ export function BoardView() {
       <StatCards />
 
       <div className="sectitle">
-        <h2>Corridas</h2>
-        <span className="c">workflow: factory · {runs?.length ?? 0} runs</span>
+        <h2>{t("board.heading")}</h2>
+        <span className="c">{t("board.runsMeta", { count: runs?.length ?? 0 })}</span>
         <span className="sp" />
         <select className="inp" style={{ width: "auto" }} value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
           {STATUS_OPTS.map((o) => (
             <option key={o.value} value={o.value}>
-              {o.label}
+              {t(o.key)}
             </option>
           ))}
         </select>
         <input
           className="inp"
           style={{ width: 180 }}
-          placeholder="Buscar ticket / run…"
+          placeholder={t("board.searchPlaceholder")}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
         {paused ? (
           <button className="btn primary sm" onClick={() => resume.mutate()} disabled={resume.isPending}>
-            ▶ Reanudar fábrica
+            {t("board.resume")}
           </button>
         ) : (
           <button className="btn ghost sm" onClick={() => pause.mutate()} disabled={pause.isPending}>
-            ⏸ Pausar fábrica
+            {t("board.pause")}
           </button>
         )}
       </div>
 
       {paused && (
         <div className="shellnote" style={{ borderColor: "var(--accent-line)" }}>
-          <span className="dot paused" /> Fábrica <b style={{ color: "var(--accent)" }}>pausada</b> — no
-          se entrega trabajo nuevo; lo en curso sigue.
+          <span className="dot paused" /> {t("board.pausedNote.factory")}{" "}
+          <b style={{ color: "var(--accent)" }}>{t("board.pausedNote.paused")}</b>{" "}
+          {t("board.pausedNote.rest")}
         </div>
       )}
 
@@ -111,22 +114,22 @@ export function BoardView() {
           <div className="ph-ic">
             <span className="spin" />
           </div>
-          Cargando corridas…
+          {t("board.loading")}
         </div>
       ) : isError ? (
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
-          No se pudo conectar al control-plane.{" "}
+          {t("board.error")}{" "}
           <button className="btn ghost sm" onClick={() => refetch()}>
-            Reintentar
+            {t("board.retry")}
           </button>
         </div>
       ) : filtered.length === 0 ? (
         <div className="placeholder">
           <div className="ph-ic">▦</div>
-          {runs && runs.length > 0 ? "Ningún run coincide con el filtro." : "Sin corridas todavía."}
+          {runs && runs.length > 0 ? t("board.emptyFiltered") : t("board.empty")}
           <div style={{ marginTop: 6, fontSize: 13, color: "var(--ink4)" }}>
-            Los runs aparecen cuando el orquestador toma un ticket READY, o al lanzar uno manualmente.
+            {t("board.emptyHint")}
           </div>
         </div>
       ) : (
@@ -138,9 +141,9 @@ export function BoardView() {
       )}
 
       <div className="quote serif">
-        El gate verifica que <span className="acc">pasa los tests</span>; el revisor cross-model
-        encuentra <span className="acc">lo que los tests no ven</span>. La fábrica no fusiona sola lo
-        que importa.
+        {t("board.quote.1")} <span className="acc">{t("board.quote.2")}</span>
+        {t("board.quote.3")} <span className="acc">{t("board.quote.4")}</span>
+        {t("board.quote.5")}
       </div>
 
       <RunDrawer runId={openRunId} onClose={() => setOpenRunId(null)} />

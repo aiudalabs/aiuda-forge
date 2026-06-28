@@ -81,6 +81,57 @@ export async function login(email: string, password: string): Promise<LoginUser>
   return data.user;
 }
 
+/**
+ * POST /auth/register — alta self-service. Crea la cuenta y deja la sesión iniciada
+ * (persiste el token). Lanza Error con mensaje claro en duplicado (409) o password
+ * débil (400).
+ */
+export async function register(email: string, password: string): Promise<LoginUser> {
+  const res = await fetch(`${API_URL}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    if (res.status === 409) throw new Error("Ya existe una cuenta con ese email.");
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `El registro falló (${res.status}).`);
+  }
+  const data = (await res.json()) as { token: string; user: LoginUser };
+  setToken(data.token);
+  return data.user;
+}
+
+/** GET /auth/me — usuario de la sesión actual, o null si no hay sesión. */
+export async function me(): Promise<LoginUser | null> {
+  try {
+    const res = await fetch(`${API_URL}/auth/me`, { headers: { ...authHeaders() } });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { user: LoginUser | null };
+    return data.user;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /auth/change-password — rota la contraseña del usuario logueado. Verifica la
+ * actual; en éxito el backend invalida todas las sesiones (hay que re-loguear). Lanza
+ * Error con mensaje claro en contraseña actual incorrecta (401) u otra validación.
+ */
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${API_URL}/auth/change-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  });
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("La contraseña actual es incorrecta.");
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `No se pudo cambiar la contraseña (${res.status}).`);
+  }
+}
+
 /** POST /auth/logout — invalida la sesión en el servidor y borra el token local. */
 export async function logout(): Promise<void> {
   const t = getToken();

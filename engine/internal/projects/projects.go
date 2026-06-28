@@ -69,6 +69,22 @@ CREATE TABLE IF NOT EXISTS projects (
   merge_mode     TEXT NOT NULL DEFAULT 'manual',
   created_at     INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS project_members (
+  project_id TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS project_invites (
+  token       TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL,
+  email       TEXT NOT NULL,
+  role        TEXT NOT NULL,
+  created_at  INTEGER NOT NULL DEFAULT 0,
+  accepted_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_invites_project ON project_invites(project_id);
 `
 
 // migrations add the multi-tenant columns to project DBs predating them (audit
@@ -163,6 +179,11 @@ func (s *Store) Create(p Project) (Project, error) {
 		}
 		return Project{}, err
 	}
+	// The creator is the project's owner — also recorded as a member so the roles
+	// model (owner·editor·viewer) has a row from day one.
+	if p.OwnerID != "" {
+		_ = s.AddMember(p.ID, p.OwnerID, RoleOwner)
+	}
 	return p, nil
 }
 
@@ -196,6 +217,19 @@ func (s *Store) List() ([]Project, error) {
 // is scoped to the authenticated user so they never see another user's projects.
 func (s *Store) ListByOwner(ownerID string) ([]Project, error) {
 	return s.query(projectCols+` WHERE owner_id=? ORDER BY created_at DESC`, ownerID)
+}
+
+// ListForMember returns every project the user can access under the roles model
+// (v1.2): projects where they hold ANY membership (owner·editor·viewer), unioned
+// with projects whose legacy owner_id is them (back-compat for rows predating the
+// members table). This is what GET /projects scopes to so a shared editor/viewer
+// sees the projects invited to them, not only ones they created.
+func (s *Store) ListForMember(userID string) ([]Project, error) {
+	q := projectCols + `
+		WHERE id IN (SELECT project_id FROM project_members WHERE user_id=?)
+		   OR owner_id=?
+		ORDER BY created_at DESC`
+	return s.query(q, userID, userID)
 }
 
 func (s *Store) query(q string, args ...any) ([]Project, error) {

@@ -9,24 +9,27 @@ import { useMemo } from "react";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
 import { useActiveProject } from "@/lib/activeProject";
 import { useMetrics, useProjectDocs, useTickets } from "@/lib/hooks";
+import { useT } from "@/lib/i18n";
 
-const DOC_TITLE: Record<string, string> = {
-  "BRIEF.md": "Brief",
-  "PRD.md": "PRD · Requisitos",
-  "ARCHITECTURE.md": "Arquitectura",
-  "UI_SCREENS.md": "Pantallas UI",
-  "backlog.yaml": "Backlog",
-  mockups: "Mockups",
-  "SESSION.md": "Sesión de diseño",
+// Doc file/name → i18n key ("overview.doc.*"). Resolved with t() at render.
+const DOC_TITLE_KEY: Record<string, string> = {
+  "BRIEF.md": "overview.doc.brief",
+  "PRD.md": "overview.doc.prd",
+  "ARCHITECTURE.md": "overview.doc.architecture",
+  "UI_SCREENS.md": "overview.doc.uiScreens",
+  "backlog.yaml": "overview.doc.backlog",
+  mockups: "overview.doc.mockups",
+  "SESSION.md": "overview.doc.session",
 };
 
-const STATUS_LABEL: Record<TicketStatus, string> = {
-  backlog: "Backlog",
-  ready: "Listo",
-  running: "En ejecución",
-  in_review: "En revisión",
-  done: "Done",
-  failed: "Fallido",
+// Ticket status → i18n key ("overview.status.*"). Resolved with t() at render.
+const STATUS_LABEL_KEY: Record<TicketStatus, string> = {
+  backlog: "overview.status.backlog",
+  ready: "overview.status.ready",
+  running: "overview.status.running",
+  in_review: "overview.status.in_review",
+  done: "overview.status.done",
+  failed: "overview.status.failed",
 };
 
 // Dominant status of a sprint (for the row's accent), worst-to-best precedence so a
@@ -67,6 +70,7 @@ function sprintRows(tickets: OrchestratorTicket[]): SprintRow[] {
 }
 
 export function Overview() {
+  const t = useT();
   const { project, isLoading: projLoading } = useActiveProject();
   const projectId = project?.id ?? null;
   const { data: tickets } = useTickets(projectId);
@@ -95,7 +99,7 @@ export function Overview() {
     return (
       <div className="wrap">
         <div className="placeholder">
-          <span className="spin" /> cargando…
+          <span className="spin" /> {t("overview.loading")}
         </div>
       </div>
     );
@@ -104,9 +108,9 @@ export function Overview() {
     return (
       <div className="wrap">
         <div className="placeholder">
-          Sin proyecto activo.{" "}
+          {t("overview.noProject")}{" "}
           <Link href="/studio" className="acc">
-            Empieza uno en Studio →
+            {t("overview.startInStudio")}
           </Link>
         </div>
       </div>
@@ -118,12 +122,12 @@ export function Overview() {
       {/* Hero */}
       <div className="ov-hero">
         <div>
-          <div className="eyebrow acc">Resumen del proyecto</div>
+          <div className="eyebrow acc">{t("overview.eyebrow")}</div>
           <h2 className="ov-title">
             {project.name}
             {project.repo && (
               <a className="ov-repo" href={project.repo} target="_blank" rel="noreferrer">
-                ↗ repo
+                {t("overview.repo")}
               </a>
             )}
           </h2>
@@ -133,7 +137,7 @@ export function Overview() {
           <div className="ov-progress-top">
             <span className="ov-progress-pct serif">{stats.pct}%</span>
             <span className="ov-progress-sub">
-              {stats.done} / {stats.total} stories
+              {t("overview.stories", { done: stats.done, total: stats.total })}
             </span>
           </div>
           <div className="ov-bar">
@@ -145,26 +149,26 @@ export function Overview() {
       {/* KPIs */}
       <div className="stats">
         <div className="stat">
-          <div className="eyebrow">Sprints completos</div>
+          <div className="eyebrow">{t("overview.kpi.sprintsDone")}</div>
           <div className="n serif">
             {sprintsDone}
             <span className="ov-of"> / {stats.sprints.length}</span>
           </div>
         </div>
         <div className="stat">
-          <div className="eyebrow">En ejecución</div>
+          <div className="eyebrow">{t("overview.kpi.running")}</div>
           <div className="n serif" style={{ color: "var(--navy)" }}>{stats.running}</div>
-          <div className="sub">stories construyéndose</div>
+          <div className="sub">{t("overview.kpi.running.sub")}</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">En revisión</div>
+          <div className="eyebrow">{t("overview.kpi.inReview")}</div>
           <div className="n serif" style={{ color: "#7a5d00" }}>{stats.inReview}</div>
-          <div className="sub">esperando merge</div>
+          <div className="sub">{t("overview.kpi.inReview.sub")}</div>
         </div>
         <div className="stat">
-          <div className="eyebrow">Gasto</div>
+          <div className="eyebrow">{t("overview.kpi.spend")}</div>
           <div className="n serif acc">${(metrics?.total_cost_usd ?? 0).toFixed(2)}</div>
-          <div className="sub">{metrics?.agent_calls ?? 0} llamadas</div>
+          <div className="sub">{t("overview.kpi.spend.sub", { n: metrics?.agent_calls ?? 0 })}</div>
         </div>
       </div>
 
@@ -173,18 +177,18 @@ export function Overview() {
         {/* Especificación */}
         <section className="ov-card">
           <div className="ov-card-head">
-            <span>Especificación</span>
+            <span>{t("overview.spec")}</span>
             <Link href="/studio" className="ov-link">
-              Abrir Studio →
+              {t("overview.spec.open")}
             </Link>
           </div>
           {docFiles.length === 0 ? (
-            <div className="ov-empty">Specs aún no generados (fase de diseño).</div>
+            <div className="ov-empty">{t("overview.spec.empty")}</div>
           ) : (
             <div className="ov-doclist">
               {docFiles.map((d) => (
                 <Link key={d.path} href="/studio" className="ov-docitem">
-                  <span className="ov-docname">{DOC_TITLE[d.name] ?? d.name}</span>
+                  <span className="ov-docname">{DOC_TITLE_KEY[d.name] ? t(DOC_TITLE_KEY[d.name]) : d.name}</span>
                   <span className="ov-docarrow">→</span>
                 </Link>
               ))}
@@ -195,13 +199,13 @@ export function Overview() {
         {/* Flujo */}
         <section className="ov-card">
           <div className="ov-card-head">
-            <span>Flujo · sprints</span>
+            <span>{t("overview.flow")}</span>
             <Link href="/tickets" className="ov-link">
-              Abrir Board →
+              {t("overview.flow.open")}
             </Link>
           </div>
           {stats.sprints.length === 0 ? (
-            <div className="ov-empty">Sin backlog todavía.</div>
+            <div className="ov-empty">{t("overview.flow.empty")}</div>
           ) : (
             <div className="ov-sprints">
               {stats.sprints.map((s) => (
@@ -216,7 +220,7 @@ export function Overview() {
                   <span className="ov-sprint-count">
                     {s.done}/{s.total}
                   </span>
-                  <span className={`ov-sprint-tag st-${s.state}`}>{STATUS_LABEL[s.state]}</span>
+                  <span className={`ov-sprint-tag st-${s.state}`}>{t(STATUS_LABEL_KEY[s.state])}</span>
                 </div>
               ))}
             </div>

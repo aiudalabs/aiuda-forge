@@ -24,6 +24,7 @@ import {
 import Dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Node styling by status
@@ -63,6 +64,7 @@ interface StoryNodeData extends Record<string, unknown> {
 }
 
 function StoryNode({ data }: NodeProps) {
+  const t = useT();
   const d = data as StoryNodeData;
   const style = STATUS_STYLE[d.status] ?? STATUS_STYLE.backlog;
   return (
@@ -81,7 +83,7 @@ function StoryNode({ data }: NodeProps) {
         userSelect: "none",
       }}
       onClick={() => d.onOpenTicket(d.id)}
-      title="Ver detalle del ticket"
+      title={t("tickets.rowTitle")}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
@@ -109,12 +111,12 @@ const NODE_H = 56;
 
 type LayoutKind = "hier-lr" | "hier-tb" | "organic" | "circular" | "radial";
 
-const LAYOUTS: { kind: LayoutKind; label: string }[] = [
-  { kind: "hier-lr", label: "Jerárquico" },
-  { kind: "hier-tb", label: "Vertical" },
-  { kind: "organic", label: "Orgánico" },
-  { kind: "circular", label: "Circular" },
-  { kind: "radial", label: "Radial" },
+const LAYOUTS: { kind: LayoutKind; labelKey: string }[] = [
+  { kind: "hier-lr", labelKey: "tickets.graph.layout.hierLr" },
+  { kind: "hier-tb", labelKey: "tickets.graph.layout.hierTb" },
+  { kind: "organic", labelKey: "tickets.graph.layout.organic" },
+  { kind: "circular", labelKey: "tickets.graph.layout.circular" },
+  { kind: "radial", labelKey: "tickets.graph.layout.radial" },
 ];
 
 function buildElements(
@@ -308,6 +310,7 @@ interface DepGraphProps {
 }
 
 function DepGraphInner({ tickets, onOpenTicket }: DepGraphProps) {
+  const t = useT();
   const base = useMemo(() => buildElements(tickets, onOpenTicket), [tickets, onOpenTicket]);
   const [layout, setLayout] = useState<LayoutKind>("hier-lr");
   const [fullscreen, setFullscreen] = useState(false);
@@ -353,22 +356,22 @@ function DepGraphInner({ tickets, onOpenTicket }: DepGraphProps) {
   return (
     <div className={`dag-wrap${fullscreen ? " full" : ""}`}>
       <div className="dag-toolbar">
-        <div className="dag-seg" role="group" aria-label="Disposición">
+        <div className="dag-seg" role="group" aria-label={t("tickets.graph.layout")}>
           {LAYOUTS.map((l) => (
             <button
               key={l.kind}
               className={`dag-seg-btn${layout === l.kind ? " on" : ""}`}
               onClick={() => pick(l.kind)}
             >
-              {l.label}
+              {t(l.labelKey)}
             </button>
           ))}
         </div>
-        <button className="dag-btn" onClick={() => fitView({ padding: 0.18, duration: 400 })} title="Ajustar a pantalla">
-          ⊡ Ajustar
+        <button className="dag-btn" onClick={() => fitView({ padding: 0.18, duration: 400 })} title={t("tickets.graph.fitTitle")}>
+          {t("tickets.graph.fit")}
         </button>
         <button className="dag-btn primary" onClick={() => setFullscreen((v) => !v)}>
-          {fullscreen ? "✕ Salir" : "⛶ Pantalla completa"}
+          {fullscreen ? t("tickets.graph.exitFullscreen") : t("tickets.graph.fullscreen")}
         </button>
       </div>
       <div className="dag-canvas">
