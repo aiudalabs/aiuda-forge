@@ -15,6 +15,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -87,7 +88,13 @@ func isSecretKey(k string) bool { return secretMCPKeys[k] }
 func (st *Store) MCPValue(connector, key string) string {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	if conn, ok := st.s.MCP[connector]; ok {
+	// Connection names are user-entered in the console (e.g. "Telegram" vs
+	// "telegram"); match case-insensitively so a different capitalization still
+	// resolves the connector's config.
+	for name, conn := range st.s.MCP {
+		if !strings.EqualFold(name, connector) {
+			continue
+		}
 		if v, ok := conn[key].(string); ok {
 			return v
 		}

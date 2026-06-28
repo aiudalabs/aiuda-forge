@@ -45,6 +45,16 @@ func TestMCPSecretMaskAndRoundTrip(t *testing.T) {
 	}
 }
 
+// MCPValue matches the connector name case-insensitively (the console lets the user
+// type "Telegram" or "telegram"; both must resolve the token).
+func TestMCPValueCaseInsensitive(t *testing.T) {
+	st := openTemp(t)
+	_, _ = st.Put(Settings{MCP: map[string]map[string]any{"Telegram": {"token": "BOTX"}}})
+	if got := st.MCPValue("telegram", "token"); got != "BOTX" {
+		t.Fatalf("MCPValue(telegram) = %q, want BOTX (case-insensitive match on 'Telegram')", got)
+	}
+}
+
 // Providing a new real token overwrites the stored one.
 func TestMCPSecretOverwrite(t *testing.T) {
 	st := openTemp(t)
