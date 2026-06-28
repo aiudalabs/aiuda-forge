@@ -1,6 +1,6 @@
 id: reviewer
 version: 1.0.0
-model: claude-sonnet-4-6   # CROSS-MODEL: deliberately different from dev (claude-opus-4-8)
+model: claude-sonnet-4-6
 skills: []
 tools: [read, bash]
 role: "Adversarially review the modified working tree. Find the bug the implementer missed."

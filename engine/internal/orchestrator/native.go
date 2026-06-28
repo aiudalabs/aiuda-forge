@@ -477,6 +477,21 @@ type PRStateChecker interface {
 	PRClosed(ctx context.Context, repoURL string, number int) (bool, error)
 }
 
+// BranchFileChecker is an OPTIONAL extension a MergeChecker may implement so the
+// scheduler can defer firing a sprint until the project's design docs are on `dev`
+// (#19). The design handoff publishes stories the instant design finishes, but the
+// docs_pr PR — which lands docs/ + `.vibeforge-gate` on dev — is merged by a human
+// afterwards. Firing before that merge clones a dev with no PRD/architecture/gate,
+// so draft_story has no spec and the gate seal fails. When the MergeChecker
+// implements this, fireSprint skips a sprint whose repo's dev lacks the gate file;
+// the sprint stays ready and fires on a later cycle once the docs PR lands. When
+// absent (e.g. local PR_MODE with a nil gh), the guard is a no-op.
+type BranchFileChecker interface {
+	// FileOnBranch reports whether path exists on branch of repoURL; an absent
+	// path/branch is (false, nil), not an error.
+	FileOnBranch(ctx context.Context, repoURL, branch, path string) (bool, error)
+}
+
 // NewNativeScheduler builds a NativeScheduler. gh may be nil to disable the
 // merge-reconcile loop (e.g. local PR_MODE where there are no GitHub PRs).
 func NewNativeScheduler(provider StoryProvider, cp ControlPlane, workflow string, gh MergeChecker) *NativeScheduler {
@@ -1187,6 +1202,38 @@ func (s *NativeScheduler) advanceLooseStory(ctx context.Context, t NativeTicket)
 // for the whole sprint. Returns true if a run was fired. A lost claim (concurrent
 // scheduler), an empty story set, or any error short-circuits to false.
 func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool {
+	// #19 guard: don't fire before the project's design docs + gate are on `dev`.
+	// Peek the sprint's stories (read-only, no claim) to learn the repo, then check
+	// that `.vibeforge-gate` is present on dev. If the docs PR hasn't merged yet,
+	// defer: the sprint stays ready and fires next cycle once the docs land. The
+	// guard only runs when the MergeChecker can inspect a branch (GitHub mode);
+	// in local mode (nil/plain gh) it is a no-op so behavior is unchanged.
+	if fc, ok := s.gh.(BranchFileChecker); ok {
+		if peek, perr := s.provider.SprintStories(ctx, sp.ID); perr == nil {
+			repo := ""
+			for _, st := range peek {
+				if st.Repo != "" {
+					repo = st.Repo
+					break
+				}
+			}
+			// Only meaningful for GitHub repos (the guard inspects a branch via the
+			// GitHub API). A local/non-github repo (PR_MODE=local) has no dev-on-GitHub
+			// to check, so skip the guard and fire as before — never wedge local mode.
+			if repo != "" && strings.Contains(repo, "github.com") {
+				present, ferr := fc.FileOnBranch(ctx, repo, "dev", ".vibeforge-gate")
+				if ferr != nil {
+					log.Printf("native-scheduler: sprint %s: dev docs check failed (%v) — deferring fire", sp.ID, ferr)
+					return false
+				}
+				if !present {
+					log.Printf("native-scheduler: sprint %s: design docs not yet merged to dev (no .vibeforge-gate) — deferring fire", sp.ID)
+					return false
+				}
+			}
+		}
+	}
+
 	// ClaimSprint returns the claimed IDs in topo order, but we re-fetch the full
 	// stories (with body/accept/repo) below to build the ticket, so the IDs from
 	// the claim aren't needed here — only that the claim was won.

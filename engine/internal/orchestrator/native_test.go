@@ -392,6 +392,8 @@ type fakeMergeChecker struct {
 	mergeCalls    int
 	mergedNumbers []int
 	failMerge     bool // when true, MergePR returns an error (auto-merge failure path)
+	gateMissing   bool // when true, FileOnBranch reports the gate ABSENT on dev (#19)
+	fileChecks    int  // counts FileOnBranch calls (assert the #19 guard ran)
 }
 
 func newFakeMergeChecker() *fakeMergeChecker {
@@ -410,6 +412,16 @@ func (m *fakeMergeChecker) PRMerged(_ context.Context, _ string, number int) (bo
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.merged[number], nil
+}
+
+// FileOnBranch implements the optional BranchFileChecker (#19). Defaults to
+// present (gateMissing=false) so existing sprint-firing tests are unaffected;
+// the #19 test sets gateMissing=true to assert the scheduler defers firing.
+func (m *fakeMergeChecker) FileOnBranch(_ context.Context, _, _, _ string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fileChecks++
+	return !m.gateMissing, nil
 }
 
 func (m *fakeMergeChecker) MergePR(_ context.Context, _ string, number int) error {
@@ -1292,5 +1304,43 @@ func TestPerProjectMergeModeInOneCycle(t *testing.T) {
 	}
 	if got := provider.statusOf("MAN"); got != "in_review" {
 		t.Errorf("manual story must stay in_review (await human merge), got %s", got)
+	}
+}
+
+// TestNativeSprintDefersUntilDocsOnDev reproduces #19: a ready sprint must NOT
+// fire until the project's design docs (.vibeforge-gate) have been merged to dev.
+// With the gate absent the scheduler defers (no fire, story stays backlog); once
+// the docs PR lands the same sprint fires on the next cycle.
+func TestNativeSprintDefersUntilDocsOnDev(t *testing.T) {
+	provider := newFakeProvider(
+		&fakeStory{id: "S1", title: "foundation", status: "backlog",
+			repo: "https://github.com/acme/x", sprintID: "SP1", projectID: "p1"},
+	)
+	cp := &fakeControlPlane{execUnit: "sprint"}
+	gh := newFakeMergeChecker()
+	gh.gateMissing = true // docs_pr not merged yet → dev has no gate
+	sched := NewNativeScheduler(provider, cp, "dev", gh)
+	ctx := context.Background()
+
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 0 {
+		t.Fatalf("sprint fired before docs on dev: got %d fires, want 0", cp.firedCount())
+	}
+	if gh.fileChecks == 0 {
+		t.Fatalf("#19 guard never ran — FileOnBranch was not consulted")
+	}
+	if got := provider.statusOf("S1"); got != "backlog" {
+		t.Fatalf("deferred sprint's story should stay backlog, got %s", got)
+	}
+
+	// Human merges the docs PR → dev now has the gate → the sprint fires.
+	gh.gateMissing = false
+	if _, err := sched.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp.firedCount() != 1 {
+		t.Fatalf("sprint did not fire after docs landed on dev: got %d fires, want 1", cp.firedCount())
 	}
 }

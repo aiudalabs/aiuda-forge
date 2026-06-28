@@ -169,6 +169,28 @@ func (c *Client) MergePR(ctx context.Context, repoURL string, number int) error 
 	return nil
 }
 
+// FileOnBranch reports whether path exists on branch of repoURL, via
+// `gh api repos/<slug>/contents/<path>?ref=<branch>`. A 404 (path or branch
+// absent) is reported as (false, nil), NOT an error — the orchestrator uses this
+// (#19) to defer firing a sprint until the design docs + `.vibeforge-gate` have
+// been merged to `dev`, and "not there yet" is the expected, non-error answer.
+func (c *Client) FileOnBranch(ctx context.Context, repoURL, branch, path string) (bool, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return false, err
+	}
+	endpoint := fmt.Sprintf("repos/%s/contents/%s?ref=%s", slug, path, branch)
+	out, err := c.runner(ctx, "", "gh", "api", endpoint, "--jq", ".sha")
+	if err != nil {
+		lo := strings.ToLower(out)
+		if strings.Contains(out, "404") || strings.Contains(lo, "not found") || strings.Contains(lo, "no commit found") {
+			return false, nil // path/branch absent → not present yet, not an error
+		}
+		return false, fmt.Errorf("gh api %s: %w: %s", endpoint, err, strings.TrimSpace(out))
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
 // slugFromURL derives "owner/repo" from an HTTPS GitHub repo URL, e.g.
 // "https://github.com/acme/widgets" or "https://github.com/acme/widgets.git" →
 // "acme/widgets". It tolerates a trailing slash and the optional ".git" suffix.
