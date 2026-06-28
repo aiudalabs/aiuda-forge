@@ -13,6 +13,7 @@ export interface SectionMeta {
 export const SECTIONS: SectionMeta[] = [
   { key: "overview", href: "/", icon: "◇", label: "Resumen", eyebrow: "Vista del proyecto", title: "Resumen" },
   { key: "studio", href: "/studio", icon: "✎", label: "Studio", eyebrow: "Diseño del producto", title: "Studio" },
+  { key: "brain", href: "/brain", icon: "✦", label: "Brain", eyebrow: "Asistente del proyecto", title: "Brain" },
   { key: "board", href: "/board", icon: "▦", label: "Board · Runs", eyebrow: "Ejecución autónoma", title: "Board · Runs" },
   { key: "tickets", href: "/tickets", icon: "☰", label: "Tickets", eyebrow: "Backlog · MCP", title: "Tickets" },
   { key: "registry", href: "/registry", icon: "◆", label: "Registry", eyebrow: "Configuración · no-code", title: "Registry" },
