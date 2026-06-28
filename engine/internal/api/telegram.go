@@ -11,7 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"forge/internal/brain"
 	"forge/internal/channels"
+	"forge/internal/projects"
 )
 
 // ---- link-code store --------------------------------------------------------
@@ -134,7 +136,7 @@ func (s *Server) telegramWebhook(w http.ResponseWriter, r *http.Request) {
 
 	reply := s.handleTelegramText(r.Context(), fromID, chatID, text)
 	if reply != "" {
-		s.replyTelegram(r.Context(), chatID, reply)
+		s.replyTelegram(chatID, reply)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -177,13 +179,107 @@ func (s *Server) handleTelegramText(ctx context.Context, fromID, chatID, text st
 	if err != nil || role == "" {
 		return "No tienes acceso a este proyecto."
 	}
-	// Inbound chain verified. Command execution (Brain + acciones) llega en el
-	// siguiente paso; por ahora confirmamos identidad/proyecto/rol.
-	return "✅ Conectado · proyecto " + projectID + " · rol " + role + "\nLos comandos llegan en el próximo paso."
+
+	// Approve / reject a Brain-proposed action from the chat (channel-based
+	// approval). Editor+ only — a viewer may ask/read but not act.
+	if id, approved, isResolve := parseResolveCmd(text); isResolve {
+		if !projects.RoleAtLeast(role, projects.RoleEditor) {
+			return "Resolver una acción requiere rol editor u owner."
+		}
+		if s.Brain == nil {
+			return "El asistente no está disponible."
+		}
+		if err := s.Brain.Resolve(id, approved); err != nil {
+			return "❌ No se pudo resolver: " + err.Error()
+		}
+		if approved {
+			return "✅ Acción aprobada."
+		}
+		return "🚫 Acción rechazada."
+	}
+
+	// Free text → the Brain interprets it (its per-tool MinRole gating applies to
+	// the caller's real role). The turn is async; we ack now and stream the result
+	// (and any approval prompt) back to the chat as it completes.
+	if s.Brain == nil {
+		return "El asistente no está disponible (el control se inició sin ANTHROPIC_API_KEY)."
+	}
+	convID, err := s.Brain.Send(projectID, role, text)
+	if err != nil {
+		return "❌ " + err.Error()
+	}
+	go s.streamBrainToTelegram(convID, chatID)
+	return "🤔 Procesando…"
 }
 
-// replyTelegram sends text back to a chat via the telegram connector.
-func (s *Server) replyTelegram(ctx context.Context, chatID, text string) {
+// parseResolveCmd recognizes "/approve <id>" and "/reject <id>".
+func parseResolveCmd(text string) (id string, approved bool, ok bool) {
+	switch {
+	case strings.HasPrefix(text, "/approve "):
+		return strings.TrimSpace(text[len("/approve "):]), true, true
+	case strings.HasPrefix(text, "/reject "):
+		return strings.TrimSpace(text[len("/reject "):]), false, true
+	}
+	return "", false, false
+}
+
+// streamBrainToTelegram subscribes to a Brain conversation and relays it to the
+// chat: it accumulates streamed text, posts an approval prompt when the Brain
+// proposes a mutating action, and sends the final answer on done (or a timeout
+// notice). Runs in its own goroutine so the webhook returns to Telegram at once.
+func (s *Server) streamBrainToTelegram(convID, chatID string) {
+	if s.Bus == nil {
+		return
+	}
+	id, ch := s.Bus.Subscribe(convID)
+	defer s.Bus.Unsubscribe(id)
+	var sb strings.Builder
+	timeout := time.After(90 * time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			switch ev.Type {
+			case brain.EvtToken:
+				sb.WriteString(dataField(ev.Data, "text"))
+			case brain.EvtAction:
+				tool := dataField(ev.Data, "tool")
+				aid := dataField(ev.Data, "action_id")
+				s.replyTelegram(chatID, "🔔 Acción propuesta: "+tool+"\nResponde /approve "+aid+" o /reject "+aid)
+			case brain.EvtDone:
+				txt := strings.TrimSpace(sb.String())
+				if e := dataField(ev.Data, "error"); e != "" {
+					txt = "❌ " + e
+				} else if txt == "" {
+					txt = "✅ Listo."
+				}
+				s.replyTelegram(chatID, txt)
+				return
+			}
+		case <-timeout:
+			s.replyTelegram(chatID, "⏱ Tiempo agotado esperando al asistente.")
+			return
+		}
+	}
+}
+
+// dataField extracts a string field from an event's JSON data payload.
+func dataField(data, key string) string {
+	if data == "" {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(data), &m) != nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// replyTelegram sends text back to a chat via the telegram connector, bounded by a
+// short timeout so a hung send can't leak a goroutine.
+func (s *Server) replyTelegram(chatID, text string) {
 	if s.Channels == nil {
 		return
 	}
@@ -191,5 +287,7 @@ func (s *Server) replyTelegram(ctx context.Context, chatID, text string) {
 	if conn == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	_ = conn.Notify(ctx, chatID, channels.Event{Title: text})
 }
