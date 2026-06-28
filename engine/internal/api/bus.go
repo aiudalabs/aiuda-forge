@@ -20,7 +20,16 @@ type Bus struct {
 	subs    map[int]*subscriber
 	nextID  int
 	lastSeq int64
+
+	// onEvent, if set, fires for each newly-drained event (v1.3 channel delivery).
+	// Called outside the bus lock; the handler must not block (it dispatches sends
+	// asynchronously). nil disables outbound delivery.
+	onEvent func(store.Event)
 }
+
+// SetOnEvent wires an outbound-delivery hook fired per new event. Set once at wiring
+// time before Run; not safe to change concurrently with Run.
+func (b *Bus) SetOnEvent(fn func(store.Event)) { b.onEvent = fn }
 
 type subscriber struct {
 	runID string // "" = all runs
@@ -63,7 +72,6 @@ func (b *Bus) drain() {
 	}
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for _, ev := range events {
 		if ev.Seq > b.lastSeq {
 			b.lastSeq = ev.Seq
@@ -76,6 +84,15 @@ func (b *Bus) drain() {
 			case sub.ch <- *ev:
 			default: // slow consumer: drop rather than block the bus
 			}
+		}
+	}
+	b.mu.Unlock()
+
+	// Outbound channel delivery (v1.3): fire the hook OUTSIDE the lock so a slow
+	// handler never stalls the bus. The handler dispatches the actual sends async.
+	if b.onEvent != nil {
+		for _, ev := range events {
+			b.onEvent(*ev)
 		}
 	}
 }

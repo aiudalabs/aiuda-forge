@@ -76,11 +76,49 @@ func (st *Store) Get() Settings {
 	return st.s.Masked()
 }
 
-// Masked returns a copy where secret-shaped fields are replaced with a sentinel.
+// secretMCPKeys are MCP connection fields treated as secrets (masked on read,
+// preserved on a masked round-trip). Telegram/JIRA/etc tokens live here (v1.3).
+var secretMCPKeys = map[string]bool{"token": true, "secret": true, "bot_token": true, "api_token": true, "api_key": true}
+
+func isSecretKey(k string) bool { return secretMCPKeys[k] }
+
+// MCPValue returns the RAW (unmasked) value of an MCP connection field, e.g. the
+// Telegram bot token. For internal use (sending), never for client responses.
+func (st *Store) MCPValue(connector, key string) string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if conn, ok := st.s.MCP[connector]; ok {
+		if v, ok := conn[key].(string); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// Masked returns a copy where secret-shaped fields are replaced with a sentinel:
+// AgentAuth.Secret and any secret-shaped MCP connection field. The MCP map is
+// deep-copied so masking never mutates the stored settings.
 func (s Settings) Masked() Settings {
 	out := s
 	if out.AgentAuth.Secret != "" {
 		out.AgentAuth.Secret = secretMask
+	}
+	if s.MCP != nil {
+		mcp := make(map[string]map[string]any, len(s.MCP))
+		for name, conn := range s.MCP {
+			cp := make(map[string]any, len(conn))
+			for k, v := range conn {
+				if isSecretKey(k) {
+					if sv, ok := v.(string); ok && sv != "" {
+						cp[k] = secretMask
+						continue
+					}
+				}
+				cp[k] = v
+			}
+			mcp[name] = cp
+		}
+		out.MCP = mcp
 	}
 	return out
 }
@@ -92,6 +130,24 @@ func (st *Store) Put(in Settings) (Settings, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if in.MCP != nil {
+		// Preserve stored MCP secrets when the client sent the mask (or empty) — a
+		// round-trip of GET→PUT must not wipe the real token (mirrors AgentAuth).
+		for name, conn := range in.MCP {
+			for k, v := range conn {
+				if !isSecretKey(k) {
+					continue
+				}
+				sv, ok := v.(string)
+				if ok && sv != secretMask && sv != "" {
+					continue // a real new secret was provided — keep it
+				}
+				if old, ok := st.s.MCP[name]; ok {
+					if ov, ok := old[k].(string); ok && ov != "" {
+						conn[k] = ov // restore the stored secret
+					}
+				}
+			}
+		}
 		st.s.MCP = in.MCP
 	}
 	if in.Sandbox != nil {

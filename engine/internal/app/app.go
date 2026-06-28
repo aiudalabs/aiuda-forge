@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"forge/internal/auth"
 	"forge/internal/billing"
 	"forge/internal/brain"
+	"forge/internal/channels"
+	"forge/internal/channels/telegram"
 	"forge/internal/gate"
 	"forge/internal/pr"
 	"forge/internal/projects"
@@ -253,6 +256,36 @@ func Build(cfg Config) (*App, error) {
 				return
 			}
 			_, _ = bill.CountFeature(ws.ID, storyID, runID)
+		}
+	}
+
+	// Channel delivery (v1.3): fan notable factory events (run failed/awaiting/done,
+	// spend cap) to each project's subscribed channels. Telegram first; its bot token
+	// is read per-send from settings (settings.mcp.telegram.token), so a token change
+	// is picked up without a restart. Sends are async + best-effort (Delivery).
+	if proj != nil {
+		tg := telegram.New(func() string { return srv.Settings.MCPValue("telegram", "token") })
+		delivery := &channels.Delivery{
+			Registry: channels.Registry{tg.Name(): tg},
+			Lookup: func(projectID, eventType string) ([]channels.Target, error) {
+				cs, err := proj.ChannelsForEvent(projectID, eventType)
+				if err != nil {
+					return nil, err
+				}
+				out := make([]channels.Target, 0, len(cs))
+				for _, c := range cs {
+					out = append(out, channels.Target{Connector: c.Connector, Target: c.Target})
+				}
+				return out, nil
+			},
+			Logf: log.Printf,
+		}
+		bus.SetOnEvent(func(ev store.Event) {
+			delivery.Deliver(ev.Type, ev.ProjectID, ev.RunID, []byte(ev.Data))
+		})
+		// Keep the bot token out of logs (log-redaction layer).
+		if tok := srv.Settings.MCPValue("telegram", "token"); tok != "" {
+			agent.RegisterSecret(tok)
 		}
 	}
 
