@@ -198,5 +198,12 @@ D8. **[MEDIO] Vocabulario de metodología hardcodeado en Go** (diverge de la fil
 - #10 ✅ POST /auth/change-password
 - PENDIENTES (refactors grandes, no fixes de barrido): metodología hardcodeada en Go (publish.go epics/sprints,
   gate filename) = el refactor de "kernel 100% methodology-free"; imágenes de sandbox por-lane (#11/B2, infra);
-  R3 (reconcileStoryRunDesync en el orquestador); reaper-dup de llamada LLM (inherente a at-least-once, riesgoso);
+  reaper-dup de llamada LLM (inherente a at-least-once, riesgoso);
   señal UI de mixed-lane→dev (menor). Cada uno merece su propio esfuerzo enfocado.
+
+## v1.1 hardening — ESTADO (2026-06-27, PR #1, rama v1.1-hardening)
+Primera tajada de v1.1 (ver `docs/ROADMAP-v1.1-v1.4.md`). Los 4 bugs HIGH que bloquearon el E2E, RESUELTOS con test:
+- ✅ **#15** backlog `on_fail{goto:backlog,max:1}` + hint lean (`design.yaml`) — un timeout del scrum-master ya no tumba el design run.
+- ✅ **#18** artifacts/status toman la instancia MÁS RECIENTE del step (prefiere DONE) — `api/server.go` + `console api.ts statusOf`.
+- ✅ **#19** el orquestador difiere disparar un sprint hasta que `.vibeforge-gate` esté en `dev` — `github.FileOnBranch` + `BranchFileChecker` en `native.go` (solo github.com; local intacto).
+- ✅ **R3** `reconcileRevivedRuns` re-sincroniza una story `failed` cuyo run revive a RUNNING — `native.go` + nuevo `StoryProvider.Failed()`.
