@@ -54,6 +54,11 @@ func (o *fakeOps) StartRun(wf string, _ map[string]any) (string, error) {
 func (o *fakeOps) ApproveStep(string, string) error         { return nil }
 func (o *fakeOps) RejectStep(string, string, string) error  { return nil }
 func (o *fakeOps) Metrics(string) (map[string]any, error)   { return map[string]any{}, nil }
+func (o *fakeOps) ActiveState(string) (map[string]any, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return map[string]any{"paused": o.paused, "active_runs": []map[string]any{}, "awaiting_approval": []map[string]any{}, "terminal_runs": 0}, nil
+}
 
 func newTestBrain(t *testing.T, llm LLM, ops ControlOps, emit func(string, string, map[string]any)) *Brain {
 	t.Helper()

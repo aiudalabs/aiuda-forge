@@ -23,6 +23,7 @@ type ControlOps interface {
 	ApproveStep(runID, step string) error
 	RejectStep(runID, step, reason string) error
 	Metrics(projectID string) (map[string]any, error)
+	ActiveState(projectID string) (map[string]any, error)
 }
 
 // EngineOps is the production ControlOps, wired to the kernel Engine, store, and
@@ -33,7 +34,12 @@ type EngineOps struct {
 	Tickets *tickets.Store
 }
 
-func (o EngineOps) Status() (bool, int64) { return o.Engine.IsPaused(), o.Engine.PausedUntil() }
+func (o EngineOps) Status() (bool, int64) {
+	if o.Engine == nil {
+		return false, 0
+	}
+	return o.Engine.IsPaused(), o.Engine.PausedUntil()
+}
 func (o EngineOps) Pause()                { o.Engine.Pause() }
 func (o EngineOps) Resume()               { o.Engine.Resume() }
 
@@ -107,4 +113,45 @@ func (o EngineOps) Metrics(projectID string) (map[string]any, error) {
 		byStatus[string(r.Status)]++
 	}
 	return map[string]any{"runs_total": len(runs), "by_status": byStatus}, nil
+}
+
+// ActiveState returns a DIGESTED snapshot of the project's CURRENT state, so the
+// Brain doesn't have to summarize the firehose of list_runs (which includes every
+// old terminal run and invites a wrong narrative). It reports the engine pause flag,
+// the ACTIVE runs (queued/running/awaiting), any steps awaiting human approval, and
+// a count of terminal (done/failed/cancelled) runs — present but not enumerated.
+func (o EngineOps) ActiveState(projectID string) (map[string]any, error) {
+	runs, err := o.Store.ListRunsByProject("", projectID)
+	if err != nil {
+		return nil, err
+	}
+	active := []map[string]any{}
+	awaiting := []map[string]any{}
+	terminal := 0
+	for _, r := range runs {
+		switch r.Status {
+		case store.StatusQueued, store.StatusRunning, store.StatusAwaiting:
+			active = append(active, map[string]any{
+				"id": r.ID, "workflow": r.WorkflowID, "status": string(r.Status),
+			})
+			// A run parks at a human gate by leaving the run RUNNING while one task
+			// goes AWAITING — surface those so "what needs approval" is answerable.
+			tasks, _ := o.Store.TasksForRun(r.ID)
+			for _, t := range tasks {
+				if t.Status == store.StatusAwaiting {
+					awaiting = append(awaiting, map[string]any{"run_id": r.ID, "step": t.StepID})
+				}
+			}
+		default:
+			terminal++
+		}
+	}
+	paused, until := o.Status()
+	return map[string]any{
+		"paused":            paused,
+		"paused_until":      until,
+		"active_runs":       active,
+		"awaiting_approval": awaiting,
+		"terminal_runs":     terminal,
+	}, nil
 }
