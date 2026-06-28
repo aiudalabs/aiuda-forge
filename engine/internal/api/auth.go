@@ -69,6 +69,44 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// register handles POST /auth/register: open self-service signup. Creates the user
+// and immediately mints a session (so the console lands logged-in), mirroring the
+// login response shape. A duplicate email is 409; a weak/empty password is 400. The
+// password is never logged or echoed. Email verification/captcha are out of scope
+// for v1.2 (HARDENING_BACKLOG).
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	var req loginReq // same {email,password} shape as login
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.Email == "" || req.Password == "" {
+		httpErr(w, http.StatusBadRequest, "email and password are required")
+		return
+	}
+	if len(req.Password) < 8 {
+		httpErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+	if _, err := s.Auth.CreateUser(req.Email, req.Password); err != nil {
+		if errors.Is(err, auth.ErrExists) {
+			httpErr(w, http.StatusConflict, "an account with that email already exists")
+			return
+		}
+		httpErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Log the new user in by authenticating the just-set credentials.
+	u, sess, err := s.Auth.Authenticate(req.Email, req.Password)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, "account created but sign-in failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"token": sess.Token,
+		"user":  toUserView(u),
+	})
+}
+
 // logout handles POST /auth/logout: deletes the presented session token. Always
 // returns 200 (idempotent) — an unknown token is simply a no-op.
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

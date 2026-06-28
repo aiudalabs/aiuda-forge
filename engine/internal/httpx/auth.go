@@ -58,7 +58,7 @@ func publicPath(method, path string) bool {
 	switch path {
 	case "/healthz", "/readyz":
 		return true
-	case "/auth/login":
+	case "/auth/login", "/auth/register":
 		return method == http.MethodPost
 	}
 	return false
