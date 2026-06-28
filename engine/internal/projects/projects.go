@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS project_members (
   created_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (project_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS project_invites (
+  token       TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL,
+  email       TEXT NOT NULL,
+  role        TEXT NOT NULL,
+  created_at  INTEGER NOT NULL DEFAULT 0,
+  accepted_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_invites_project ON project_invites(project_id);
 `
 
 // migrations add the multi-tenant columns to project DBs predating them (audit
