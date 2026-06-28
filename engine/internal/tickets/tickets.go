@@ -159,10 +159,10 @@ CREATE TABLE IF NOT EXISTS stories (
   project_id TEXT NOT NULL DEFAULT '',
   external_ref TEXT NOT NULL DEFAULT ''
 );
--- external_ref is the idempotency key for imported stories (v1.3). UNIQUE only
--- when non-empty, so natively-created stories (external_ref='') never collide.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_external_ref
-  ON stories(external_ref) WHERE external_ref != '';
+-- NOTE: the external_ref UNIQUE index is created in Open() AFTER the
+-- migrationAddExternalRef ALTER, not here: an existing DB's stories table predates
+-- the column, so indexing it inside this schema string (which runs before the
+-- migration) would fail with "no such column: external_ref".
 
 CREATE TABLE IF NOT EXISTS story_deps (
   story_id TEXT NOT NULL,
