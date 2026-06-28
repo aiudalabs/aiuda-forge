@@ -476,6 +476,13 @@ func (s *Store) transition(id string, target Status, extraSet string, extraArgs 
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
+		// Billing: a story reaching done is a billable feature. transition() is the
+		// canonical per-story path — it catches BOTH MarkDone and the HTTP status
+		// endpoint's UpdateStoryStatus(done) (the real factory path). Sprint-mode's
+		// bulk update bypasses transition() and fires the hook itself.
+		if target == StatusDone {
+			s.fireStoryDone(id)
+		}
 		return nil
 	}
 	// 0 rows: either the id is missing or its current state is an illegal source.
@@ -1158,11 +1165,7 @@ func (s *Store) MarkInReview(id, prURL string) error {
 // Guarded: only an in_review story may reach done — a still-running story is never
 // flipped done, so "done" always means a merged PR (B1/B2).
 func (s *Store) MarkDone(id string) error {
-	if err := s.transition(id, StatusDone, ""); err != nil {
-		return err
-	}
-	s.fireStoryDone(id) // billing: count the billable feature (idempotent)
-	return nil
+	return s.transition(id, StatusDone, "") // transition() fires OnStoryDone for the done target
 }
 
 // MarkSprintInReview moves all of a sprint's RUNNING stories to in_review and

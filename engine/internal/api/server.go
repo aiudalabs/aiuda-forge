@@ -139,8 +139,10 @@ func (s *Server) routes() {
 	// docs/ (source of truth that outlives an ephemeral design run).
 	m.HandleFunc("GET /projects/{id}/docs", s.needProjects(s.listProjectDocs))
 	m.HandleFunc("GET /projects/{id}/docs/file", s.needProjects(s.getProjectDoc))
-	// Billing budget gate the orchestrator consults before firing a feature run.
+	// Billing: the budget gate the orchestrator consults before firing, and the
+	// workspace billing/health view the dashboard reads.
 	m.HandleFunc("GET /projects/{id}/entitlement", s.needProjects(s.projectEntitlement))
+	m.HandleFunc("GET /projects/{id}/billing", s.needProjects(s.projectBilling))
 	// Brain — the per-project conversational assistant (needBrain → 503 if no key).
 	m.HandleFunc("POST /projects/{id}/assistant", s.needProjects(s.needBrain(s.assistantSend)))
 	m.HandleFunc("GET /projects/{id}/assistant/history", s.needProjects(s.needBrain(s.assistantHistory)))
