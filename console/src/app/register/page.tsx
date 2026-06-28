@@ -36,7 +36,10 @@ export default function RegisterPage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#FAF8F4" }}>
+    <div style={{ position: "relative", minHeight: "100vh", display: "grid", placeItems: "center", background: "#FAF8F4" }}>
+      <div style={{ position: "absolute", top: 16, right: 16 }}>
+        <LanguageSwitcher />
+      </div>
       <form
         onSubmit={onSubmit}
         style={{
@@ -109,8 +112,6 @@ export default function RegisterPage() {
             {t("auth.signIn")}
           </a>
         </p>
-
-        <LanguageSwitcher />
       </form>
     </div>
   );

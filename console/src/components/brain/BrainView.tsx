@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useActiveProjectId } from "@/lib/activeProject";
+import { useT } from "@/lib/i18n";
 import { subscribe } from "@/lib/ws";
 import {
   sendAssistantMessage,
@@ -19,6 +20,7 @@ import {
 // (assistant.token), surfacing proposed mutating actions (assistant.action) as
 // Approve/Reject cards until the turn ends (assistant.done).
 export function BrainView() {
+  const t = useT();
   const projectId = useActiveProjectId();
   const [messages, setMessages] = useState<BrainMessage[]>([]);
   const [streaming, setStreaming] = useState<string>("");
@@ -112,7 +114,7 @@ export function BrainView() {
   );
 
   if (!projectId) {
-    return <div className="brain"><p className="brain-empty">Selecciona un proyecto para hablar con el Brain.</p></div>;
+    return <div className="brain"><p className="brain-empty">{t("brain.selectProject")}</p></div>;
   }
 
   return (
@@ -121,9 +123,9 @@ export function BrainView() {
         <div ref={scroller} className="brain-scroll">
           {messages.length === 0 && !streaming && (
             <p className="brain-empty">
-              Soy el Brain de este proyecto. Pídeme: <em>&ldquo;resume el estado&rdquo;</em>,{" "}
-              <em>&ldquo;para la ejecución&rdquo;</em>, <em>&ldquo;¿por qué falló el último run?&rdquo;</em> o{" "}
-              <em>&ldquo;agrega tal funcionalidad&rdquo;</em>.
+              {t("brain.introPrefix")} <em>&ldquo;{t("brain.introExample1")}&rdquo;</em>,{" "}
+              <em>&ldquo;{t("brain.introExample2")}&rdquo;</em>, <em>&ldquo;{t("brain.introExample3")}&rdquo;</em> o{" "}
+              <em>&ldquo;{t("brain.introExample4")}&rdquo;</em>.
             </p>
           )}
           {messages.map((m, i) => (
@@ -133,7 +135,7 @@ export function BrainView() {
           {actions.map((a) => (
             <ActionCard key={a.action_id} action={a} onResolve={resolve} />
           ))}
-          {busy && !streaming && <p className="brain-think">· pensando…</p>}
+          {busy && !streaming && <p className="brain-think">{t("brain.thinking")}</p>}
           {error && <p className="brain-err">{error}</p>}
         </div>
 
@@ -153,11 +155,11 @@ export function BrainView() {
                 void send();
               }
             }}
-            placeholder="Escribe un mensaje…  (Enter envía · Shift+Enter salto de línea)"
+            placeholder={t("brain.inputPlaceholder")}
             rows={2}
           />
           <button type="submit" className="btn primary" disabled={busy || !input.trim()}>
-            Enviar
+            {t("brain.send")}
           </button>
         </form>
       </div>
@@ -177,18 +179,19 @@ function Bubble({ role, content }: { role: string; content: string }) {
 }
 
 function ActionCard({ action, onResolve }: { action: ProposedAction; onResolve: (a: ProposedAction, approve: boolean) => void }) {
+  const t = useT();
   return (
     <div className="brain-action">
       <div className="h">
-        El Brain propone una acción <span className="tool">{action.tool}</span>
+        {t("brain.proposesAction")} <span className="tool">{action.tool}</span>
       </div>
       <pre>{JSON.stringify(action.args, null, 2)}</pre>
       <div className="acts">
         <button className="btn primary sm" onClick={() => onResolve(action, true)}>
-          Aprobar
+          {t("brain.approve")}
         </button>
         <button className="btn ghost sm" onClick={() => onResolve(action, false)}>
-          Rechazar
+          {t("brain.reject")}
         </button>
       </div>
     </div>

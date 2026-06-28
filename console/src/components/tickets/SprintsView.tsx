@@ -9,15 +9,7 @@
 import { useMemo, useState } from "react";
 import type { OrchestratorTicket, Sprint, TicketStatus } from "@/lib/types";
 import { useSprints } from "@/lib/hooks";
-
-const STATUS_LABEL: Record<TicketStatus, string> = {
-  backlog: "Backlog",
-  ready: "Listo",
-  running: "En ejecución",
-  in_review: "En revisión",
-  done: "Done",
-  failed: "Fallido",
-};
+import { useT } from "@/lib/i18n";
 
 // Dominant status of a sprint: a problem/active state wins so it's visible.
 function sprintState(statuses: TicketStatus[]): TicketStatus {
@@ -49,6 +41,7 @@ export function SprintsView({
   tickets: OrchestratorTicket[];
   onOpenTicket: (id: string) => void;
 }) {
+  const t = useT();
   const { data: sprintMeta } = useSprints();
 
   const groups = useMemo<SprintGroup[]>(() => {
@@ -91,7 +84,7 @@ export function SprintsView({
   const isOpen = (g: SprintGroup) => (g.id in collapsed ? !collapsed[g.id] : g.state !== "done");
 
   if (groups.length === 0) {
-    return <div className="placeholder">Sin sprints planeados todavía.</div>;
+    return <div className="placeholder">{t("tickets.sprints.empty")}</div>;
   }
 
   return (
@@ -115,21 +108,21 @@ export function SprintsView({
               <span className="sprint-count">
                 {g.done}/{g.stories.length}
               </span>
-              <span className={`sprint-tag st-${g.state}`}>{STATUS_LABEL[g.state]}</span>
+              <span className={`sprint-tag st-${g.state}`}>{t(`tickets.statusLabel.${g.state}`)}</span>
             </button>
 
             {open && (
               <div className="sprint-body">
                 {g.goal && <p className="sprint-goal">🎯 {g.goal}</p>}
                 {g.waitingOn.length > 0 && g.state === "backlog" && (
-                  <p className="sprint-waiting">Esperando a {g.waitingOn.join(", ")}</p>
+                  <p className="sprint-waiting">{t("tickets.sprints.waitingOn", { list: g.waitingOn.join(", ") })}</p>
                 )}
                 <div className="sprint-stories">
-                  {g.stories.map((t) => (
-                    <button key={t.id} className="sprint-story" onClick={() => onOpenTicket(t.id)}>
-                      <span className="sprint-story-id">{t.id}</span>
-                      <span className="sprint-story-ttl">{t.title}</span>
-                      <span className={`pill ${pillClass(t.status)}`}>{STATUS_LABEL[t.status]}</span>
+                  {g.stories.map((story) => (
+                    <button key={story.id} className="sprint-story" onClick={() => onOpenTicket(story.id)}>
+                      <span className="sprint-story-id">{story.id}</span>
+                      <span className="sprint-story-ttl">{story.title}</span>
+                      <span className={`pill ${pillClass(story.status)}`}>{t(`tickets.statusLabel.${story.status}`)}</span>
                     </button>
                   ))}
                 </div>

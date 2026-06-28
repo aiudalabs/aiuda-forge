@@ -17,6 +17,7 @@ import {
   useRegistryList,
   useSaveRegistryItem,
 } from "@/lib/hooks";
+import { useT } from "@/lib/i18n";
 import type { RegistryKind } from "@/lib/types";
 
 // Register only the YAML language to keep the bundle minimal.
@@ -37,6 +38,7 @@ type ItemModal =
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function RegistryView() {
+  const t = useT();
   const [tab, setTab] = useState<ActiveTab>("agents");
   const [modal, setModal] = useState<ItemModal>(null);
 
@@ -52,17 +54,17 @@ export function RegistryView() {
   }
 
   const TAB_LABELS: Record<ActiveTab, string> = {
-    agents: "Agentes",
-    skills: "Skills",
-    workflows: "Workflows",
+    agents: t("registry.tab.agents"),
+    skills: t("registry.tab.skills"),
+    workflows: t("registry.tab.workflows"),
   };
 
   return (
     <div className="wrap">
       {/* Pestañas */}
       <div className="sectitle">
-        <h2>Registry</h2>
-        <span className="c">agentes · skills · workflows</span>
+        <h2>{t("registry.title")}</h2>
+        <span className="c">{t("registry.subtitle")}</span>
         <span className="sp" />
         {(["agents", "skills", "workflows"] as ActiveTab[]).map((k) => (
           <button
@@ -74,7 +76,7 @@ export function RegistryView() {
           </button>
         ))}
         <button className="btn ghost sm" onClick={openNew}>
-          + Nuevo
+          {t("registry.new")}
         </button>
       </div>
 
@@ -84,17 +86,17 @@ export function RegistryView() {
           <div className="ph-ic">
             <span className="spin" />
           </div>
-          Cargando {TAB_LABELS[tab].toLowerCase()}…
+          {t("registry.loading", { kind: t(`registry.kind.${tab}`) })}
         </div>
       ) : isError ? (
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
-          No se pudo conectar al registry.
+          {t("registry.connectError")}
         </div>
       ) : ids.length === 0 ? (
         <div className="placeholder">
           <div className="ph-ic">◆</div>
-          Sin {TAB_LABELS[tab].toLowerCase()} todavía.
+          {t("registry.empty", { kind: t(`registry.kind.${tab}`) })}
         </div>
       ) : (
         <div className="grid3">
@@ -131,6 +133,7 @@ function ItemCard({
   id: string;
   onOpen: (id: string) => void;
 }) {
+  const t = useT();
   const { data: content } = useRegistryItem(kind, id);
   const deleteItem = useDeleteRegistryItem(kind);
 
@@ -145,7 +148,7 @@ function ItemCard({
 
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation();
-    if (confirm(`¿Borrar ${kind}/${id}?`)) {
+    if (confirm(t("registry.confirmDelete", { kind, id }))) {
       deleteItem.mutate(id);
     }
   }
@@ -168,7 +171,7 @@ function ItemCard({
           {preview}
         </div>
       )}
-      {!content && <div className="role" style={{ color: "var(--ink4)", fontSize: 12 }}>Cargando…</div>}
+      {!content && <div className="role" style={{ color: "var(--ink4)", fontSize: 12 }}>{t("registry.cardLoading")}</div>}
     </div>
   );
 }
@@ -186,6 +189,7 @@ function RenderedView({
   id: string;
   content: string;
 }) {
+  const t = useT();
   // Persona del agente (solo para agents).
   const { data: persona } = useAgentPersona(kind === "agents" ? id : null);
 
@@ -236,7 +240,7 @@ function RenderedView({
               marginBottom: 8,
             }}
           >
-            Persona
+            {t("registry.persona")}
           </div>
           <div
             className="artifact-md"
@@ -272,6 +276,7 @@ function ItemEditorModal({
   isNew: boolean;
   onClose: () => void;
 }) {
+  const t = useT();
   const { data: remoteContent, isLoading } = useRegistryItem(kind, isNew ? null : initialId);
   const save = useSaveRegistryItem(kind);
 
@@ -299,7 +304,7 @@ function ItemEditorModal({
     setSaveError(null);
     const targetId = idInput.trim();
     if (!targetId) {
-      setSaveError("El ID no puede estar vacío.");
+      setSaveError(t("registry.idEmpty"));
       return;
     }
     try {
@@ -311,12 +316,24 @@ function ItemEditorModal({
     }
   }
 
-  const kindLabel = kind === "agents" ? "agente" : kind === "skills" ? "skill" : "workflow";
+  const kindLabel = t(`registry.kindLabel.${kind}`);
 
   return (
-    <div className="modal on" role="dialog" aria-label={`${isNew ? "Nuevo" : "Editar"} ${kindLabel}`}>
+    <div
+      className="modal on"
+      role="dialog"
+      aria-label={
+        isNew
+          ? t("registry.modal.newAria", { kind: kindLabel })
+          : t("registry.modal.editAria", { kind: kindLabel })
+      }
+    >
       <div className="mh">
-        <h3>{isNew ? `Nuevo ${kindLabel}` : `${kindLabel} · ${initialId}`}</h3>
+        <h3>
+          {isNew
+            ? t("registry.modal.newTitle", { kind: kindLabel })
+            : t("registry.modal.editTitle", { kind: kindLabel, id: initialId })}
+        </h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {/* Toggle vista/edición — solo en ítems existentes */}
           {!isNew && (
@@ -324,10 +341,10 @@ function ItemEditorModal({
               className={`btn ghost sm${editMode ? " on" : ""}`}
               onClick={() => setEditMode((v) => !v)}
             >
-              {editMode ? "Ver" : "Editar"}
+              {editMode ? t("registry.view") : t("registry.edit")}
             </button>
           )}
-          <button className="x" onClick={onClose} aria-label="Cerrar">
+          <button className="x" onClick={onClose} aria-label={t("registry.close")}>
             ✕
           </button>
         </div>
@@ -335,22 +352,22 @@ function ItemEditorModal({
       <div className="mb">
         {isNew && (
           <div className="field" style={{ marginBottom: 10 }}>
-            <label>ID</label>
+            <label>{t("registry.idLabel")}</label>
             <input
               className="inp mono"
               value={idInput}
               onChange={(e) => setIdInput(e.target.value)}
-              placeholder={`nombre-del-${kindLabel}`}
+              placeholder={t("registry.idPlaceholder", { kind: kindLabel })}
             />
           </div>
         )}
 
         <div className="field">
           <label>
-            {kind === "skills" ? "Contenido (markdown)" : "Definición (YAML)"}
+            {kind === "skills" ? t("registry.bodyLabelMarkdown") : t("registry.bodyLabelYaml")}
           </label>
           {isLoading ? (
-            <div style={{ padding: 12, color: "var(--ink4)" }}>Cargando…</div>
+            <div style={{ padding: 12, color: "var(--ink4)" }}>{t("registry.bodyLoading")}</div>
           ) : editMode ? (
             <textarea
               className="inp mono"
@@ -383,7 +400,7 @@ function ItemEditorModal({
         {editMode && (
           <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
             <button className="btn ghost" style={{ flex: 1 }} onClick={onClose}>
-              Cancelar
+              {t("registry.cancel")}
             </button>
             <button
               className="btn primary"
@@ -391,14 +408,13 @@ function ItemEditorModal({
               onClick={handleSave}
               disabled={save.isPending || isLoading}
             >
-              {save.isPending ? "Guardando…" : "Validar y guardar"}
+              {save.isPending ? t("registry.saving") : t("registry.saveAndValidate")}
             </button>
           </div>
         )}
         {editMode && (
           <p style={{ fontSize: 12, color: "var(--ink4)", marginTop: 12 }}>
-            El servidor valida el schema; si el cuerpo es inválido verás el error arriba.
-            Los cambios son efectivos en el próximo run.
+            {t("registry.saveHint")}
           </p>
         )}
       </div>

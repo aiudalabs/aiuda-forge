@@ -10,6 +10,7 @@ import { useApiMode, useNotifications, useSpendToday } from "@/lib/hooks";
 import { useActiveProjectId } from "@/lib/activeProject";
 import { logout } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 
 export function Topbar() {
   const path = usePathname();
@@ -31,6 +32,8 @@ export function Topbar() {
         <div className="h1">{t(`nav.${section.key}.title`)}</div>
       </div>
       <div className="sp" />
+
+      <LanguageSwitcher />
 
       {mode && (
         <span className={`modebadge ${mode}`} title={mode === "mock" ? t("top.mockHint") : t("top.liveHint")}>

@@ -208,11 +208,14 @@ const styles = `
   .hint { color: #666; font-size: 13px; margin: 0; }
   .card { background: #fff; border: 1px solid #eee; border-radius: 14px; padding: 18px; }
   .card h3 { margin: 0 0 12px; font-size: 14px; font-weight: 800; }
-  .inviteRow { display: flex; gap: 8px; }
-  .inp { padding: 9px 11px; border: 1px solid #ddd; border-radius: 9px; font-size: 14px; outline: none; }
+  .inviteRow { display: flex; gap: 8px; align-items: center; }
+  .inp { box-sizing: border-box; padding: 9px 11px; border: 1px solid #ddd; border-radius: 9px; font-size: 14px; outline: none; }
   .inp.sel { background: #fff; }
   .inp.small { padding: 5px 8px; font-size: 13px; }
-  .inviteRow .inp:first-child { flex: 1; }
+  /* email crece y ocupa el espacio; select ancho fijo; botón fijo */
+  .inviteRow input.inp { flex: 1 1 auto; min-width: 200px; }
+  .inviteRow select.sel { flex: 0 0 120px; width: 120px; }
+  .inviteRow .btn { flex: 0 0 auto; }
   .btn { padding: 9px 16px; border: none; border-radius: 9px; background: #E8440A; color: #fff; font-weight: 700; cursor: pointer; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .micro { color: #999; font-size: 12px; margin: 8px 0 0; }

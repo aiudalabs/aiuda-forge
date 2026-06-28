@@ -1,6 +1,9 @@
 // Live-log: stream de eventos del bus (doc 16 §2.1/§4). Colorea por tipo, igual que el mockup.
 
+"use client";
+
 import type { RunEvent, RunEventType } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 
 function typeClass(t: RunEventType): string {
   if (t === "run.created" || t === "step.gate" || t === "run.done") return "ok";
@@ -9,11 +12,12 @@ function typeClass(t: RunEventType): string {
 }
 
 export function LiveLog({ events, style }: { events: RunEvent[]; style?: React.CSSProperties }) {
+  const t = useT();
   if (events.length === 0) {
     return (
       <div className="livelog" style={style}>
         <div>
-          <span className="k">···</span> esperando eventos del bus…
+          <span className="k">···</span> {t("board.log.waiting")}
         </div>
       </div>
     );

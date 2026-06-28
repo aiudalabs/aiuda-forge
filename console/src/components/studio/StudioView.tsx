@@ -21,6 +21,7 @@ import {
 } from "@/lib/hooks";
 import { useActiveProject } from "@/lib/activeProject";
 import { ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import type { DesignPhase, DesignRun, DesignStepStatus, Project } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ const ARTIFACT_STEPS = new Set(["discovery", "prd", "architecture", "ui", "mocku
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function StudioView() {
+  const t = useT();
   const { data: runs, isLoading, isError } = useDesignRuns();
   const { data: projects } = useProjects();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -92,11 +94,11 @@ export function StudioView() {
   return (
     <div className="wrap">
       <div className="sectitle">
-        <h2>Studio</h2>
-        <span className="c">diseño guiado · fase por fase</span>
+        <h2>{t("studio.view.title")}</h2>
+        <span className="c">{t("studio.view.subtitle")}</span>
         <span className="sp" />
         <button className="btn ghost sm" onClick={() => setShowNewProject(true)}>
-          + Nuevo proyecto
+          {t("studio.view.newProject")}
         </button>
       </div>
 
@@ -105,19 +107,19 @@ export function StudioView() {
           <div className="ph-ic">
             <span className="spin" />
           </div>
-          Cargando proyectos…
+          {t("studio.view.loadingProjects")}
         </div>
       ) : isError ? (
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
-          No se pudo conectar al control-plane.
+          {t("studio.view.connectError")}
         </div>
       ) : list.length === 0 ? (
         <div className="placeholder">
           <div className="ph-ic">✦</div>
-          Sin proyectos de diseño todavía.{" "}
+          {t("studio.view.noProjects")}{" "}
           <button className="btn ghost sm" onClick={() => setShowNewProject(true)}>
-            Crear el primero
+            {t("studio.view.createFirst")}
           </button>
         </div>
       ) : (
@@ -125,7 +127,7 @@ export function StudioView() {
           {/* Columna izquierda: lista de proyectos */}
           <div className="studio-sidebar">
             <div className="eyebrow" style={{ marginBottom: 10 }}>
-              Proyectos
+              {t("studio.view.projects")}
             </div>
             {list.map((run) => (
               <ProjectCard
@@ -143,7 +145,7 @@ export function StudioView() {
             {effectiveSel ? (
               <ProjectDetail runId={effectiveSel} />
             ) : (
-              <div className="placeholder">Selecciona un proyecto.</div>
+              <div className="placeholder">{t("studio.view.selectProject")}</div>
             )}
           </div>
         </div>
@@ -182,6 +184,7 @@ function ProjectCard({
   active: boolean;
   onSelect: () => void;
 }) {
+  const t = useT();
   const done = approvedCount(run.phases);
   const total = run.phases.length;
   const activeIdx = activePhaseIndex(run.phases);
@@ -220,7 +223,7 @@ function ProjectCard({
       <div className="proj-meta">
         <span className={`proj-dot ${state}`} />
         <span className="proj-progress">
-          {done}/{total} fases
+          {t("studio.view.phasesProgress", { done, total })}
         </span>
         {curPhase && state !== "approved" && (
           <span className="proj-cur">{curPhase.name}</span>
@@ -235,6 +238,7 @@ function ProjectCard({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ProjectDetail({ runId }: { runId: string }) {
+  const t = useT();
   const { data: run, isLoading } = useDesignRun(runId);
   const [selectedPhaseIdx, setSelectedPhaseIdx] = useState<number | null>(null);
 
@@ -253,7 +257,7 @@ function ProjectDetail({ runId }: { runId: string }) {
         <div className="ph-ic">
           <span className="spin" />
         </div>
-        Cargando proyecto…
+        {t("studio.view.loadingProject")}
       </div>
     );
   }
@@ -310,6 +314,7 @@ function PhasePanel({
   phase: DesignPhase;
   state: PhaseState;
 }) {
+  const t = useT();
   const hasArtifact =
     ARTIFACT_STEPS.has(phase.stepId) && phase.designStatus === "DONE";
 
@@ -355,22 +360,22 @@ function PhasePanel({
         {!hasArtifact && (
           <div className="artifact-empty">
             {phase.designStatus === "RUNNING" ? (
-              <span><span className="spin" style={{ width: 14, height: 14 }} /> Generando documento…</span>
+              <span><span className="spin" style={{ width: 14, height: 14 }} /> {t("studio.view.generatingDoc")}</span>
             ) : (
-              <span style={{ color: "var(--ink4)" }}>El documento se mostrará aquí cuando la fase complete.</span>
+              <span style={{ color: "var(--ink4)" }}>{t("studio.view.docWillShow")}</span>
             )}
           </div>
         )}
 
         {hasArtifact && artLoading && (
           <div className="artifact-empty">
-            <span className="spin" style={{ width: 14, height: 14 }} /> Cargando artefacto…
+            <span className="spin" style={{ width: 14, height: 14 }} /> {t("studio.view.loadingArtifact")}
           </div>
         )}
 
         {hasArtifact && artError && (
           <div className="artifact-empty" style={{ color: "var(--accent)" }}>
-            No se pudo cargar el documento.
+            {t("studio.view.loadDocError")}
           </div>
         )}
 
@@ -399,14 +404,14 @@ function PhasePanel({
                 onClick={() => setShowRejectForm(true)}
                 disabled={reject.isPending || approve.isPending}
               >
-                Rechazar / pedir cambios
+                {t("studio.view.reject")}
               </button>
               <button
                 className="btn primary"
                 onClick={doApprove}
                 disabled={approve.isPending || reject.isPending}
               >
-                {approve.isPending ? "Aprobando…" : "Aprobar fase"}
+                {approve.isPending ? t("studio.view.approving") : t("studio.view.approve")}
               </button>
             </>
           ) : (
@@ -414,7 +419,7 @@ function PhasePanel({
               <textarea
                 className="inp"
                 style={{ resize: "vertical", minHeight: 72, fontSize: 13 }}
-                placeholder="Describe los cambios que necesitas (el agente usará esto como feedback)…"
+                placeholder={t("studio.view.rejectPlaceholder")}
                 value={rejectInput}
                 onChange={(e) => setRejectInput(e.target.value)}
                 autoFocus
@@ -427,14 +432,14 @@ function PhasePanel({
                     setRejectInput("");
                   }}
                 >
-                  Cancelar
+                  {t("studio.view.cancel")}
                 </button>
                 <button
                   className="btn primary sm"
                   onClick={doReject}
                   disabled={!rejectInput.trim() || reject.isPending}
                 >
-                  {reject.isPending ? "Enviando…" : "Enviar feedback"}
+                  {reject.isPending ? t("studio.view.sending") : t("studio.view.sendFeedback")}
                 </button>
               </div>
             </div>
@@ -445,12 +450,12 @@ function PhasePanel({
       {/* Estado final: aprobada o fallida */}
       {state === "approved" && (
         <div className="phase-banner ok">
-          Fase aprobada
+          {t("studio.view.phaseApproved")}
         </div>
       )}
       {state === "failed" && (
         <div className="phase-banner fail">
-          Fase rechazada — el agente está revisando el feedback.
+          {t("studio.view.phaseRejected")}
         </div>
       )}
     </div>
@@ -470,12 +475,13 @@ function PhaseStatusBadge({
   stepId: string;
   designStatus: DesignStepStatus;
 }) {
+  const t = useT();
   const LABELS: Record<PhaseState, string> = {
-    pending: "pendiente",
-    running: stepId === "handoff" ? "publicando" : "generando",
-    awaiting: "esperando aprobación",
-    approved: "aprobada",
-    failed: "revisando",
+    pending: t("studio.view.status.pending"),
+    running: stepId === "handoff" ? t("studio.view.status.publishing") : t("studio.view.status.generating"),
+    awaiting: t("studio.view.status.awaiting"),
+    approved: t("studio.view.status.approved"),
+    failed: t("studio.view.status.reviewing"),
   };
   const PILL_CLS: Record<PhaseState, string> = {
     pending: "queued",
@@ -493,6 +499,7 @@ function PhaseStatusBadge({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function MockupsArtifact({ html }: { html: string }) {
+  const t = useT();
   function openInNewTab() {
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
@@ -506,7 +513,7 @@ function MockupsArtifact({ html }: { html: string }) {
       <iframe
         srcDoc={html}
         sandbox="allow-same-origin"
-        title="Mockup preview"
+        title={t("studio.view.mockupPreviewTitle")}
         style={{
           width: "100%",
           height: 480,
@@ -517,7 +524,7 @@ function MockupsArtifact({ html }: { html: string }) {
       />
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <button className="btn ghost sm" onClick={openInNewTab}>
-          ↗ Abrir en pestaña nueva
+          {t("studio.view.openNewTab")}
         </button>
       </div>
     </div>
@@ -551,6 +558,7 @@ interface BacklogYaml {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BacklogArtifact({ raw }: { raw: string }) {
+  const t = useT();
   let parsed: BacklogYaml | null = null;
   try {
     parsed = jsYaml.load(raw) as BacklogYaml;
@@ -607,7 +615,7 @@ function BacklogArtifact({ raw }: { raw: string }) {
                 )}
                 {s.acceptance && (
                   <>
-                    <div className="story-acceptance-label">Criterios de aceptación</div>
+                    <div className="story-acceptance-label">{t("studio.view.acceptanceCriteria")}</div>
                     <div className="artifact-md" style={{ padding: 0 }}>
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.acceptance}</ReactMarkdown>
                     </div>
@@ -640,6 +648,7 @@ function NewProjectModal({
   const createProject = useCreateProject();
   const createDesignRun = useCreateDesignRun();
   const { setActiveId } = useActiveProject();
+  const t = useT();
 
   // Cerrar con Escape.
   useEffect(() => {
@@ -656,11 +665,11 @@ function NewProjectModal({
     const trimmedName = name.trim();
     const trimmedDesc = description.trim();
     if (!trimmedName) {
-      setError("El nombre del proyecto es obligatorio.");
+      setError(t("studio.modal.validation.name"));
       return;
     }
     if (!trimmedDesc) {
-      setError("Escribe una descripción / idea del producto.");
+      setError(t("studio.modal.validation.desc"));
       return;
     }
     setBusy(true);
@@ -679,7 +688,7 @@ function NewProjectModal({
     } catch (err: unknown) {
       // 409 = repo ya existe — lo mostramos inline de forma más amable.
       if (err instanceof ApiError && err.status === 409) {
-        setError(`El repositorio "${trimmedName}" ya existe. Elige otro nombre.`);
+        setError(t("studio.modal.repoExists", { name: trimmedName }));
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -691,34 +700,34 @@ function NewProjectModal({
   return (
     <div className="modal on" role="dialog" aria-modal="true" aria-labelledby="np-title">
       <div className="mh">
-        <h3 id="np-title">Nuevo proyecto de diseño</h3>
-        <button className="x" onClick={onClose} aria-label="Cerrar">
+        <h3 id="np-title">{t("studio.modal.title")}</h3>
+        <button className="x" onClick={onClose} aria-label={t("studio.modal.close")}>
           ✕
         </button>
       </div>
       <form className="mb" onSubmit={handleSubmit}>
         <div className="field">
-          <label htmlFor="np-name">Nombre del proyecto</label>
+          <label htmlFor="np-name">{t("studio.modal.nameLabel")}</label>
           <input
             id="np-name"
             type="text"
             className="inp"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="tareas-app"
+            placeholder={t("studio.modal.namePlaceholder")}
             autoFocus
             required
           />
         </div>
         <div className="field">
-          <label htmlFor="np-desc">Descripción / idea</label>
+          <label htmlFor="np-desc">{t("studio.modal.descLabel")}</label>
           <textarea
             id="np-desc"
             className="inp"
             style={{ resize: "vertical", minHeight: 96 }}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Describe tu producto en 1-3 frases: qué problema resuelve, para quién, qué lo hace diferente."
+            placeholder={t("studio.modal.descPlaceholder")}
             required
           />
         </div>
@@ -741,7 +750,7 @@ function NewProjectModal({
 
         <div style={{ display: "flex", gap: 10 }}>
           <button type="button" className="btn ghost" style={{ flex: 1 }} onClick={onClose}>
-            Cancelar
+            {t("studio.modal.cancel")}
           </button>
           <button
             type="submit"
@@ -749,7 +758,7 @@ function NewProjectModal({
             style={{ flex: 1 }}
             disabled={busy}
           >
-            {busy ? "Creando…" : "Crear y diseñar"}
+            {busy ? t("studio.modal.creating") : t("studio.modal.create")}
           </button>
         </div>
       </form>

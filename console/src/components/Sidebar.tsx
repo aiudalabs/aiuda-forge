@@ -9,7 +9,6 @@ import { useRouter } from "next/navigation";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Logo } from "./Logo";
-import { LanguageSwitcher } from "./LanguageSwitcher";
 import { SECTIONS, sectionForPath } from "@/lib/sections";
 import { useActiveProject } from "@/lib/activeProject";
 import { useT } from "@/lib/i18n";
@@ -32,7 +31,6 @@ export function Sidebar() {
         ))}
       </nav>
       <ProjectSwitcher />
-      <LanguageSwitcher compact />
     </aside>
   );
 }

@@ -6,15 +6,7 @@
 // run, a button drops one level deeper into the execution (the run drawer).
 
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
-
-const STATUS_LABEL: Record<TicketStatus, string> = {
-  backlog: "Backlog",
-  ready: "Listo",
-  running: "En ejecución",
-  in_review: "En revisión",
-  done: "Done",
-  failed: "Fallido",
-};
+import { useT } from "@/lib/i18n";
 
 const STATUS_CLASS: Record<TicketStatus, string> = {
   backlog: "queued",
@@ -43,6 +35,7 @@ export function TicketDetail({
   onClose: () => void;
   onOpenRun: (runId: string) => void;
 }) {
+  const t = useT();
   const open = !!ticket;
   const acs = acceptanceLines(ticket?.acceptance);
 
@@ -61,7 +54,7 @@ export function TicketDetail({
                 <h3>{ticket.title}</h3>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span className={`pill ${STATUS_CLASS[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
+                <span className={`pill ${STATUS_CLASS[ticket.status]}`}>{t(`tickets.statusLabel.${ticket.status}`)}</span>
                 <button className="x" onClick={onClose}>
                   ✕
                 </button>
@@ -70,18 +63,18 @@ export function TicketDetail({
 
             <div className="db">
               {/* Descripción / historia de usuario */}
-              <div className="eyebrow acc">Descripción</div>
+              <div className="eyebrow acc">{t("tickets.detail.description")}</div>
               {ticket.body ? (
                 <p className="td-body">{ticket.body}</p>
               ) : (
-                <p className="td-empty">Sin descripción. El detalle dev-ready se genera al ejecutar la story.</p>
+                <p className="td-empty">{t("tickets.detail.noDescription")}</p>
               )}
 
               {/* Criterios de aceptación */}
               {acs.length > 0 && (
                 <>
                   <div className="eyebrow acc" style={{ marginTop: 20 }}>
-                    Criterios de aceptación
+                    {t("tickets.detail.acceptance")}
                   </div>
                   <ul className="td-acs">
                     {acs.map((ac, i) => (
@@ -98,7 +91,7 @@ export function TicketDetail({
               {ticket.deps && ticket.deps.length > 0 && (
                 <>
                   <div className="eyebrow acc" style={{ marginTop: 20 }}>
-                    Dependencias
+                    {t("tickets.detail.dependencies")}
                   </div>
                   <div className="td-deps">
                     {ticket.deps.map((d) => (
@@ -114,11 +107,11 @@ export function TicketDetail({
               <div style={{ marginTop: 24 }}>
                 {ticket.run_id ? (
                   <button className="btn primary" style={{ width: "100%" }} onClick={() => onOpenRun(ticket.run_id as string)}>
-                    Ver ejecución →
+                    {t("tickets.detail.viewRun")}
                   </button>
                 ) : (
                   <div className="td-empty">
-                    Esta story aún no se ha ejecutado. Cuando el orquestador la dispare, aquí verás su run.
+                    {t("tickets.detail.notRun")}
                   </div>
                 )}
               </div>

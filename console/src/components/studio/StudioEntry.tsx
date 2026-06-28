@@ -9,6 +9,7 @@ import { useState } from "react";
 import { ApiError } from "@/lib/api";
 import { useActiveProject } from "@/lib/activeProject";
 import { useCreateDesignRun, useCreateProject } from "@/lib/hooks";
+import { useT } from "@/lib/i18n";
 
 // Slugify an idea/name into a valid repo name (lowercase, dashes).
 function slugify(s: string): string {
@@ -36,6 +37,7 @@ export function StudioEntry({ onLaunched }: { onLaunched: () => void }) {
   const createProject = useCreateProject();
   const createDesignRun = useCreateDesignRun();
   const { setActiveId } = useActiveProject();
+  const t = useT();
 
   // Auto-suggest the repo name from the idea until the user edits it themselves.
   const repoName = touchedName ? name : slugify(name || idea.split(/[.\n]/)[0] || "");
@@ -46,11 +48,11 @@ export function StudioEntry({ onLaunched }: { onLaunched: () => void }) {
     const trimmedIdea = idea.trim();
     const finalName = slugify(repoName);
     if (!trimmedIdea) {
-      setError("Describe qué quieres construir.");
+      setError(t("studio.entry.validation.idea"));
       return;
     }
     if (!finalName) {
-      setError("Dale un nombre al proyecto (repositorio).");
+      setError(t("studio.entry.validation.name"));
       return;
     }
     setBusy(true);
@@ -65,7 +67,7 @@ export function StudioEntry({ onLaunched }: { onLaunched: () => void }) {
       onLaunched();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
-        setError(`El repositorio "${finalName}" ya existe. Elige otro nombre.`);
+        setError(t("studio.entry.repoExists", { name: finalName }));
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -87,18 +89,15 @@ export function StudioEntry({ onLaunched }: { onLaunched: () => void }) {
             <span className="b">/&gt;</span>
           </span>
         </div>
-        <h1 className="entry-h1">¿Qué quieres construir?</h1>
-        <p className="entry-sub">
-          Describe tu idea en una o dos frases. La fábrica la convierte en un PRD, una
-          arquitectura, mockups y un backlog — y los aprueba contigo, fase por fase.
-        </p>
+        <h1 className="entry-h1">{t("studio.entry.h1")}</h1>
+        <p className="entry-sub">{t("studio.entry.sub")}</p>
 
         <form className="entry-form" onSubmit={launch}>
           <textarea
             className="entry-idea"
             value={idea}
             onChange={(e) => setIdea(e.target.value)}
-            placeholder="Ej: un marketplace que conecta clientes con proveedores de servicios locales…"
+            placeholder={t("studio.entry.ideaPlaceholder")}
             autoFocus
             rows={3}
           />
@@ -113,7 +112,7 @@ export function StudioEntry({ onLaunched }: { onLaunched: () => void }) {
 
           <div className="entry-row">
             <div className="entry-name">
-              <span className="entry-name-pre">repo /</span>
+              <span className="entry-name-pre">{t("studio.entry.repoPre")}</span>
               <input
                 className="entry-name-inp"
                 value={repoName}
@@ -121,12 +120,12 @@ export function StudioEntry({ onLaunched }: { onLaunched: () => void }) {
                   setTouchedName(true);
                   setName(e.target.value);
                 }}
-                placeholder="nombre-del-proyecto"
+                placeholder={t("studio.entry.namePlaceholder")}
                 spellCheck={false}
               />
             </div>
             <button type="submit" className="entry-go" disabled={busy}>
-              {busy ? "Lanzando…" : "✦ Empezar el diseño →"}
+              {busy ? t("studio.entry.launching") : t("studio.entry.start")}
             </button>
           </div>
 

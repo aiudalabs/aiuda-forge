@@ -22,6 +22,7 @@ import {
   useRetry,
   useRun,
 } from "@/lib/hooks";
+import { useT } from "@/lib/i18n";
 
 const STEP_UI: Record<StepStatus, { cls: string; icon: string }> = {
   DONE: { cls: "ok", icon: "✓" },
@@ -33,6 +34,7 @@ const STEP_UI: Record<StepStatus, { cls: string; icon: string }> = {
 };
 
 function StepRow({ step }: { step: RunStep }) {
+  const t = useT();
   const ui = STEP_UI[step.status] ?? STEP_UI.QUEUED;
   const signal = stepSignal(step);
   const collapsible = isLongDetail(step.detail);
@@ -76,7 +78,7 @@ function StepRow({ step }: { step: RunStep }) {
                 onClick={() => setOpen((v) => !v)}
                 aria-expanded={open}
               >
-                {open ? "ocultar detalle" : "ver detalle"}
+                {open ? t("board.drawer.hideDetail") : t("board.drawer.showDetail")}
               </button>
             )}
           </div>
@@ -94,6 +96,7 @@ function StepRow({ step }: { step: RunStep }) {
 }
 
 export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: () => void }) {
+  const t = useT();
   const { data: run, isLoading, isError } = useRun(runId);
   const events = useLiveEvents(runId, run?.status === "RUNNING");
   const approve = useApprove();
@@ -113,18 +116,18 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
   function doReject() {
     if (!run) return;
     const reason = window.prompt(
-      "Motivo del rechazo / cambios pedidos (vuelve al agente como feedback):",
-      "El review encontró un bug de unicode — cubrir ø/ß/中文.",
+      t("board.drawer.rejectPrompt"),
+      t("board.drawer.rejectPromptDefault"),
     );
     if (reason == null) return;
     reject.mutate([run.id, awaitingStep, reason], { onSuccess: onClose });
   }
   function doCancel() {
-    if (!run || !window.confirm("¿Cancelar este run?")) return;
+    if (!run || !window.confirm(t("board.drawer.cancelConfirm"))) return;
     cancel.mutate([run.id], { onSuccess: onClose });
   }
   function doDelete() {
-    if (!run || !window.confirm("¿Borrar este run? Esta acción es destructiva.")) return;
+    if (!run || !window.confirm(t("board.drawer.deleteConfirm"))) return;
     del.mutate([run.id], { onSuccess: onClose });
   }
 
@@ -153,7 +156,7 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
             </div>
 
             <div className="db">
-              <div className="eyebrow acc">Pasos</div>
+              <div className="eyebrow acc">{t("board.drawer.steps")}</div>
               <div className="steps">
                 {run.steps.map((s, i) => (
                   // step ids repeat across on_fail loops (implement/gate/review run
@@ -163,14 +166,14 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
               </div>
 
               <div className="eyebrow acc" style={{ marginTop: 18 }}>
-                Stream de eventos
+                {t("board.drawer.eventStream")}
               </div>
               <LiveLog events={events} style={{ marginTop: 8, maxHeight: "none" }} />
 
               {run.diff && (
                 <>
                   <div className="eyebrow acc" style={{ marginTop: 18 }}>
-                    Diff propuesto · revísalo antes de aprobar
+                    {t("board.drawer.diff")}
                   </div>
                   <DiffBox diff={run.diff} />
                 </>
@@ -179,7 +182,7 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
               {run.costBreakdown && (
                 <>
                   <div className="eyebrow" style={{ marginTop: 16 }}>
-                    Costo por paso
+                    {t("board.drawer.costByStep")}
                   </div>
                   <div
                     style={{
@@ -196,7 +199,7 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
                       </span>
                     ))}
                     {run.costBreakdown.byStep?.length ? " · " : ""}
-                    <b style={{ color: "var(--ink)" }}>total ${run.costBreakdown.total.toFixed(2)}</b>
+                    <b style={{ color: "var(--ink)" }}>{t("board.drawer.total")} ${run.costBreakdown.total.toFixed(2)}</b>
                   </div>
                 </>
               )}
@@ -205,10 +208,10 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
               {isAwaiting && (
                 <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
                   <button className="btn ghost" style={{ flex: 1 }} onClick={doReject} disabled={reject.isPending}>
-                    Rechazar / pedir cambios
+                    {t("board.drawer.rejectChanges")}
                   </button>
                   <button className="btn primary" style={{ flex: 1 }} onClick={doApprove} disabled={approve.isPending}>
-                    {approve.isPending ? "Aprobando…" : "Aprobar y abrir PR"}
+                    {approve.isPending ? t("board.drawer.approving") : t("board.drawer.approveOpenPR")}
                   </button>
                 </div>
               )}
@@ -217,7 +220,7 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
                 {isFailed ? (
                   <>
                     <button className="btn ghost sm" onClick={() => retry.mutate([run.id])} disabled={retry.isPending}>
-                      ↻ Reintentar
+                      {t("board.drawer.retry")}
                     </button>
                     {/* Reencolar: devuelve las stories al backlog para que el orquestador
                         dispare un run NUEVO. En modo sprint reencola el sprint completo. */}
@@ -225,25 +228,25 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
                       className="btn ghost sm"
                       onClick={() => requeue.mutate([run.id], { onSuccess: onClose })}
                       disabled={requeue.isPending}
-                      title="Devuelve el sprint al backlog para re-ejecutarlo desde cero"
+                      title={t("board.drawer.requeueTitle")}
                     >
-                      ⟲ Reencolar sprint
+                      {t("board.drawer.requeue")}
                     </button>
                   </>
                 ) : (
                   !isAwaiting &&
                   run.status !== "DONE" && (
                     <button className="btn ghost sm" onClick={doCancel} disabled={cancel.isPending}>
-                      Cancelar
+                      {t("board.drawer.cancel")}
                     </button>
                   )
                 )}
                 <button className="btn ghost sm" onClick={doDelete} disabled={del.isPending}>
-                  Borrar
+                  {t("board.drawer.delete")}
                 </button>
                 {run.pr && (
                   <a className="btn ghost sm" href={run.pr.url || "#"} onClick={(e) => !run.pr?.url && e.preventDefault()}>
-                    ↗ Ver PR #{run.pr.number}
+                    {t("board.drawer.viewPR", { number: run.pr.number })}
                   </a>
                 )}
               </div>
@@ -253,12 +256,12 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
 
         {open && isLoading && (
           <div className="db">
-            <span className="spin" /> cargando run…
+            <span className="spin" /> {t("board.drawer.loading")}
           </div>
         )}
         {open && isError && (
           <div className="db">
-            <div className="placeholder err">No se pudo cargar el run.</div>
+            <div className="placeholder err">{t("board.drawer.loadError")}</div>
           </div>
         )}
       </aside>
