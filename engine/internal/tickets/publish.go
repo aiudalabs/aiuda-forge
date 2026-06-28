@@ -38,6 +38,21 @@ type backlogStory struct {
 	Owner      string   `yaml:"owner"`
 	SprintID   string   `yaml:"sprint_id"`
 	Deps       []string `yaml:"deps"`
+	// DependsOn is a defensive alias for Deps: a planner prompt that emits
+	// `depends_on:` (instead of the canonical `deps:`) would otherwise have its
+	// dependencies silently dropped, leaving every story dependency-free so the whole
+	// backlog fires in parallel. Accepting both names makes the publish robust to that
+	// prompt drift. `deps` wins when both are present.
+	DependsOn []string `yaml:"depends_on"`
+}
+
+// deps returns the story's dependencies, accepting either the canonical `deps` key
+// or the `depends_on` alias (deps wins when both are set).
+func (s backlogStory) deps() []string {
+	if len(s.Deps) > 0 {
+		return s.Deps
+	}
+	return s.DependsOn
 }
 
 // PublishRunner is the ticket_publish step type. It reads a structured backlog
@@ -148,7 +163,7 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 			Body:      s.Body,
 			Accept:    s.Acceptance,
 			Owner:     s.Owner,
-			Deps:      s.Deps,
+			Deps:      s.deps(),
 			Status:    StatusBacklog,
 			Repo:      repo,
 			ProjectID: projectID,

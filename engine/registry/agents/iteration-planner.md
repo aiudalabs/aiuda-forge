@@ -27,12 +27,16 @@ light is what lets the planning phase finish fast.
    unit of work with falsifiable acceptance criteria.
 
 4. **Assign dependencies, owners, sprints — building on what exists.**
-   - `depends_on`: a new story may depend on EXISTING shipped stories (reference their
+   - `deps`: a new story may depend on EXISTING shipped stories (reference their
      ids from the existing backlog) and on earlier new stories. Cross-sprint deps point
-     only to EARLIER sprints (backward-only), or to already-`done` work.
+     only to EARLIER sprints (backward-only), or to already-`done` work. Without deps
+     every story is "ready" at once and the whole delta fires in parallel — so a
+     multi-sprint delta MUST carry the real ordering (e.g. shared design-system stories
+     before the surfaces that use them).
    - `owner`: the lane/specialist (python-dev, react-dev, flutter-dev, firebase-dev, dev).
    - `sprint_id`: group the new stories into one or a few NEW sprints — each a coherent,
-     demoable increment that becomes a single PR.
+     demoable increment that becomes a single PR. Backward-only cross-sprint deps: a
+     later sprint may depend on an earlier one, never the reverse.
 
 5. **Use NON-COLLIDING ids.** The publish step APPENDS (existing ids are skipped), so a
    collision would silently drop a new story. Derive a short, descriptive prefix from
@@ -43,9 +47,46 @@ light is what lets the planning phase finish fast.
 6. **Write the DELTA only** to the `output` path (`docs/backlog.yaml`). Same YAML shape
    as the original backlog — `epic` (reuse the existing epic id/title, or add one for a
    large new area), `sprints:` (the NEW sprints), `stories:` (the NEW light stories:
-   `id`, `title`, `body` user-story, `acceptance`, `depends_on`, `owner`, `sprint_id`).
+   `id`, `title`, `body` user-story, `acceptance`, `deps`, `owner`, `sprint_id`).
    Do NOT re-emit the existing stories — only the new ones. Output ONLY valid YAML to
    that file.
+
+## Output format (EXACT field names — `deps`, never `depends_on`)
+
+The publish step reads these exact keys; a wrong key (e.g. `depends_on`) is silently
+dropped, leaving the story with NO dependencies. Match this shape:
+
+```yaml
+epic:
+  id: E1                      # reuse the existing epic, or add one for a large new area
+  title: "Existing product"
+sprints:
+  - id: SP-ui-redesign-1      # NEW, non-colliding, descriptive prefix
+    name: "UI Sprint 1 — Design System"
+    goal: "Reusable tokens + primitives the surfaces depend on"
+  - id: SP-ui-redesign-2
+    name: "UI Sprint 2 — Public surfaces"
+    goal: "Homepage + search, on the new design system"
+stories:
+  - id: S-ui-redesign-1
+    title: "Design tokens + shared primitives"
+    body: >
+      As a user, I want a coherent visual system, so the app feels consistent.
+    acceptance: |
+      - Color/type/spacing tokens defined and applied to buttons, inputs, cards.
+    owner: react-dev
+    sprint_id: SP-ui-redesign-1
+    deps: []                  # foundation → no deps (fires first)
+  - id: S-ui-redesign-5
+    title: "Redesign the homepage"
+    body: >
+      As a visitor, I want a refreshed homepage built on the new primitives.
+    acceptance: |
+      - Hero + search use the shared components and tokens.
+    owner: react-dev
+    sprint_id: SP-ui-redesign-2
+    deps: [S-ui-redesign-1]   # uses the design system → depends on it (fires AFTER)
+```
 
 A human reviews this delta backlog at the gate before it's published into the ticket
 store and built. Keep it lean, dependency-correct, and faithful to the shipped product.
