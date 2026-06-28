@@ -64,7 +64,7 @@ export function SettingsView() {
 
   if (isLoading) {
     return (
-      <div className="wrap">
+      <div className="settings-stack">
         <div className="placeholder">
           <div className="ph-ic"><span className="spin" /></div>
           {t("settings.loading")}
@@ -75,7 +75,7 @@ export function SettingsView() {
 
   if (isError || !form) {
     return (
-      <div className="wrap">
+      <div className="settings-stack">
         <div className="placeholder err">
           <div className="ph-ic">⚠</div>
           {t("settings.loadError")}
@@ -85,7 +85,7 @@ export function SettingsView() {
   }
 
   return (
-    <div className="wrap">
+    <div className="settings-stack">
       <div className="sectitle">
         <h2>{t("settings.title")}</h2>
         <span className="c">{t("settings.subtitle")}</span>
@@ -270,61 +270,85 @@ function McpSection({
   onChange: (v: SettingsPayload["mcp"]) => void;
 }) {
   const t = useT();
+  // Which row is expanded for editing (only one at a time). Keeps the list compact
+  // and scannable when there are many connections.
+  const [editing, setEditing] = useState<number | null>(null);
+
+  const patch = (i: number, p: Partial<SettingsPayload["mcp"][number]>) => {
+    const next = [...connections];
+    next[i] = { ...next[i], ...p };
+    onChange(next);
+  };
+  const remove = (i: number) => {
+    onChange(connections.filter((_, j) => j !== i));
+    if (editing === i) setEditing(null);
+  };
+  const add = () => {
+    const next = [...connections, { name: "", url: "", token: "" }];
+    onChange(next);
+    setEditing(next.length - 1); // open the new row for editing
+  };
+
   return (
     <div className="card">
       <h3>{t("settings.mcp.title")}</h3>
       <div className="role">{t("settings.mcp.role")}</div>
-      {connections.map((conn, i) =>
-        // Telegram is configured in the dedicated "Conectores" section (v1.3), not
-        // here — hide it so the token isn't edited in two places. Index preserved.
-        conn.name.toLowerCase() === "telegram" ? null : (
-        <div key={i} style={{ marginTop: 10 }}>
-          <div className="field">
-            <label>{t("settings.mcp.name")}</label>
-            <input
-              className="inp"
-              value={conn.name}
-              onChange={(e) => {
-                const next = [...connections];
-                next[i] = { ...next[i], name: e.target.value };
-                onChange(next);
-              }}
-            />
-          </div>
-          <div className="field">
-            <label>{t("settings.mcp.url")}</label>
-            <input
-              className="inp mono"
-              value={conn.url}
-              onChange={(e) => {
-                const next = [...connections];
-                next[i] = { ...next[i], url: e.target.value };
-                onChange(next);
-              }}
-            />
-          </div>
-          <div className="field">
-            <label>{t("settings.mcp.token")} {isMasked(conn.token) && <span style={{ color: "var(--ink4)", fontSize: 11 }}>{t("settings.masked")}</span>}</label>
-            <input
-              className="inp mono"
-              type="password"
-              placeholder={isMasked(conn.token) ? t("settings.maskedPlaceholder") : ""}
-              value={isMasked(conn.token) ? "" : conn.token}
-              onChange={(e) => {
-                const next = [...connections];
-                // Si el usuario borra el campo → devolver la máscara para no pisar el real.
-                next[i] = { ...next[i], token: e.target.value || MASKED };
-                onChange(next);
-              }}
-            />
-          </div>
-        </div>
-      ))}
-      <button
-        className="btn ghost sm"
-        style={{ marginTop: 10 }}
-        onClick={() => onChange([...connections, { name: "", url: "", token: "" }])}
-      >
+
+      <ul className="mcp-list">
+        {connections.map((conn, i) => {
+          // Telegram is configured in the dedicated "Conectores" section (v1.3); hide
+          // it here so its token isn't edited in two places. Index preserved.
+          if (conn.name.toLowerCase() === "telegram") return null;
+          const open = editing === i;
+          return (
+            <li key={i} className="mcp-item">
+              <div className="mcp-row">
+                <span className="mcp-name">{conn.name || t("settings.mcp.untitled")}</span>
+                <span className="mcp-url mono">{conn.url || "—"}</span>
+                <span className={`mcp-tok${conn.token ? " on" : ""}`}>
+                  {conn.token ? "● token" : "—"}
+                </span>
+                <button className="link" onClick={() => setEditing(open ? null : i)}>
+                  {open ? t("settings.mcp.collapse") : t("settings.mcp.edit")}
+                </button>
+                <button className="link danger" onClick={() => remove(i)}>
+                  {t("settings.mcp.delete")}
+                </button>
+              </div>
+              {open && (
+                <div className="mcp-edit">
+                  <div className="field">
+                    <label>{t("settings.mcp.name")}</label>
+                    <input className="inp" value={conn.name} onChange={(e) => patch(i, { name: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>{t("settings.mcp.url")}</label>
+                    <input className="inp mono" value={conn.url} onChange={(e) => patch(i, { url: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>
+                      {t("settings.mcp.token")}{" "}
+                      {isMasked(conn.token) && (
+                        <span style={{ color: "var(--ink4)", fontSize: 11 }}>{t("settings.masked")}</span>
+                      )}
+                    </label>
+                    <input
+                      className="inp mono"
+                      type="password"
+                      placeholder={isMasked(conn.token) ? t("settings.maskedPlaceholder") : ""}
+                      value={isMasked(conn.token) ? "" : conn.token}
+                      // Empty field → restore the mask so the stored secret isn't wiped.
+                      onChange={(e) => patch(i, { token: e.target.value || MASKED })}
+                    />
+                  </div>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <button className="btn ghost sm" style={{ marginTop: 10 }} onClick={add}>
         {t("settings.mcp.add")}
       </button>
     </div>

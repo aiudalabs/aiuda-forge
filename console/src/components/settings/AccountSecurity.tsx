@@ -67,7 +67,7 @@ export function AccountSecurity() {
       </button>
 
       <style jsx>{`
-        .acc { max-width: 720px; margin: 0 24px 24px; padding: 18px; background: #fff; border: 1px solid #eee; border-radius: 14px; display: flex; flex-direction: column; gap: 12px; }
+        .acc { width: 100%; padding: 18px; background: #fff; border: 1px solid #eee; border-radius: 14px; display: flex; flex-direction: column; gap: 12px; }
         h3 { margin: 0; font-size: 14px; font-weight: 800; }
         label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #555; max-width: 360px; }
         input { box-sizing: border-box; padding: 9px 11px; border: 1px solid #ddd; border-radius: 9px; font-size: 14px; outline: none; }

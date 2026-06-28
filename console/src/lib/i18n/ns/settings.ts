@@ -25,6 +25,10 @@ export const settings = {
     "settings.mcp.url": "URL",
     "settings.mcp.token": "Token",
     "settings.mcp.add": "+ Añadir conexión",
+    "settings.mcp.edit": "Editar",
+    "settings.mcp.collapse": "Cerrar",
+    "settings.mcp.delete": "Borrar",
+    "settings.mcp.untitled": "(sin nombre)",
 
     "settings.auth.title": "Auth del agente",
     "settings.auth.role": "Cómo corre Claude dentro del sandbox.",
@@ -77,6 +81,10 @@ export const settings = {
     "settings.mcp.url": "URL",
     "settings.mcp.token": "Token",
     "settings.mcp.add": "+ Add connection",
+    "settings.mcp.edit": "Edit",
+    "settings.mcp.collapse": "Close",
+    "settings.mcp.delete": "Delete",
+    "settings.mcp.untitled": "(unnamed)",
 
     "settings.auth.title": "Agent auth",
     "settings.auth.role": "How Claude runs inside the sandbox.",
@@ -129,6 +137,10 @@ export const settings = {
     "settings.mcp.url": "URL",
     "settings.mcp.token": "Token",
     "settings.mcp.add": "+ Adicionar conexão",
+    "settings.mcp.edit": "Editar",
+    "settings.mcp.collapse": "Fechar",
+    "settings.mcp.delete": "Excluir",
+    "settings.mcp.untitled": "(sem nome)",
 
     "settings.auth.title": "Auth do agente",
     "settings.auth.role": "Como o Claude roda dentro do sandbox.",

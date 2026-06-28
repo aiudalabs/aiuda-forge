@@ -4,10 +4,10 @@ import { AccountSecurity } from "@/components/settings/AccountSecurity";
 
 export default function SettingsPage() {
   return (
-    <>
+    <div className="form-col">
       <SettingsView />
       <ConnectorsSection />
       <AccountSecurity />
-    </>
+    </div>
   );
 }

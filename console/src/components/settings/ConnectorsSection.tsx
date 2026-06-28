@@ -183,7 +183,7 @@ export function ConnectorsSection() {
       </section>
 
       <style jsx>{`
-        .cwrap { max-width: 720px; margin: 0 24px 24px; display: flex; flex-direction: column; gap: 12px; }
+        .cwrap { width: 100%; display: flex; flex-direction: column; gap: 12px; }
         .sectitle h2 { margin: 0; font-weight: 900; font-size: 18px; }
         .sectitle .c { color: #888; font-size: 13px; }
         .card { background: #fff; border: 1px solid #eee; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
