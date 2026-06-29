@@ -268,6 +268,8 @@ var transientMarkers = []string{
 	"overloaded",         // provider overloaded
 	"529",                // provider overloaded (Anthropic)
 	"usage limit",        // plan usage cap
+	"weekly limit",       // "You've hit your weekly limit · resets ..."
+	"hit your limit",     // generic plan-cap phrasing
 }
 
 // isTransientErr reports whether err looks like a provider limit/overload that

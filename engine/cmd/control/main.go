@@ -27,13 +27,32 @@ import (
 func main() {
 	addr := envOr("VIBEFORGE_ADDR", ":8080")
 	// Wire agent auth from env (required in docker mode: the container env is an
-	// allowlist and does NOT inherit the host's token). oauth_token = Max sub.
+	// allowlist and does NOT inherit the host's token). oauth_token = Max/Pro sub.
+	//
+	// VIBEFORGE_AGENT_AUTH forces a specific mode regardless of which tokens are
+	// present — the failover lever (Phase 0): when the subscription hits its weekly
+	// limit, set it to "api_key" so the factory runs on the pay-per-token key instead
+	// of waiting days for the plan to reset. Unset = auto: prefer the subscription
+	// (oauth_token) and only fall back to the API key when no oauth token is present.
 	agentAuth := agent.Auth{Mode: agent.AuthSubscription}
-	if t := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); t != "" {
-		agentAuth = agent.Auth{Mode: agent.AuthOAuthToken, Token: t}
-	} else if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
-		agentAuth = agent.Auth{Mode: agent.AuthAPIKey, Token: k}
+	oauth, apikey := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"), os.Getenv("ANTHROPIC_API_KEY")
+	switch os.Getenv("VIBEFORGE_AGENT_AUTH") {
+	case "api_key":
+		if apikey != "" {
+			agentAuth = agent.Auth{Mode: agent.AuthAPIKey, Token: apikey}
+		}
+	case "oauth_token":
+		if oauth != "" {
+			agentAuth = agent.Auth{Mode: agent.AuthOAuthToken, Token: oauth}
+		}
+	default: // auto: subscription first, API key as fallback
+		if oauth != "" {
+			agentAuth = agent.Auth{Mode: agent.AuthOAuthToken, Token: oauth}
+		} else if apikey != "" {
+			agentAuth = agent.Auth{Mode: agent.AuthAPIKey, Token: apikey}
+		}
 	}
+	log.Printf("agent auth mode: %s", agentAuth.Mode)
 	a, err := app.Build(app.Config{
 		DBPath:         envOr("VIBEFORGE_DB", "vibeforge.db"),
 		TicketsDB:      envOr("VIBEFORGE_TICKETS_DB", "tickets.db"),

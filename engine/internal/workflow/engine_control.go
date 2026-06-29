@@ -140,7 +140,7 @@ func (e *Engine) PauseUntil(resumeAt int64, reason string) {
 
 // ---- credit circuit-breaker --------------------------------------------------
 
-var sessionLimitRe = regexp.MustCompile(`(?i)session limit|usage limit|hit your .*limit`)
+var sessionLimitRe = regexp.MustCompile(`(?i)session limit|usage limit|weekly limit|hit your .*limit`)
 var resetTimeRe = regexp.MustCompile(`(?i)resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)`)
 
 // creditLimit detects a provider usage/credit limit in a step's error OR result
