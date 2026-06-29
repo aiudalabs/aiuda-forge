@@ -20,14 +20,22 @@ import (
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
-// ghDescription truncates a project description to GitHub's 350-char repo-description
-// limit (a longer one makes `gh repo create` fail with HTTP 422). Truncates by rune so a
-// multibyte boundary is never split; the project row keeps the full text.
+// ghDescription sanitizes a project description for GitHub's repo description, which
+// rejects BOTH control characters (newlines/tabs → HTTP 422) and anything over 350
+// chars. It replaces control runes with spaces, collapses whitespace, then truncates
+// by rune (never splitting a multibyte boundary). The project row keeps the full text.
 func ghDescription(d string) string {
 	const max = 350
-	r := []rune(d)
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f { // C0 control chars (incl. \n \r \t) and DEL
+			return ' '
+		}
+		return r
+	}, d)
+	clean = strings.Join(strings.Fields(clean), " ") // collapse runs of whitespace
+	r := []rune(clean)
 	if len(r) <= max {
-		return d
+		return clean
 	}
 	return string(r[:max-1]) + "…"
 }

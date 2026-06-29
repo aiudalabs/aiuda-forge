@@ -240,12 +240,25 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	// ?project=<id> scopes the list to one project (audit A1); absent = all
 	// projects (back-compat / service-token admin).
 	project := r.URL.Query().Get("project")
-	// Multi-tenant (D1): a user session may only list runs of a project it owns —
-	// no/unowned project yields an empty list (no cross-tenant leak). The service
-	// token (orchestrator) is unrestricted.
-	if httpx.UserIDFromContext(r.Context()) != "" {
-		if project == "" || !s.canAccessProject(r.Context(), project) {
-			writeJSON(w, http.StatusOK, map[string]any{"runs": []*store.Run{}})
+	// Multi-tenant (D1): a user session is confined to the projects it can access.
+	//   · ?project=<id> given → must be a member of it, else empty list (no leak).
+	//   · no ?project=        → return runs across ALL projects the user is a member
+	//     of, NOT an empty list. This powers the cross-project views (Studio's design
+	//     list, Overview) that legitimately need every project at once without a leak.
+	// The service token (orchestrator) is unrestricted.
+	if uid := httpx.UserIDFromContext(r.Context()); uid != "" {
+		if project != "" {
+			if !s.canAccessProject(r.Context(), project) {
+				writeJSON(w, http.StatusOK, map[string]any{"runs": []*store.Run{}})
+				return
+			}
+		} else {
+			runs, err := s.listRunsForMember(uid, status)
+			if err != nil {
+				httpErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 			return
 		}
 	}
@@ -258,6 +271,35 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		runs = []*store.Run{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+}
+
+// listRunsForMember returns every run (optionally status-filtered) that belongs to
+// a project the user is a member of — the tenant-safe answer to an unscoped /runs
+// from a user session (it powers Studio's cross-project design list). Returns an
+// empty (non-nil) slice if the projects store is absent or the user has no projects.
+func (s *Server) listRunsForMember(userID string, status store.Status) ([]*store.Run, error) {
+	if s.Projects == nil {
+		return []*store.Run{}, nil
+	}
+	projs, err := s.Projects.ListForMember(userID)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]bool, len(projs))
+	for _, p := range projs {
+		allowed[p.ID] = true
+	}
+	all, err := s.Store.ListRunsByProject(status, "")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*store.Run, 0, len(all))
+	for _, run := range all {
+		if allowed[run.ProjectID] {
+			out = append(out, run)
+		}
+	}
+	return out, nil
 }
 
 // runView is a run plus its steps (tasks) — what GET /runs/{id} returns.

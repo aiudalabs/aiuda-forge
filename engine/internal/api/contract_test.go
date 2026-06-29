@@ -425,3 +425,80 @@ func TestProjectsOwnerScopedAndFilters(t *testing.T) {
 		t.Fatalf("project-scoped /runs for unknown project should be empty, got: %s", d)
 	}
 }
+
+// TestRunsUnscopedReturnsMemberProjectsOnly: an authenticated user calling GET /runs
+// WITHOUT ?project= gets the runs of EVERY project they are a member of (the Studio
+// cross-project design list) — not an empty list, and not another tenant's runs.
+// Regression guard for the bug where enabling auth made Studio's Diseño tab empty.
+func TestRunsUnscopedReturnsMemberProjectsOnly(t *testing.T) {
+	_, a, _ := testKernel(t)
+
+	userServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if uid := r.Header.Get("X-Test-User"); uid != "" {
+			r = r.WithContext(httpx.WithUserID(r.Context(), uid))
+		}
+		a.Server.ServeHTTP(w, r)
+	}))
+	t.Cleanup(userServer.Close)
+	base := userServer.URL
+
+	// Create one project per user and return its owner-stamped id.
+	createProject := func(user, name string) string {
+		body, _ := json.Marshal(map[string]any{"name": name, "repo": "https://github.com/acme/" + name})
+		req, _ := http.NewRequest("POST", base+"/projects", bytes.NewReader(body))
+		req.Header.Set("X-Test-User", user)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("POST /projects (%s) = %d: %s", user, resp.StatusCode, data)
+		}
+		var p map[string]any
+		_ = json.Unmarshal(data, &p)
+		id, _ := p["id"].(string)
+		if id == "" {
+			t.Fatalf("created project has no id: %s", data)
+		}
+		return id
+	}
+	p1 := createProject("usr-1", "alpha")
+	p2 := createProject("usr-2", "beta")
+
+	// Seed a design run under each project directly in the store.
+	if _, err := a.Server.Store.CreateRun("run-u1", "design", p1, "{}"); err != nil {
+		t.Fatalf("seed run p1: %v", err)
+	}
+	if _, err := a.Server.Store.CreateRun("run-u2", "design", p2, "{}"); err != nil {
+		t.Fatalf("seed run p2: %v", err)
+	}
+
+	// GET /runs (no ?project=) as usr-1 → sees run-u1 only, never run-u2.
+	runIDs := func(user string) string {
+		req, _ := http.NewRequest("GET", base+"/runs", nil)
+		req.Header.Set("X-Test-User", user)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /runs (%s) = %d: %s", user, resp.StatusCode, data)
+		}
+		return string(data)
+	}
+	got1 := runIDs("usr-1")
+	if !strings.Contains(got1, "run-u1") {
+		t.Fatalf("usr-1 GET /runs should include its own run, got: %s", got1)
+	}
+	if strings.Contains(got1, "run-u2") {
+		t.Fatalf("usr-1 GET /runs leaked another tenant's run: %s", got1)
+	}
+	got2 := runIDs("usr-2")
+	if !strings.Contains(got2, "run-u2") || strings.Contains(got2, "run-u1") {
+		t.Fatalf("usr-2 GET /runs scoping wrong, got: %s", got2)
+	}
+}
