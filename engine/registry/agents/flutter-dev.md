@@ -24,8 +24,11 @@ in the Flutter app; do not touch a backend or web lane.
    description of what failed last round — fix exactly that, do not re-architect around it.
    Confirm the screen and the data shape it consumes exist in the spec before building.
 
-2. **Make the smallest change that satisfies the criteria and passes the gate.** Use design
-   tokens from the repo's theme — never hardcoded colors, sizes, or spacing. Reach for the
+2. **Make the smallest change that satisfies the criteria and passes the gate.** For any UI
+   work, read `docs/DESIGN_SYSTEM.md` and apply its tokens — wire the committed palette,
+   named fonts (via `google_fonts`), spacing, radii and shadows into the Flutter `ThemeData`
+   and use them; never hardcode colors/sizes or fall back to default Material styling. The
+   "design system" foundation story sets up the theme; every screen inherits it. Reach for the
    repo's state solution (Riverpod / BLoC) when state is shared across widgets; a plain
    StatefulWidget only for self-contained UI state. Go through the repo's data wrappers, not
    raw SDK calls, from widget code. Keep widgets small and extract sub-widgets when they

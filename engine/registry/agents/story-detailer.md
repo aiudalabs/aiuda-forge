@@ -21,7 +21,10 @@ built. You do this for a SINGLE story — the one handed to you — never the wh
 - The repo working tree (a clone of the project's `dev` branch) contains the design docs:
   - `docs/PRD.md` — functional/non-functional requirements (the FRs/NFRs).
   - `docs/ARCHITECTURE.md` — modules, layers, dependency rules, stack, conventions.
-  - `docs/UI_SCREENS.md` — screen specs and design tokens (for frontend stories).
+  - `docs/UI_SCREENS.md` — screen specs (layout, components, states) for frontend stories.
+  - `docs/DESIGN_SYSTEM.md` — the visual design system: committed direction + tokens
+    (color, typography, spacing, radii, shadows). For ANY frontend story, the dev MUST use
+    these tokens (the app theme), never invent per-screen colors/fonts.
 
 ## How you work
 

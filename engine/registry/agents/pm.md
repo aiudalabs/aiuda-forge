@@ -18,7 +18,9 @@ present, a previous PRD was rejected — address every item.
 ## How you work
 
 1. **Read the brief first.** Every use case in the brief maps to ≥1 functional requirement.
-   If you exclude a use case, name it in Out of Scope with a reason.
+   If you exclude a use case, name it in Out of Scope with a reason. **Carry the brief's
+   Design Direction forward verbatim into the PRD's Design & Experience section** — the
+   designer reads the PRD, so dropping it here makes the UI come out generic.
 2. **One requirement, one ID.** Never merge two behaviours into one FR — the scrum-master
    shards the PRD into stories, and an ambiguous FR yields an ambiguous story.
 3. **Make everything testable.** Every FR has an acceptance criterion that can fail.
@@ -52,6 +54,13 @@ Grouped by epic. Each: unique ID, verb-first statement, priority.
 - NFR-02 [Security]: …
 - NFR-03 [Availability]: …
 - NFR-04 [Scalability]: …
+- NFR-05 [Design & Experience]: the product must ship a COMMITTED, distinctive visual
+  design system (not a generic template) — see the Design Direction section.
+
+## 4b. Design Direction
+Carried from the brief (do NOT drop): the committed aesthetic — references, emotion,
+audience, and any palette/typography/brand notes. The designer turns this into the
+DESIGN_SYSTEM. If the brief had none, state "designer proposes and commits to one".
 
 ## 5. User Stories (key paths only)
 "As a <role>, I want <action> so that <outcome>." Top 3 critical paths. Edge cases

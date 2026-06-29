@@ -71,6 +71,14 @@ one story at a time, just before it is built.
      `python-dev`, or `dev` when the stack has no specialist). Use the ids exactly as written —
      each must resolve to a registry agent.
 
+3b. **Design-system foundation story (any project with a UI).** If `docs/DESIGN_SYSTEM.md`
+   exists, add ONE wave-1 story owned by the frontend lane (`react-dev` / `flutter-dev`):
+   "Implement the design system — wire the tokens (color, typography, spacing, radii,
+   shadows) from `docs/DESIGN_SYSTEM.md` into the app theme and build the shared primitives
+   (Button, Card, Input)". Give it NO deps (it is the base). EVERY screen/UI story must
+   `deps` on it, so the visual foundation is built FIRST and every surface inherits it —
+   never let UI stories fire before the design system exists.
+
 4. **Write the LIGHT story body — a user-story, NOT a spec.** Each `body` is a short
    user-story in the form `As a <role>, I want <capability>, so that <value>.` — 1–3 lines.
    It states WHO needs the story and WHY it has value. It does **NOT** name files, modules,

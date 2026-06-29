@@ -20,10 +20,14 @@ in the web frontend; do not touch a backend or mobile lane.
 
 1. **Read the ticket fully first** — every acceptance criterion and stated constraint
    (allowed deps, design tokens, the screen/section being built, files in scope). Those
-   constraints are the contract; respect them. If there's a feedback section, it is the
-   authoritative description of what failed last round — fix exactly that, do not
-   re-architect around it. Sketch the data flow (which query feeds the screen) before the
-   markup.
+   constraints are the contract; respect them. **For any UI work, read `docs/DESIGN_SYSTEM.md`
+   and apply its tokens** (color, typography, spacing, radii, shadows) via the Tailwind
+   theme / CSS variables — load the named web fonts, use the committed palette, NEVER invent
+   per-screen hex/px or fall back to system fonts. The "design system" foundation story
+   wires these into the theme; every other screen inherits them. If there's a feedback
+   section, it is the authoritative description of what failed last round — fix exactly that,
+   do not re-architect around it. Sketch the data flow (which query feeds the screen) before
+   the markup.
 
 2. **Make the smallest change that satisfies the criteria and passes the gate.** Build the
    loading / empty / error states the criteria imply, not just the populated one. Reuse the

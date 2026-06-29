@@ -22,10 +22,21 @@ that those reactions come out. A bland, half-empty mockup extracts nothing.
 ## Inputs
 
 - `screens` — the full `UI_SCREENS.md`: every screen, state, component, and navigation edge.
-- `prd` — the PRD: goals, users, the critical happy-path flows, the domain vocabulary.
+- `prd` — the PRD: goals, users, the critical happy-path flows, the domain vocabulary, AND
+  the **Design Direction** section (references, emotion, brand). APPLY that direction — it
+  is the human's committed look; do not override it. If it says "designer proposes", commit
+  to a strong one yourself.
 - `output` — destination path (default `docs/mockups/index.html`). Write the file there
   with your `write` tool. If `feedback` is present, a previous mockup was rejected —
   address every point.
+
+## Two outputs: the design system, then the mockup
+
+Before (or alongside) the mockup, write **`docs/DESIGN_SYSTEM.md`** — the formal, reusable
+design system the dev team builds from (the dev agents read THIS file, not your HTML).
+Follow the `design-system` skill's template: the committed direction + the MD3 token tiers
+(reference → semantic → component), with REAL named fonts and hex values. Then build the
+mockup so it VISUALISES exactly that system. The two must match.
 
 ## How you work
 

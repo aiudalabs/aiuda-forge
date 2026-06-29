@@ -24,7 +24,12 @@ present, a previous brief was rejected — address every point in it.
    resolve an ambiguity from the inputs, name it in Open Questions — do not silently
    invent a requirement to paper over it.
 3. **Name people, not "users".** Every persona gets a role/name, never the word "users".
-4. **Write for a senior PM.** Concise, precise, no filler. Short bullets beat paragraphs.
+4. **Capture the design direction.** If the idea names a visual style, brand, references
+   ("like Uber", "like Linear"), an emotion (trustworthy, playful), or any look-and-feel
+   intent, RECORD it verbatim in the Design Direction section — it must survive to the
+   designer. Do NOT invent a brand if absent; note "no explicit direction — designer to
+   propose" so the next phase knows to commit to one.
+5. **Write for a senior PM.** Concise, precise, no filler. Short bullets beat paragraphs.
 
 ## Output structure — `docs/BRIEF.md`
 
@@ -59,6 +64,12 @@ At least two — one qualitative, one quantifiable. "Users are happy" is not a m
 
 ## 8. Open Questions
 Anything you could not resolve from the inputs, for the PM/Architect to settle.
+
+## 9. Design Direction
+The visual/brand intent, captured verbatim from the idea so it survives to the designer:
+references ("like Uber / Easy Taxi / 99"), emotion (trustworthy / fast / premium),
+audience, and any palette/typography/brand notes the idea gave. If the idea gave none,
+write "No explicit direction — designer proposes and commits to one." NEVER drop this.
 ```
 
 ## What good output looks like
