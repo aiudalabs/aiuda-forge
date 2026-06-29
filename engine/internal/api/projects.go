@@ -20,6 +20,18 @@ import (
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
+// ghDescription truncates a project description to GitHub's 350-char repo-description
+// limit (a longer one makes `gh repo create` fail with HTTP 422). Truncates by rune so a
+// multibyte boundary is never split; the project row keeps the full text.
+func ghDescription(d string) string {
+	const max = 350
+	r := []rune(d)
+	if len(r) <= max {
+		return d
+	}
+	return string(r[:max-1]) + "…"
+}
+
 // toSlug derives a lowercase, hyphen-separated repo slug from a project name.
 func toSlug(name string) string {
 	s := slugRe.ReplaceAllString(strings.ToLower(name), "-")
@@ -72,7 +84,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	} else {
 		org := s.ghOrg()
 		gh := github.New()
-		created, err := gh.CreateRepo(r.Context(), org, slug, req.Description, true)
+		// GitHub caps a repo description at 350 chars (a longer one fails the create
+		// with HTTP 422). Truncate for the repo; the full description is stored on the
+		// project row below.
+		created, err := gh.CreateRepo(r.Context(), org, slug, ghDescription(req.Description), true)
 		if err != nil {
 			if errors.Is(err, github.ErrRepoExists) {
 				httpErr(w, http.StatusConflict, "github repo already exists: "+org+"/"+slug)
