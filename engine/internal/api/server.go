@@ -6,18 +6,22 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"forge/internal/auth"
 	"forge/internal/billing"
 	"forge/internal/brain"
 	"forge/internal/channels"
+	github "forge/internal/github"
 	"forge/internal/httpx"
 	"forge/internal/projects"
 	"forge/internal/settings"
@@ -430,7 +434,57 @@ func (s *Server) approveStep(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusConflict, err.Error())
 		return
 	}
+	// Persist the just-approved design docs to the repo's dev branch so the
+	// repo-backed Especificación view reflects approved specs immediately — not only
+	// after the final docs PR. Best effort: the gate is already approved, so a commit
+	// failure must never turn the approval into an error (it is logged, not returned).
+	s.persistDesignDocs(r.Context(), id, step)
 	writeJSON(w, http.StatusOK, map[string]any{"approved": step, "run": id})
+}
+
+// persistDesignDocs commits the design run's docs/ tree to the project repo's `dev`
+// branch when a design phase gate is approved. It walks the run workspace's docs/
+// directory and upserts each file via the GitHub contents API (WriteFile skips
+// unchanged files), so each approval incrementally publishes exactly the approved
+// specs. No-op for non-design runs, non-gate steps, or when the projects store /
+// repo is absent. Errors are logged, never surfaced — the workflow already advanced.
+func (s *Server) persistDesignDocs(ctx context.Context, runID, step string) {
+	if s.Projects == nil || s.Engine == nil || !strings.HasSuffix(step, "_gate") {
+		return
+	}
+	run, err := s.Store.GetRun(runID)
+	if err != nil || run == nil || run.WorkflowID != "design" {
+		return
+	}
+	proj, err := s.Projects.Get(run.ProjectID)
+	if err != nil || proj.Repo == "" {
+		return
+	}
+	root := s.Engine.Workdir(runID)
+	docsDir := filepath.Join(root, "docs")
+	gh := github.New()
+	err = filepath.WalkDir(docsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path) // e.g. docs/PRD.md, docs/mockups/index.html
+		if err != nil {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		repoPath := filepath.ToSlash(rel)
+		msg := "design: publish " + repoPath + " (" + step + " approved)"
+		if _, err := gh.WriteFile(ctx, proj.Repo, "dev", repoPath, string(content), msg); err != nil {
+			log.Printf("persistDesignDocs %s %s: %v", runID, repoPath, err)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("persistDesignDocs %s walk: %v", runID, err)
+	}
 }
 
 type rejectReq struct {
