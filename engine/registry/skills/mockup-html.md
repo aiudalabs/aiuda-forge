@@ -7,12 +7,12 @@ How to produce a stakeholder-ready, self-contained HTML prototype.
 > persona into the agent — skill files are not loaded at runtime. Keep the two in
 > sync when editing. This file is the human-readable reference.
 
-## Core rule: one file, zero dependencies
+## Core rule: one file, web fonts allowed
 
-The output is a **single HTML file** with all CSS and JavaScript written inline
-(inside `<style>` and `<script>` tags). No `<link>` to external stylesheets, no
-`<script src="...">`, no external images. The file must render correctly with no
-internet connection.
+The output is a **single HTML file** with all CSS and JavaScript written inline (inside
+`<style>` and `<script>` tags). The ONE allowed external resource is **web fonts** (Google
+Fonts `<link>`/`@import`) — real type is what stops it looking like a wireframe. No other
+external stylesheets, no `<script src>`, no external images.
 
 ## File structure
 
@@ -58,29 +58,30 @@ per element. This makes the mockup look like one coherent product:
 
 ```css
 :root{
-  --bg:#f7f8fa; --surface:#fff; --text:#1a1d21; --muted:#6b7280;
-  --accent:#<one domain-appropriate hue>; --accent-ink:#fff;
-  --ok:#16a34a; --warn:#d97706; --danger:#dc2626; --border:#e5e7eb;
-  --radius:10px; --gap:16px; --shadow:0 1px 3px rgba(0,0,0,.08);
+  /* semantic roles from the committed palette — fill with real, characterful hex */
+  --app-bg:#…; --surface:#…; --text:#…; --text-muted:#…; --border:#…;
+  --primary:#…; --on-primary:#…; --accent:#…; --on-accent:#…;
+  --success:#16a34a; --warning:#d97706; --danger:#dc2626;
+  --radius:…; --gap:…; --shadow-sm:…; --shadow-lg:…;
+  --font-display:"…"; --font-body:"…";
 }
 ```
 
-## Visual design guidelines
+## Visual design — see the `design-system` skill
 
-- **Palette**: use a clean neutral base (white / light grey) with one accent colour
-  derived from the product's domain. No gradients unless they add clear signal.
-- **Typography**: system font stack — `system-ui, -apple-system, sans-serif`.
-  Base size 15–16 px, headings via `em` multiples.
-- **Spacing**: 8 px grid. All margins/padding multiples of 4 px.
-- **Components to include (as needed)**:
-  - Cards / list rows with realistic data fields
-  - Buttons (primary, secondary, destructive) with hover states
-  - Form inputs — text, select, checkbox — with labels
-  - Status badges / chips
-  - Empty states (icon + message + CTA)
-  - Loading shimmer (optional — a simple animated gradient strip)
-- **Responsive**: at minimum, use `max-width: 960px; margin: auto` so the mockup
-  does not stretch on wide screens. Mobile breakpoint is optional for stakeholder review.
+The VISUAL direction (palette, typography, depth, shape, motion) is governed by the
+`design-system` skill, not by safe defaults. Do NOT default to "neutral base + one accent +
+system fonts" — that is exactly the generic look to avoid. Commit to a concrete aesthetic:
+distinctive web fonts (not Inter/system), a dominant color + sharp accent, backgrounds with
+depth, and context-specific layout. Use semantic CSS-variable tokens so the mockup looks
+like one coherent, intentional product.
+
+- **Components to include (as needed)**: cards / list rows with realistic data fields;
+  buttons (primary / secondary / ghost / destructive) with hover + focus states; form
+  inputs with labels and a visible focus ring; status badges / chips; empty + loading +
+  error states.
+- **Layout**: the structure the product's flow wants (app shell, grid, editorial…),
+  responsive, no horizontal scroll — not a one-size `max-width` box for every product.
 
 ## Realistic content
 
@@ -104,7 +105,8 @@ Do not add screens just to hit a count.
 
 ## Avoid
 
-- External fonts (Google Fonts, Typekit, etc.)
+- Generic typography — system fonts, Inter, Roboto, Arial (Google Fonts web fonts ARE
+  encouraged; pick a distinctive face per the `design-system` skill)
 - Icon libraries (use Unicode symbols or simple SVG inline shapes instead)
 - CSS frameworks loaded from CDN (Bootstrap, Tailwind CDN build)
 - Placeholder images from external services (picsum, lorempixel)
