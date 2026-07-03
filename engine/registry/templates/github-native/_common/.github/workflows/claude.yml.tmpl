@@ -33,3 +33,41 @@ jobs:
           # escribir/commitear/pushear sin prompts interactivos (sin esto la
           # sesión "trabaja" 40 turnos y muere sin poder crear un archivo).
           claude_args: "--permission-mode bypassPermissions"
+
+      # Checkpoint de rescate DETERMINISTA (cazado en vivo dos veces: sesiones
+      # que implementan durante 100+ turnos y terminan sin pushear — por
+      # session-limit o por "esperar" sub-agentes en headless). La disciplina
+      # por prompt no es enforcement; este paso sí: si quedó trabajo sin
+      # pushear, lo commitea, lo sube y abre un PR draft para que NADA se
+      # pierda con el runner efímero.
+      - name: Rescue checkpoint
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          git config user.name "aiuda-forge conductor"
+          git config user.email "conductor@users.noreply.github.com"
+          BR=$(git rev-parse --abbrev-ref HEAD || echo HEAD)
+          DIRTY=$(git status --porcelain | head -1)
+          AHEAD=0
+          if [ "$BR" != "main" ] && [ "$BR" != "HEAD" ]; then
+            AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+          fi
+          if [ -z "$DIRTY" ] && [ "$AHEAD" = "0" ]; then
+            echo "sin trabajo que rescatar"; exit 0
+          fi
+          if [ "$BR" = "main" ] || [ "$BR" = "HEAD" ]; then
+            BR="claude/rescue-${{ github.run_id }}"
+            git checkout -b "$BR"
+          fi
+          if [ -n "$DIRTY" ]; then
+            git add -A
+            git commit -m "checkpoint de rescate — fin de sesión del agente" || true
+          fi
+          git push -u origin "$BR" || { echo "push falló"; exit 0; }
+          if ! gh pr list --head "$BR" --json number --jq length | grep -qv '^0$'; then
+            gh pr create --draft --head "$BR" \
+              --title "[WIP] rescate de sesión — $BR" \
+              --body "Trabajo rescatado automáticamente al terminar la sesión del agente (Rescue checkpoint). Revisar y completar." || true
+          fi

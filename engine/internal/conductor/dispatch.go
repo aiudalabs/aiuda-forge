@@ -207,7 +207,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 		prompt = "IMPORTANT — ephemeral runner discipline: FIRST create your working branch and push it. " +
 			"Commit AND push after completing EACH story (or any substantial unit of work) so progress survives " +
 			"session limits. If you sense you are running out of session, push what is done and open the PR as " +
-			"draft with a checklist of what remains.\n\n" + prompt
+			"draft with a checklist of what remains. NEVER spawn background workers and end your turn waiting " +
+			"for them — when your turn ends the session ENDS and unpushed work is lost. Open the PR BEFORE any " +
+			"optional self-review pass.\n\n" + prompt
 		// El workflow fija su modelo; el ruteo por lane aplica al canal copilot.
 		if err := d.GH.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", map[string]string{"prompt": prompt}); err != nil {
 			return DispatchResult{}, err
