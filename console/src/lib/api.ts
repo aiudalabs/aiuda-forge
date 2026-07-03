@@ -503,6 +503,12 @@ export async function getProjectDoc(projectId: string, path: string, ref = "dev"
 
 // Requeue (R2): resurrect a failed run's stories back to backlog so the
 // orchestrator re-fires them. In sprint mode this requeues the WHOLE sprint.
+// Requeue de UNA story (pivote F2): espejada → backlog + limpia su sesión de
+// agente; legacy → transición guardada failed→backlog del kernel.
+export async function requeueStory(id: string): Promise<void> {
+  await http(`/stories/${encodeURIComponent(id)}/requeue`, { method: "POST" });
+}
+
 export async function requeueRun(id: string): Promise<number> {
   if (await isMock()) {
     mutateMockStatus(id, "QUEUED");

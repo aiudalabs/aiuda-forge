@@ -58,6 +58,23 @@ func (c *Client) CreateAgentTask(ctx context.Context, repoURL, prompt, model str
 	return res.HTMLURL, nil
 }
 
+// AgentTaskState returns the state of a Copilot agent task ("queued",
+// "in_progress", "completed", "failed", …) — the conductor's dead-session
+// detector reads it to un-pin stories whose agent died.
+func (c *Client) AgentTaskState(ctx context.Context, repoURL, taskID string) (string, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return "", err
+	}
+	out, err := c.runner(ctx, "", "gh", "api",
+		"-H", "X-GitHub-Api-Version: "+agentTasksAPIVersion,
+		fmt.Sprintf("/agents/repos/%s/tasks/%s", slug, taskID), "--jq", ".state")
+	if err != nil {
+		return "", fmt.Errorf("gh api agent task %s: %w: %s", taskID, err, strings.TrimSpace(out))
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // DispatchWorkflow fires workflow_dispatch on workflowFile@ref with inputs (the
 // claude-code-action channel: inputs["prompt"]). GitHub responds 204/no body.
 func (c *Client) DispatchWorkflow(ctx context.Context, repoURL, workflowFile, ref string, inputs map[string]string) error {

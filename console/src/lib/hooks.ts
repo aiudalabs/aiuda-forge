@@ -297,6 +297,17 @@ export function useDispatch(projectId: string | null) {
   });
 }
 
+export function useRequeueStory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (storyId: string) => api.requeueStory(storyId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tickets"] });
+      qc.invalidateQueries({ queryKey: ["dispatchCandidates"] });
+    },
+  });
+}
+
 // ── Metrics hook ──────────────────────────────────────────────────────────────
 
 export function useMetrics(project?: string | null) {

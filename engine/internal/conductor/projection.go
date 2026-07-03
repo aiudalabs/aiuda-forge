@@ -46,14 +46,23 @@ type Result struct {
 	Changed   int    `json:"changed"`  // stories whose status was updated
 }
 
+// TaskStater reads the live state of a Copilot agent task. *github.Client
+// implements it; nil disables the dead-session sweep.
+type TaskStater interface {
+	AgentTaskState(ctx context.Context, repoURL, taskID string) (string, error)
+}
+
 // Projector mirrors GitHub state into the ticket store.
 type Projector struct {
 	Tickets *tickets.Store
 	GH      GitHubReader
+	// TaskState, when set, lets the sweep detect dead agent sessions (task
+	// failed/cancelled) and return their stories to backlog automatically.
+	TaskState TaskStater
 
 	// serializes syncs per repo so a webhook burst doesn't stampede gh.
-	mu     sync.Mutex
-	inFly  map[string]bool
+	mu    sync.Mutex
+	inFly map[string]bool
 }
 
 func NewProjector(store *tickets.Store, gh GitHubReader) *Projector {
@@ -73,6 +82,10 @@ var agentLogins = map[string]bool{
 func isAgent(login string) bool {
 	return agentLogins[strings.ToLower(login)] || strings.HasSuffix(login, "[bot]")
 }
+
+// taskIDRe extrae el id de task de una session_url de Copilot
+// (…/tasks/<uuid>); las sesiones claude_action no matchean (página de runs).
+var taskIDRe = regexp.MustCompile(`/tasks/([0-9a-f-]{8,})`)
 
 // closesRefs extracts the issue numbers a PR body claims to close
 // ("Closes #7, fixes #12, resolves #3" — GitHub's closing keywords).
@@ -183,6 +196,34 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 		}
 	}
 
+	// Barrido de sesiones muertas (F3): si la task de Copilot detrás de una
+	// sesión terminó en failed/cancelled y la story sigue sin PR, el agente
+	// murió — la story vuelve a backlog (y su sesión se limpia) para que el
+	// dispatch la re-sirva. Hoy esto era un reset manual contra la DB.
+	deadSession := map[string]bool{}
+	if p.TaskState != nil {
+		checked := map[string]string{} // task id → state (varias stories comparten task)
+		for id, url := range sessions {
+			m := taskIDRe.FindStringSubmatch(url)
+			if m == nil {
+				continue // sesión claude_action (página de runs) — sin estado consultable aún
+			}
+			state, ok := checked[m[1]]
+			if !ok {
+				var err error
+				state, err = p.TaskState.AgentTaskState(ctx, repoURL, m[1])
+				if err != nil {
+					log.Printf("conductor: task state %s: %v", m[1], err)
+					state = "" // best-effort: sin veredicto no tocamos nada
+				}
+				checked[m[1]] = state
+			}
+			if state == "failed" || state == "cancelled" || state == "error" {
+				deadSession[id] = true
+			}
+		}
+	}
+
 	for _, iss := range issues {
 		st, mirrored := byNumber[iss.Number]
 		if !mirrored {
@@ -208,7 +249,7 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 						break
 					}
 				}
-				if target == tickets.StatusBacklog && sessions[st.ID] != "" {
+				if target == tickets.StatusBacklog && sessions[st.ID] != "" && !deadSession[st.ID] {
 					target = tickets.StatusRunning // sesión despachada aún sin PR
 				}
 			}

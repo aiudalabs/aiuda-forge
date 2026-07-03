@@ -359,6 +359,7 @@ type ticketView struct {
 	Owner      string   `json:"owner,omitempty"`       // agent lane responsible — the board's "assignee"
 	PRURL      string   `json:"pr_url,omitempty"`      // recorded in_review; the reconcile loop checks this PR
 	SessionURL string   `json:"session_url,omitempty"` // the GitHub agent session executing it (F2 dispatch)
+	ExternalRef string  `json:"external_ref,omitempty"` // GitHub mirror (github:owner/repo#N) — la UI decide requeue nativo vs legacy
 	Repo       string   `json:"repo,omitempty"`        // the repo the PR lives in (needed to address it via gh)
 	ProjectID  string   `json:"project_id,omitempty"`  // lets the scheduler group work by project (audit A1)
 }
@@ -417,6 +418,7 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			Owner:      st.Owner,
 			PRURL:      st.PRURL,
 			SessionURL: sessions[st.ID],
+			ExternalRef: st.ExternalRef,
 			Repo:       st.Repo,
 			ProjectID:  st.ProjectID,
 		})

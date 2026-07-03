@@ -340,5 +340,6 @@ export interface OrchestratorTicket {
   owner?: string;       // agent lane responsible (python-dev, react-dev, …) — the "assignee"
   pr_url?: string;      // PR opened by the story's run, when one exists
   session_url?: string; // GitHub agent session executing it (Copilot task / Actions run)
+  external_ref?: string; // espejo GitHub (github:owner/repo#N) — presente = story exportada
   repo?: string;        // owner/repo the story lands in
 }

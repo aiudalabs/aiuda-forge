@@ -7,7 +7,7 @@
 // when the story failed — the user shouldn't need to dig 3 levels to unblock work.
 // If the story has a run, a button drops one level deeper into the execution.
 
-import { useRequeue } from "@/lib/hooks";
+import { useRequeue, useRequeueStory } from "@/lib/hooks";
 import type { DispatchCandidate, OrchestratorTicket } from "@/lib/types";
 import { LaneChip } from "@/components/tickets/LaneChip";
 import { statusToken } from "@/lib/statusToken";
@@ -39,6 +39,7 @@ export function TicketDetail({
 }) {
   const t = useT();
   const requeue = useRequeue();
+  const requeueStory = useRequeueStory();
   const open = !!ticket;
   const acs = acceptanceLines(ticket?.acceptance);
 
@@ -175,7 +176,25 @@ export function TicketDetail({
                 ) : !ticket.session_url ? (
                   <div className="td-empty">{t("tickets.detail.notRun")}</div>
                 ) : null}
-                {ticket.status === "failed" && ticket.run_id && (
+                {/* Reencolar: story espejada en GitHub → requeue nativo (vuelve a
+                    backlog + limpia la sesión de agente); legacy failed → requeue
+                    del run del kernel (R2). */}
+                {ticket.external_ref &&
+                  (ticket.status === "running" || ticket.status === "in_review" || ticket.status === "failed") && (
+                    <button
+                      className="btn ghost"
+                      style={{ width: "100%", color: "var(--danger)" }}
+                      onClick={() => {
+                        if (!window.confirm(t("tickets.detail.requeueTitle"))) return;
+                        requeueStory.mutate(ticket.id, { onSuccess: onClose });
+                      }}
+                      disabled={requeueStory.isPending}
+                      title={t("tickets.detail.requeueTitle")}
+                    >
+                      {requeueStory.isPending ? t("tickets.detail.requeueing") : t("tickets.detail.requeue")}
+                    </button>
+                  )}
+                {!ticket.external_ref && ticket.status === "failed" && ticket.run_id && (
                   <button
                     className="btn ghost"
                     style={{ width: "100%", color: "var(--danger)" }}

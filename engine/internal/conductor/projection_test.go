@@ -173,6 +173,37 @@ func TestSyncProjectSessionPinsRunning(t *testing.T) {
 	}
 }
 
+type fakeTaskState struct{ state string }
+
+func (f fakeTaskState) AgentTaskState(context.Context, string, string) (string, error) {
+	return f.state, nil
+}
+
+func TestSyncProjectDeadSessionUnpins(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	if _, err := st.SyncExternalStatus("S-02", tickets.StatusRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetStorySession("S-02", "https://github.com/o/r/tasks/ac083fa2-89ad-4a88-a44d-86cadd1cfad8"); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProjector(st, &fakeGH{issues: []github.IssueState{{Number: 2, State: "open"}}})
+	p.TaskState = fakeTaskState{state: "failed"}
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	// Task muerta → la story vuelve a backlog y su sesión se limpia (queda
+	// dispatchable de nuevo, sin resets manuales).
+	if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusBacklog {
+		t.Fatalf("S-02 = %s, want backlog (sesión muerta)", s.Status)
+	}
+	urls, _ := st.SessionURLs("p1")
+	if urls["S-02"] != "" {
+		t.Fatalf("sesión de S-02 debería estar limpia, got %q", urls["S-02"])
+	}
+}
+
 func TestClosesRefs(t *testing.T) {
 	body := "Does stuff.\n\nCloses #7, fixes #12; Resolved #3. See #99 (unrelated)."
 	got := closesRefs(body)

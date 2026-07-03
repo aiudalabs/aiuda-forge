@@ -216,6 +216,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /sprints/{id}/claim", s.needTickets(s.claimSprint))
 	m.HandleFunc("PUT /sprints/{id}/status", s.needTickets(s.updateSprintStatus))
 	m.HandleFunc("POST /sprints/{id}/requeue", s.needTickets(s.requeueSprint))
+	m.HandleFunc("POST /stories/{id}/requeue", s.needTickets(s.requeueStory))
 	m.HandleFunc("POST /stories", s.needTickets(s.createStory))
 	m.HandleFunc("GET /stories", s.needTickets(s.listStoriesHandler))
 	m.HandleFunc("GET /stories/{id}", s.needTickets(s.getStory))
@@ -428,6 +429,38 @@ func (s *Server) requeueSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requeued": n})
+}
+
+// requeueStory (R2 + pivote F2) devuelve UNA story al backlog para que el
+// dispatch la re-sirva. Para stories espejadas en GitHub va por
+// SyncExternalStatus (que además limpia la sesión de agente ligada); para las
+// legacy usa la transición guardada failed→backlog del kernel. Reemplaza los
+// resets manuales contra la DB que hoy exige una sesión muerta.
+func (s *Server) requeueStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := s.Tickets.GetStory(id)
+	if err != nil {
+		httpErr(w, http.StatusNotFound, "story not found: "+id)
+		return
+	}
+	if s.Projects != nil && !s.requireRole(r.Context(), st.ProjectID, projects.RoleEditor) {
+		httpErr(w, http.StatusForbidden, "requeueing requires editor or owner")
+		return
+	}
+	if st.ExternalRef != "" {
+		changed, err := s.Tickets.SyncExternalStatus(id, tickets.StatusBacklog, "")
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"requeued": changed})
+		return
+	}
+	if err := s.Tickets.MarkBacklog(id); err != nil {
+		httpErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requeued": true})
 }
 
 func (s *Server) controlStatus(w http.ResponseWriter, r *http.Request) {

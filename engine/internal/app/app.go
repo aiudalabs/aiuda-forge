@@ -271,6 +271,7 @@ func Build(cfg Config) (*App, error) {
 	if tix != nil {
 		gh := github.New()
 		srv.Projector = conductor.NewProjector(tix, gh)
+		srv.Projector.TaskState = gh // barrido de sesiones muertas (F3)
 		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh}
 		srv.GHWebhookSecret = func() string {
 			if v := os.Getenv("VIBEFORGE_GITHUB_WEBHOOK_SECRET"); v != "" {
