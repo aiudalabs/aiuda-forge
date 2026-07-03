@@ -21,10 +21,11 @@ import (
 // Policy is the slice of project settings dispatch needs (adapted from
 // projects.Settings by the API layer; conductor stays decoupled from that store).
 type Policy struct {
-	ExecutionUnit string            // "sprint" | "story"
-	DispatchMode  string            // "approve" | "auto" | "off"
-	Executor      string            // "copilot" | "claude_action"
-	ModelByLane   map[string]string // lane → model ("" / missing = auto)
+	ExecutionUnit  string            // "sprint" | "story"
+	DispatchMode   string            // "approve" | "auto" | "off"
+	Executor       string            // "copilot" | "claude_action"
+	ModelByLane    map[string]string // lane → model ("" / missing = auto)
+	MaxConcurrency int               // stories con agente a la vez; 0 = sin límite
 }
 
 // Candidate is one dispatchable unit under the current policy.
@@ -79,8 +80,17 @@ func (d *Dispatcher) Candidates(ctx context.Context, projectID, repoURL string, 
 		return nil, err
 	}
 	byID := map[string]tickets.Story{}
+	inFlight := 0
 	for _, st := range stories {
 		byID[st.ID] = st
+		if st.Status == tickets.StatusRunning {
+			inFlight++
+		}
+	}
+	// Tope de concurrencia (F3): con el cupo lleno no hay candidatos — ni para
+	// el botón ni para el auto-dispatch.
+	if pol.MaxConcurrency > 0 && inFlight >= pol.MaxConcurrency {
+		return nil, nil
 	}
 	mirrored := func(st tickets.Story) bool {
 		return strings.HasPrefix(st.ExternalRef, "github:"+slug+"#")

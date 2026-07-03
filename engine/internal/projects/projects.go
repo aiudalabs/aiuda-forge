@@ -39,6 +39,11 @@ const (
 
 	ExecutorCopilot      = "copilot"       // Copilot cloud agent via the Agent tasks REST API (default)
 	ExecutorClaudeAction = "claude_action" // claude-code-action via workflow_dispatch (user's Claude plan)
+
+	// Aprobación de workflows action_required en PRs de agentes (caveat de
+	// seguridad del ADR: NUNCA auto si el diff toca .github/workflows/**).
+	WorkflowApprovalManual   = "manual"       // el humano clickea "Approve and run workflows" (default)
+	WorkflowApprovalAutoSafe = "auto_if_safe" // el conductor aprueba solo PRs que no tocan workflows
 )
 
 // DefaultProjectID is the project that pre-multi-tenant data is backfilled to. It
@@ -55,6 +60,10 @@ type Settings struct {
 	DispatchMode  string            `json:"dispatch_mode"`
 	Executor      string            `json:"executor"`
 	ModelByLane   map[string]string `json:"model_by_lane"`
+	// WorkflowApproval gobierna los runs action_required de PRs de agentes.
+	WorkflowApproval string `json:"workflow_approval"`
+	// MaxConcurrency limita las stories con agente a la vez (0 = sin límite).
+	MaxConcurrency int `json:"max_concurrency"`
 }
 
 // Project holds the metadata for a single project. OwnerID is the auth user id
@@ -72,6 +81,8 @@ type Project struct {
 	DispatchMode  string `json:"dispatch_mode"`
 	Executor      string `json:"executor"`
 	ModelByLane   string `json:"model_by_lane"` // JSON map lane→model (raw; Settings decodes it)
+	WorkflowApproval string `json:"workflow_approval"`
+	MaxConcurrency   int    `json:"max_concurrency"`
 	CreatedAt     int64  `json:"created_at"`
 }
 
@@ -87,6 +98,8 @@ CREATE TABLE IF NOT EXISTS projects (
   dispatch_mode  TEXT NOT NULL DEFAULT 'approve',
   executor       TEXT NOT NULL DEFAULT 'copilot',
   model_by_lane  TEXT NOT NULL DEFAULT '{}',
+  workflow_approval TEXT NOT NULL DEFAULT 'manual',
+  max_concurrency   INTEGER NOT NULL DEFAULT 0,
   created_at     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS project_members (
@@ -125,6 +138,8 @@ var migrations = []string{
 	`ALTER TABLE projects ADD COLUMN dispatch_mode TEXT NOT NULL DEFAULT 'approve'`,
 	`ALTER TABLE projects ADD COLUMN executor TEXT NOT NULL DEFAULT 'copilot'`,
 	`ALTER TABLE projects ADD COLUMN model_by_lane TEXT NOT NULL DEFAULT '{}'`,
+	`ALTER TABLE projects ADD COLUMN workflow_approval TEXT NOT NULL DEFAULT 'manual'`,
+	`ALTER TABLE projects ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 0`,
 }
 
 // validExecutionUnit / validMergeMode bound the accepted settings values so the
@@ -240,11 +255,11 @@ func (s *Store) Create(p Project) (Project, error) {
 	return p, nil
 }
 
-const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, created_at FROM projects`
+const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, workflow_approval, max_concurrency, created_at FROM projects`
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.CreatedAt)
 	return p, err
 }
 
@@ -313,11 +328,13 @@ func (s *Store) GetSettings(id string) (Settings, error) {
 		_ = json.Unmarshal([]byte(p.ModelByLane), &mbl) // garbage → empty map, never an error path
 	}
 	out := Settings{
-		ExecutionUnit: p.ExecutionUnit,
-		MergeMode:     p.MergeMode,
-		DispatchMode:  p.DispatchMode,
-		Executor:      p.Executor,
-		ModelByLane:   mbl,
+		ExecutionUnit:    p.ExecutionUnit,
+		MergeMode:        p.MergeMode,
+		DispatchMode:     p.DispatchMode,
+		Executor:         p.Executor,
+		ModelByLane:      mbl,
+		WorkflowApproval: p.WorkflowApproval,
+		MaxConcurrency:   p.MaxConcurrency,
 	}
 	// Rows predating the F2 migration defaults (or hand-edited to '') fall back to
 	// the safe vocabulary instead of leaking "".
@@ -326,6 +343,9 @@ func (s *Store) GetSettings(id string) (Settings, error) {
 	}
 	if out.Executor == "" {
 		out.Executor = ExecutorCopilot
+	}
+	if out.WorkflowApproval == "" {
+		out.WorkflowApproval = WorkflowApprovalManual
 	}
 	return out, nil
 }
@@ -371,12 +391,25 @@ func (s *Store) PutSettings(id string, in Settings) (Settings, error) {
 	if in.ModelByLane != nil {
 		cur.ModelByLane = in.ModelByLane
 	}
+	if in.WorkflowApproval != "" {
+		if in.WorkflowApproval != WorkflowApprovalManual && in.WorkflowApproval != WorkflowApprovalAutoSafe {
+			return Settings{}, fmt.Errorf("%w: workflow_approval %q must be %q or %q",
+				ErrInvalid, in.WorkflowApproval, WorkflowApprovalManual, WorkflowApprovalAutoSafe)
+		}
+		cur.WorkflowApproval = in.WorkflowApproval
+	}
+	if in.MaxConcurrency < 0 {
+		return Settings{}, fmt.Errorf("%w: max_concurrency must be >= 0", ErrInvalid)
+	}
+	if in.MaxConcurrency > 0 {
+		cur.MaxConcurrency = in.MaxConcurrency
+	}
 	mbl, err := json.Marshal(cur.ModelByLane)
 	if err != nil {
 		return Settings{}, err
 	}
-	res, err := s.db.Exec(`UPDATE projects SET execution_unit=?, merge_mode=?, dispatch_mode=?, executor=?, model_by_lane=? WHERE id=?`,
-		cur.ExecutionUnit, cur.MergeMode, cur.DispatchMode, cur.Executor, string(mbl), id)
+	res, err := s.db.Exec(`UPDATE projects SET execution_unit=?, merge_mode=?, dispatch_mode=?, executor=?, model_by_lane=?, workflow_approval=?, max_concurrency=? WHERE id=?`,
+		cur.ExecutionUnit, cur.MergeMode, cur.DispatchMode, cur.Executor, string(mbl), cur.WorkflowApproval, cur.MaxConcurrency, id)
 	if err != nil {
 		return Settings{}, err
 	}

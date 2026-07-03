@@ -99,3 +99,40 @@ func (c *Client) ListOpenPRs(ctx context.Context, repoURL string) ([]OpenPR, err
 	}
 	return prs, nil
 }
+
+// OpenPRDetailed añade el autor (para la cola de PRs de la consola).
+type OpenPRDetailed struct {
+	OpenPR
+	Author string
+}
+
+// ListOpenPRsDetailed es ListOpenPRs con el login del autor.
+func (c *Client) ListOpenPRsDetailed(ctx context.Context, repoURL string) ([]OpenPRDetailed, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.runner(ctx, "", "gh", "api", "--paginate",
+		fmt.Sprintf("repos/%s/pulls?state=open&per_page=100", slug))
+	if err != nil {
+		return nil, fmt.Errorf("gh api pulls %s: %w: %s", slug, err, strings.TrimSpace(out))
+	}
+	type raw struct {
+		OpenPR
+		User struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	var prs []OpenPRDetailed
+	dec := json.NewDecoder(strings.NewReader(out))
+	for dec.More() {
+		var page []raw
+		if err := dec.Decode(&page); err != nil {
+			return nil, fmt.Errorf("decode pulls page: %w", err)
+		}
+		for _, r := range page {
+			prs = append(prs, OpenPRDetailed{OpenPR: r.OpenPR, Author: r.User.Login})
+		}
+	}
+	return prs, nil
+}

@@ -20,10 +20,11 @@ func (s *Server) policyFor(projectID string) (conductor.Policy, error) {
 		return conductor.Policy{}, err
 	}
 	return conductor.Policy{
-		ExecutionUnit: set.ExecutionUnit,
-		DispatchMode:  set.DispatchMode,
-		Executor:      set.Executor,
-		ModelByLane:   set.ModelByLane,
+		ExecutionUnit:  set.ExecutionUnit,
+		DispatchMode:   set.DispatchMode,
+		Executor:       set.Executor,
+		ModelByLane:    set.ModelByLane,
+		MaxConcurrency: set.MaxConcurrency,
 	}, nil
 }
 

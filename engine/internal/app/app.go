@@ -49,6 +49,7 @@ type Config struct {
 
 // App is the assembled kernel.
 type App struct {
+	approver *conductor.Approver
 	Store    *store.Store
 	Tickets  *tickets.Store  // nil when TicketsDB is not configured
 	Projects *projects.Store // nil when ProjectsDB is not configured
@@ -265,6 +266,7 @@ func Build(cfg Config) (*App, error) {
 		srv.Brain = brain.New(llm, ops, bst, emit)
 	}
 
+	var appApprover *conductor.Approver
 	// GitHub projection (F1 pivot): mirror exported stories' state (issue/PR) into
 	// the ticket store. The webhook secret is read per-request (env wins, settings
 	// fallback) so it can be configured without a restart.
@@ -273,6 +275,7 @@ func Build(cfg Config) (*App, error) {
 		srv.Projector = conductor.NewProjector(tix, gh)
 		srv.Projector.TaskState = gh // barrido de sesiones muertas (F3)
 		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh}
+		appApprover = &conductor.Approver{GH: gh}
 		srv.GHWebhookSecret = func() string {
 			if v := os.Getenv("VIBEFORGE_GITHUB_WEBHOOK_SECRET"); v != "" {
 				return v
@@ -340,7 +343,7 @@ func Build(cfg Config) (*App, error) {
 	if workers <= 0 {
 		workers = 1
 	}
-	return &App{Store: st, Tickets: tix, Projects: proj, Auth: au, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
+	return &App{Store: st, Tickets: tix, Projects: proj, Auth: au, Engine: eng, Bus: bus, Server: srv, workers: workers, approver: appApprover}, nil
 }
 
 // ClaudeBackend returns a CliBackend pre-configured for the claude CLI.
@@ -430,14 +433,26 @@ func (a *App) conductorLoop(ctx context.Context, interval time.Duration) {
 				continue
 			}
 			set, err := a.Projects.GetSettings(p.ID)
-			if err != nil || set.DispatchMode != projects.DispatchAuto {
+			if err != nil {
+				continue
+			}
+			// Aprobación segura de workflows (F3): bajo auto_if_safe, los runs
+			// action_required de PRs que NO tocan .github/workflows/** se
+			// aprueban solos; los que sí, quedan para el humano.
+			if set.WorkflowApproval == projects.WorkflowApprovalAutoSafe && a.approver != nil {
+				if res, err := a.approver.SweepSafeApprovals(ctx, p.Repo); err == nil && len(res.Approved) > 0 {
+					log.Printf("conductor: %s — %d workflows aprobados (safe), %d bloqueados", p.ID, len(res.Approved), len(res.Blocked))
+				}
+			}
+			if set.DispatchMode != projects.DispatchAuto {
 				continue
 			}
 			pol := conductor.Policy{
-				ExecutionUnit: set.ExecutionUnit,
-				DispatchMode:  set.DispatchMode,
-				Executor:      set.Executor,
-				ModelByLane:   set.ModelByLane,
+				ExecutionUnit:  set.ExecutionUnit,
+				DispatchMode:   set.DispatchMode,
+				Executor:       set.Executor,
+				ModelByLane:    set.ModelByLane,
+				MaxConcurrency: set.MaxConcurrency,
 			}
 			cands, err := a.Server.Dispatcher.Candidates(ctx, p.ID, p.Repo, pol)
 			if err != nil {
