@@ -184,7 +184,23 @@ leído de `GET /tickets?project=marketpty-597c85e3` del control-plane.
 - ⚠️ `gh` CLI local (2.64, 2024) no trae los flags `--add-blocked-by` (v2.94+, jun-2026);
   la API REST funciona igual con cualquier versión.
 
-**Conclusión del PoC:** la mitad commodity del engine (tickets-store, estado, grafo) se
-reemplaza con primitivas nativas de GitHub HOY, sin fricción. Lo que no se reemplaza es
-exactamente lo que el ADR decide conservar: secuenciación por sprint, goal-mode y
-verificación. Dirección confirmada.
+**Evaluación del PR de Copilot (S1-01, PR #45 — modelo auto, ~40 min):**
+`feat(S1-01): versioned Alembic migrations… with PostGIS`, 10 archivos, +727 líneas.
+Contra los 4 acceptance criteria del issue:
+- ✅ Las 13 tablas en una migración Alembic versionada + test `test_all_tables_created`.
+- ✅ PostGIS habilitado + índice GiST en `provider_profile` + tests que consultan pg_catalog.
+- ✅ Idempotencia: `IF NOT EXISTS` en todo + test que corre la migración DOS veces.
+- ✅ Seed de región phase-1: infirió "panama-city" (del contexto marketpty) + test de
+  exactamente-una-fila.
+- ✅ Bonus: escribió su propio workflow de CI (Postgres+PostGIS en Actions) — 2× SUCCESS.
+- ⚠️ Dings menores que un reviewer nuestro marcaría: commiteó 3 `__pycache__/*.pyc`; el
+  nombre del mercado phase-1 fue una inferencia no confirmada con el usuario.
+
+**Conclusión del PoC:** la mitad commodity del engine (tickets-store, estado, grafo,
+scheduler Y ejecutor) se reemplaza con primitivas nativas de GitHub HOY, sin fricción, con
+ruteo de modelo y aprobación de workflows automatizables por API. La calidad del PR sobre un
+issue bien especificado fue alta — lo que VALIDA la tesis Studio-first: la spec de calidad
+(body + ACs falsificables generados por nuestro pipeline de diseño) es lo que hizo posible
+ese resultado. Lo que no se reemplaza es lo que el ADR conserva: secuenciación por sprint,
+goal-mode, política de modelo, y la capa de verificación (los dings del PR + el caveat de
+seguridad de workflows la justifican). Dirección confirmada.
