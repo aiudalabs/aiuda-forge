@@ -163,6 +163,15 @@ leído de `GET /tickets?project=marketpty-597c85e3` del control-plane.
   `--model` ([cli/cli#13222](https://github.com/cli/cli/issues/13222)), irrelevante porque el
   conductor habla REST. Asignar-vía-issue usa modelo auto; la API es la vía con control.
 
+- ✅ **El "Approve and run workflows" de los PRs de Copilot también es automatizable**
+  (probado): los runs quedan `action_required` por diseño (un agente podría modificar CI para
+  exfiltrar secretos); `POST /actions/runs/{id}/approve` NO aplica (solo fork-PRs), pero
+  `POST /actions/runs/{id}/rerun` como usuario con write los dispara (`action_required` →
+  `queued` → `in_progress`). **Caveat de seguridad deliberado:** el conductor NO debe
+  auto-aprobar ciego — ese gate existe por algo; política mínima: auto-rerun solo si el diff
+  del PR no toca `.github/workflows/**` (o tras pasar nuestro reviewer). Encaja con Wave V:
+  la verificación es nuestra capa.
+
 **Gaps confirmados (= el valor que queda de nuestro lado):**
 - ⚠️ **Copilot coding agent no estaba asignable** en la cuenta (`suggestedActors` solo devolvió
   al humano): requiere plan Copilot Pro/Business con el coding agent habilitado
