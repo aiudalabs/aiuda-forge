@@ -29,7 +29,9 @@ jobs:
       - name: Cross-model review against acceptance criteria
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Un solo secret para ambos workflows de Claude (claude.yml y este):
+          # el OAuth token de la suscripcion Claude (claude setup-token).
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: "--model claude-opus-4-8"
           prompt: |
             You are the release gate for {{project_name}}. You run a DIFFERENT
