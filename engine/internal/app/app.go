@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"forge/internal/agent"
@@ -90,7 +91,14 @@ func Build(cfg Config) (*App, error) {
 		EgressDeny:    true,
 		RequireDocker: requireDocker,
 	}
-	eng.Register("gate", hardGate)
+	// F4 pivote: el ejecutor factory legacy (agent sandboxed + gate +
+	// agentic_verify) queda APAGADO por default — la ejecución vive en GitHub.
+	// VIBEFORGE_LEGACY_FACTORY=1 lo re-enciende (modo self-hosted). El pipeline
+	// de diseño (design/human_gate/pr/ticket_publish) no se toca.
+	legacyFactory := os.Getenv("VIBEFORGE_LEGACY_FACTORY") == "1"
+	if legacyFactory {
+		eng.Register("gate", hardGate)
+	}
 
 	// Load CLI backends from registry/backends/*.yaml. Each file defines one
 	// engine (id + argv). Adding opencode, copilot-cli, or any other claude-code-
@@ -162,7 +170,9 @@ func Build(cfg Config) (*App, error) {
 		AnthropicBase: os.Getenv("VIBEFORGE_EGRESS_ANTHROPIC_URL"),
 		Open:          os.Getenv("VIBEFORGE_EGRESS") == "open",
 	}
-	eng.Register("agent", agentRunner)
+	if legacyFactory {
+		eng.Register("agent", agentRunner)
+	}
 
 	// Design step — same agent runner wiring but Sandboxed=false: design turns
 	// produce documents, not code, so there is no need for a container worktree.
@@ -181,7 +191,9 @@ func Build(cfg Config) (*App, error) {
 	if cfg.AgentTimeout > 0 {
 		verifyRunner.Timeout = cfg.AgentTimeout
 	}
-	eng.Register("agentic_verify", verifyRunner)
+	if legacyFactory {
+		eng.Register("agentic_verify", verifyRunner)
+	}
 
 	eng.Register("human_gate", agent.HumanGateRunner{})
 	eng.Register("pr", pr.NewRunner())
@@ -401,6 +413,56 @@ func (a *App) StartBackground(ctx context.Context) {
 	}
 }
 
+// autoMergeFails acota los reintentos de auto-merge por PR (un PR que no
+// mergea 3 veces queda para el humano; se limpia al reiniciar el proceso).
+var autoMergeFails = map[string]int{}
+
+// autoMerge mergea los PRs "limpios" de stories in_review de un proyecto con
+// merge_mode=auto. Conservador: solo mergeStateStatus CLEAN y sin draft.
+func (a *App) autoMerge(ctx context.Context, projectID, repoURL string) {
+	stories, err := a.Tickets.ListStoriesByProject(projectID)
+	if err != nil {
+		return
+	}
+	gh := github.New()
+	seen := map[string]bool{}
+	for _, st := range stories {
+		if st.Status != tickets.StatusInReview || st.PRURL == "" || seen[st.PRURL] || st.ExternalRef == "" {
+			continue
+		}
+		seen[st.PRURL] = true
+		if autoMergeFails[st.PRURL] >= 3 {
+			continue
+		}
+		n := prNumberFromURL(st.PRURL)
+		if n == 0 {
+			continue
+		}
+		info, err := gh.PRMergeInfo(ctx, repoURL, n)
+		if err != nil || info.Draft || info.State != "OPEN" || info.MergeStateStatus != "CLEAN" || info.ReviewDecision == "CHANGES_REQUESTED" {
+			continue
+		}
+		if err := gh.MergePR(ctx, repoURL, n); err != nil {
+			autoMergeFails[st.PRURL]++
+			log.Printf("conductor: auto-merge PR #%d falló (%d/3): %v", n, autoMergeFails[st.PRURL], err)
+			continue
+		}
+		log.Printf("conductor: auto-merge PR #%d (%s) — la cascada sigue vía proyección", n, projectID)
+	}
+}
+
+func prNumberFromURL(url string) int {
+	i := strings.LastIndex(url, "/")
+	if i < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(url[i+1:])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // conductorLoop is the poll-driven conductor tick: projection sync for every
 // project with a repo, then auto-dispatch where the project's policy allows it.
 // Webhook deliveries trigger the same sync out-of-band for faster reaction.
@@ -444,6 +506,13 @@ func (a *App) conductorLoop(ctx context.Context, interval time.Duration) {
 					log.Printf("conductor: %s — %d workflows aprobados (safe), %d bloqueados", p.ID, len(res.Approved), len(res.Blocked))
 				}
 			}
+			// Auto-merge (F4): bajo merge_mode=auto, un PR de story in_review con
+			// mergeStateStatus CLEAN (checks verdes, sin conflictos, sin review
+			// negativa) se mergea solo; el merge dispara la cascada vía la
+			// proyección. Reintentos acotados por PR (in-memory).
+			if set.MergeMode == projects.MergeModeAuto {
+				a.autoMerge(ctx, p.ID, p.Repo)
+			}
 			if set.DispatchMode != projects.DispatchAuto {
 				continue
 			}
@@ -452,6 +521,7 @@ func (a *App) conductorLoop(ctx context.Context, interval time.Duration) {
 				DispatchMode:   set.DispatchMode,
 				Executor:       set.Executor,
 				ModelByLane:    set.ModelByLane,
+				ExecutorByLane: set.ExecutorByLane,
 				MaxConcurrency: set.MaxConcurrency,
 			}
 			cands, err := a.Server.Dispatcher.Candidates(ctx, p.ID, p.Repo, pol)

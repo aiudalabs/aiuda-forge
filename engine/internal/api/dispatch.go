@@ -24,6 +24,7 @@ func (s *Server) policyFor(projectID string) (conductor.Policy, error) {
 		DispatchMode:   set.DispatchMode,
 		Executor:       set.Executor,
 		ModelByLane:    set.ModelByLane,
+		ExecutorByLane: set.ExecutorByLane,
 		MaxConcurrency: set.MaxConcurrency,
 	}, nil
 }

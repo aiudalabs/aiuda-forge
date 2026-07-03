@@ -60,6 +60,8 @@ type Settings struct {
 	DispatchMode  string            `json:"dispatch_mode"`
 	Executor      string            `json:"executor"`
 	ModelByLane   map[string]string `json:"model_by_lane"`
+	// ExecutorByLane rutea el CANAL por lane (ausente = Executor del proyecto).
+	ExecutorByLane map[string]string `json:"executor_by_lane"`
 	// WorkflowApproval gobierna los runs action_required de PRs de agentes.
 	WorkflowApproval string `json:"workflow_approval"`
 	// MaxConcurrency limita las stories con agente a la vez (0 = sin límite).
@@ -81,6 +83,7 @@ type Project struct {
 	DispatchMode  string `json:"dispatch_mode"`
 	Executor      string `json:"executor"`
 	ModelByLane   string `json:"model_by_lane"` // JSON map lane→model (raw; Settings decodes it)
+	ExecutorByLane   string `json:"executor_by_lane"`
 	WorkflowApproval string `json:"workflow_approval"`
 	MaxConcurrency   int    `json:"max_concurrency"`
 	CreatedAt     int64  `json:"created_at"`
@@ -98,6 +101,7 @@ CREATE TABLE IF NOT EXISTS projects (
   dispatch_mode  TEXT NOT NULL DEFAULT 'approve',
   executor       TEXT NOT NULL DEFAULT 'copilot',
   model_by_lane  TEXT NOT NULL DEFAULT '{}',
+  executor_by_lane  TEXT NOT NULL DEFAULT '{}',
   workflow_approval TEXT NOT NULL DEFAULT 'manual',
   max_concurrency   INTEGER NOT NULL DEFAULT 0,
   created_at     INTEGER NOT NULL DEFAULT 0
@@ -138,6 +142,7 @@ var migrations = []string{
 	`ALTER TABLE projects ADD COLUMN dispatch_mode TEXT NOT NULL DEFAULT 'approve'`,
 	`ALTER TABLE projects ADD COLUMN executor TEXT NOT NULL DEFAULT 'copilot'`,
 	`ALTER TABLE projects ADD COLUMN model_by_lane TEXT NOT NULL DEFAULT '{}'`,
+	`ALTER TABLE projects ADD COLUMN executor_by_lane TEXT NOT NULL DEFAULT '{}'`,
 	`ALTER TABLE projects ADD COLUMN workflow_approval TEXT NOT NULL DEFAULT 'manual'`,
 	`ALTER TABLE projects ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 0`,
 }
@@ -255,11 +260,11 @@ func (s *Store) Create(p Project) (Project, error) {
 	return p, nil
 }
 
-const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, workflow_approval, max_concurrency, created_at FROM projects`
+const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, executor_by_lane, workflow_approval, max_concurrency, created_at FROM projects`
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.ExecutorByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.CreatedAt)
 	return p, err
 }
 
@@ -327,12 +332,17 @@ func (s *Store) GetSettings(id string) (Settings, error) {
 	if p.ModelByLane != "" {
 		_ = json.Unmarshal([]byte(p.ModelByLane), &mbl) // garbage → empty map, never an error path
 	}
+	ebl := map[string]string{}
+	if p.ExecutorByLane != "" {
+		_ = json.Unmarshal([]byte(p.ExecutorByLane), &ebl)
+	}
 	out := Settings{
 		ExecutionUnit:    p.ExecutionUnit,
 		MergeMode:        p.MergeMode,
 		DispatchMode:     p.DispatchMode,
 		Executor:         p.Executor,
 		ModelByLane:      mbl,
+		ExecutorByLane:   ebl,
 		WorkflowApproval: p.WorkflowApproval,
 		MaxConcurrency:   p.MaxConcurrency,
 	}
@@ -391,6 +401,15 @@ func (s *Store) PutSettings(id string, in Settings) (Settings, error) {
 	if in.ModelByLane != nil {
 		cur.ModelByLane = in.ModelByLane
 	}
+	if in.ExecutorByLane != nil {
+		for l, e := range in.ExecutorByLane {
+			if e != "" && !validExecutor(e) {
+				return Settings{}, fmt.Errorf("%w: executor_by_lane[%s] %q must be %q or %q",
+					ErrInvalid, l, e, ExecutorCopilot, ExecutorClaudeAction)
+			}
+		}
+		cur.ExecutorByLane = in.ExecutorByLane
+	}
 	if in.WorkflowApproval != "" {
 		if in.WorkflowApproval != WorkflowApprovalManual && in.WorkflowApproval != WorkflowApprovalAutoSafe {
 			return Settings{}, fmt.Errorf("%w: workflow_approval %q must be %q or %q",
@@ -408,8 +427,12 @@ func (s *Store) PutSettings(id string, in Settings) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
-	res, err := s.db.Exec(`UPDATE projects SET execution_unit=?, merge_mode=?, dispatch_mode=?, executor=?, model_by_lane=?, workflow_approval=?, max_concurrency=? WHERE id=?`,
-		cur.ExecutionUnit, cur.MergeMode, cur.DispatchMode, cur.Executor, string(mbl), cur.WorkflowApproval, cur.MaxConcurrency, id)
+	ebl, err := json.Marshal(cur.ExecutorByLane)
+	if err != nil {
+		return Settings{}, err
+	}
+	res, err := s.db.Exec(`UPDATE projects SET execution_unit=?, merge_mode=?, dispatch_mode=?, executor=?, model_by_lane=?, executor_by_lane=?, workflow_approval=?, max_concurrency=? WHERE id=?`,
+		cur.ExecutionUnit, cur.MergeMode, cur.DispatchMode, cur.Executor, string(mbl), string(ebl), cur.WorkflowApproval, cur.MaxConcurrency, id)
 	if err != nil {
 		return Settings{}, err
 	}

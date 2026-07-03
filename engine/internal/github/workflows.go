@@ -90,3 +90,30 @@ func (c *Client) RerunWorkflowRun(ctx context.Context, repoURL string, runID int
 	}
 	return nil
 }
+
+// PRMergeInfo es la foto de mergeabilidad que el auto-merge del conductor
+// consulta. mergeStateStatus CLEAN = sin conflictos, checks requeridos verdes.
+type PRMergeInfo struct {
+	State            string `json:"state"`
+	Draft            bool   `json:"isDraft"`
+	MergeStateStatus string `json:"mergeStateStatus"`
+	ReviewDecision   string `json:"reviewDecision"`
+}
+
+// PRMergeInfo lee estado/mergeabilidad/review de un PR vía gh pr view.
+func (c *Client) PRMergeInfo(ctx context.Context, repoURL string, number int) (PRMergeInfo, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return PRMergeInfo{}, err
+	}
+	out, err := c.runner(ctx, "", "gh", "pr", "view", fmt.Sprintf("%d", number),
+		"-R", slug, "--json", "state,isDraft,mergeStateStatus,reviewDecision")
+	if err != nil {
+		return PRMergeInfo{}, fmt.Errorf("gh pr view #%d: %w: %s", number, err, strings.TrimSpace(out))
+	}
+	var info PRMergeInfo
+	if err := json.Unmarshal([]byte(out), &info); err != nil {
+		return PRMergeInfo{}, fmt.Errorf("decode pr view: %w", err)
+	}
+	return info, nil
+}

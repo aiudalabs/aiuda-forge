@@ -25,6 +25,9 @@ import (
 // the suite needs no Docker. Returns an httptest base URL and a cancel func.
 func testKernel(t *testing.T) (string, *app.App, context.CancelFunc) {
 	t.Helper()
+	// La suite ejercita el ejecutor factory legacy (agent/gate/agentic_verify),
+	// que desde F4 es opt-in (la ejecución por defecto vive en GitHub).
+	t.Setenv("VIBEFORGE_LEGACY_FACTORY", "1")
 	// Copy the repo registry into a temp dir so registry PUTs in tests never
 	// pollute the committed manifests.
 	srcReg, err := filepath.Abs(filepath.Join("..", "..", "registry"))

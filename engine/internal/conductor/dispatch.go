@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,7 +26,24 @@ type Policy struct {
 	DispatchMode   string            // "approve" | "auto" | "off"
 	Executor       string            // "copilot" | "claude_action"
 	ModelByLane    map[string]string // lane → model ("" / missing = auto)
+	ExecutorByLane map[string]string // lane → executor; ausente = Executor del proyecto
 	MaxConcurrency int               // stories con agente a la vez; 0 = sin límite
+}
+
+// executorFor resuelve el canal de una lane bajo la política.
+func (p Policy) executorFor(lane string) string {
+	if e, ok := p.ExecutorByLane[lane]; ok && e != "" {
+		return e
+	}
+	return p.Executor
+}
+
+// otherExecutor es el canal alterno para el fallback automático.
+func otherExecutor(e string) string {
+	if e == "claude_action" {
+		return "copilot"
+	}
+	return "claude_action"
 }
 
 // Candidate is one dispatchable unit under the current policy.
@@ -197,38 +215,24 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 		return DispatchResult{}, err
 	}
 
-	res := DispatchResult{Dispatched: storyIDs, Channel: pol.Executor, Model: cand.Model}
-	switch pol.Executor {
-	case "claude_action":
-		// Disciplina de checkpoint para el runner efímero (cazado en vivo, R1
-		// GitHub-edition): un session-limit a mitad de sprint perdió 113 turnos
-		// de trabajo porque nada se había pusheado. El branch nace primero y
-		// cada story se commitea/pushea al completarse.
-		prompt = "IMPORTANT — ephemeral runner discipline: FIRST create your working branch and push it. " +
-			"Commit AND push after completing EACH story (or any substantial unit of work) so progress survives " +
-			"session limits. If you sense you are running out of session, push what is done and open the PR as " +
-			"draft with a checklist of what remains. NEVER spawn background workers and end your turn waiting " +
-			"for them — when your turn ends the session ENDS and unpushed work is lost. Open the PR BEFORE any " +
-			"optional self-review pass.\n\n" + prompt
-		// El workflow fija su modelo; el ruteo por lane aplica al canal copilot.
-		if err := d.GH.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", map[string]string{"prompt": prompt}); err != nil {
-			return DispatchResult{}, err
-		}
-		res.Model = ""
-		// El run concreto tarda en materializarse; el link estable es la página
-		// de runs del workflow — suficiente para "ver la sesión".
-		res.TaskURL = fmt.Sprintf("https://github.com/%s/actions/workflows/%s", repoSlug(repoURL), claudeWorkflowFile)
-	default: // copilot
-		url, err := d.GH.CreateAgentTask(ctx, repoURL, prompt, cand.Model)
+	res := DispatchResult{Dispatched: storyIDs, Channel: cand.Executor, Model: cand.Model}
+	fire := func(executor string) (string, error) { return d.fireChannel(ctx, repoURL, executor, prompt, cand.Model) }
+	url, err := fire(cand.Executor)
+	if err != nil {
+		// Fallback automático de canal (F4 — la lección del outage de Copilot):
+		// si el canal primario falla al DESPACHAR, se intenta el alterno.
+		alt := otherExecutor(cand.Executor)
+		log.Printf("conductor: canal %s falló (%v) — fallback a %s", cand.Executor, err, alt)
+		url, err = fire(alt)
 		if err != nil {
-			return DispatchResult{}, err
+			return DispatchResult{}, fmt.Errorf("ambos canales fallaron (%s y %s): %w", cand.Executor, alt, err)
 		}
-		if url == "" {
-			url = "https://github.com/copilot/agents"
+		res.Channel = alt
+		if alt == "claude_action" {
+			res.Model = ""
 		}
-		res.TaskURL = url
 	}
-
+	res.TaskURL = url
 	// Reflejo inmediato: las stories despachadas pasan a running y quedan
 	// ligadas a su sesión de agente (el link "ver sesión" de la consola); la
 	// proyección las mantiene correctas a partir de aquí (PR/merge/reopen).
@@ -241,6 +245,38 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 		}
 	}
 	return res, nil
+}
+
+// fireChannel dispara el prompt por un canal concreto y devuelve la URL de la
+// sesión. Es la unidad que el fallback automático reintenta por el canal alterno.
+func (d *Dispatcher) fireChannel(ctx context.Context, repoURL, executor, prompt, model string) (string, error) {
+	switch executor {
+	case "claude_action":
+		// Disciplina de checkpoint para el runner efímero (R1 GitHub-edition +
+		// el turno-que-espera-workers): refuerzo por prompt; el enforcement
+		// real es el Rescue checkpoint del workflow (determinista).
+		prompt = "IMPORTANT — ephemeral runner discipline: FIRST create your working branch and push it. " +
+			"Commit AND push after completing EACH story (or any substantial unit of work) so progress survives " +
+			"session limits. If you sense you are running out of session, push what is done and open the PR as " +
+			"draft with a checklist of what remains. NEVER spawn background workers and end your turn waiting " +
+			"for them — when your turn ends the session ENDS and unpushed work is lost. Open the PR BEFORE any " +
+			"optional self-review pass.\n\n" + prompt
+		if err := d.GH.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", map[string]string{"prompt": prompt}); err != nil {
+			return "", err
+		}
+		// El run concreto tarda en materializarse; el link estable es la página
+		// de runs del workflow.
+		return fmt.Sprintf("https://github.com/%s/actions/workflows/%s", repoSlug(repoURL), claudeWorkflowFile), nil
+	default: // copilot
+		url, err := d.GH.CreateAgentTask(ctx, repoURL, prompt, model)
+		if err != nil {
+			return "", err
+		}
+		if url == "" {
+			url = "https://github.com/copilot/agents"
+		}
+		return url, nil
+	}
 }
 
 // buildPrompt composes the agent prompt. Story mode points at the issue (its
