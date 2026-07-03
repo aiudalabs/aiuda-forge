@@ -147,6 +147,15 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 	if err != nil {
 		return res, err
 	}
+	// Sesiones de agente activas (F2 dispatch): una task de Copilot creada por
+	// prompt NO asigna el issue ni tiene PR durante sus primeros minutos — sin
+	// esto, el tick degradaría la story recién despachada a backlog (y en modo
+	// auto la re-despacharía). La sesión ancla la story en running hasta que
+	// aparezca su PR o el issue cierre. (F3: poll del estado real de la task.)
+	sessions, err := p.Tickets.SessionURLs(projectID)
+	if err != nil {
+		sessions = map[string]string{}
+	}
 
 	// issue number → the open PR that closes it (non-draft wins over draft).
 	prFor := map[int]github.OpenPR{}
@@ -183,6 +192,9 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 						target = tickets.StatusRunning
 						break
 					}
+				}
+				if target == tickets.StatusBacklog && sessions[st.ID] != "" {
+					target = tickets.StatusRunning // sesión despachada aún sin PR
 				}
 			}
 		}

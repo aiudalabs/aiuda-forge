@@ -90,6 +90,18 @@ function StoryCard({ ticket, gate, candidate, onDispatch, onOpenTicket, onOpenRu
             PR ↗
           </a>
         )}
+        {ticket.session_url && ticket.status === "running" && (
+          <a
+            className="kb-pr"
+            href={ticket.session_url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={t("tickets.card.openSession")}
+          >
+            {t("tickets.card.session")} ↗
+          </a>
+        )}
         {ticket.run_id && (
           <button
             className="kb-run"

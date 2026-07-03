@@ -144,6 +144,17 @@ export function TicketDetail({
                       : t("tickets.dispatch.detailStory")}
                   </button>
                 )}
+                {ticket.session_url && (
+                  <a
+                    className="btn primary"
+                    style={{ width: "100%", textAlign: "center" }}
+                    href={ticket.session_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {t("tickets.detail.viewSession")}
+                  </a>
+                )}
                 {ticket.pr_url && (
                   <a
                     className="btn ghost"
@@ -155,13 +166,15 @@ export function TicketDetail({
                     {t("tickets.detail.viewPR")}
                   </a>
                 )}
-                {ticket.run_id ? (
-                  <button className="btn primary" style={{ width: "100%" }} onClick={() => onOpenRun(ticket.run_id as string)}>
+                {/* Run legacy del kernel: solo cuando NO hay sesión GitHub (una
+                    story espejada con run_id viejo confunde más de lo que aporta). */}
+                {ticket.run_id && !ticket.session_url ? (
+                  <button className="btn ghost" style={{ width: "100%" }} onClick={() => onOpenRun(ticket.run_id as string)}>
                     {t("tickets.detail.viewRun")}
                   </button>
-                ) : (
+                ) : !ticket.session_url ? (
                   <div className="td-empty">{t("tickets.detail.notRun")}</div>
-                )}
+                ) : null}
                 {ticket.status === "failed" && ticket.run_id && (
                   <button
                     className="btn ghost"

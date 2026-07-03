@@ -339,5 +339,6 @@ export interface OrchestratorTicket {
   epic_id?: string;     // parent epic (E1, E2, …)
   owner?: string;       // agent lane responsible (python-dev, react-dev, …) — the "assignee"
   pr_url?: string;      // PR opened by the story's run, when one exists
+  session_url?: string; // GitHub agent session executing it (Copilot task / Actions run)
   repo?: string;        // owner/repo the story lands in
 }

@@ -170,6 +170,14 @@ CREATE TABLE IF NOT EXISTS story_deps (
   dep_id   TEXT NOT NULL,
   PRIMARY KEY (story_id, dep_id)
 );
+
+-- La sesión de agente de GitHub que está ejecutando una story despachada (F2):
+-- la URL del Copilot task / workflow run. Tabla lateral (no columna) para no
+-- tocar los cinco SELECT de stories; se lee en bloque para el ticketView.
+CREATE TABLE IF NOT EXISTS story_sessions (
+  story_id TEXT PRIMARY KEY,
+  url      TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS idx_story_deps_story ON story_deps(story_id);
 CREATE INDEX IF NOT EXISTS idx_story_deps_dep   ON story_deps(dep_id);
 `
@@ -567,6 +575,41 @@ func (s *Store) SetStoryExternalRef(id, externalRef string) error {
 	return nil
 }
 
+// SetStorySession records the GitHub agent session executing a dispatched story
+// (Copilot task URL / Actions run URL) so the console can link straight to it.
+func (s *Store) SetStorySession(id, url string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO story_sessions(story_id, url) VALUES(?, ?)
+		 ON CONFLICT(story_id) DO UPDATE SET url=excluded.url`, id, url)
+	return err
+}
+
+// SessionURLs returns story_id → session URL for a project's stories (all
+// projects when projectID is empty, matching ListStories' scoping contract).
+func (s *Store) SessionURLs(projectID string) (map[string]string, error) {
+	q := `SELECT ss.story_id, ss.url FROM story_sessions ss
+	      JOIN stories st ON st.id = ss.story_id`
+	var args []any
+	if projectID != "" {
+		q += ` WHERE st.project_id = ?`
+		args = append(args, projectID)
+	}
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, url string
+		if err := rows.Scan(&id, &url); err != nil {
+			return nil, err
+		}
+		out[id] = url
+	}
+	return out, rows.Err()
+}
+
 // SyncExternalStatus mirrors a story's status from its external source of truth
 // (the GitHub issue, F1 projection). It deliberately BYPASSES legalSources: that
 // table protects the KERNEL's execution flow, but a mirrored story is driven by
@@ -594,6 +637,10 @@ func (s *Store) SyncExternalStatus(id string, status Status, prURL string) (chan
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, err
+	}
+	if n > 0 && status == StatusBacklog {
+		// De vuelta al backlog: la sesión de agente (si la hubo) ya no ejecuta nada.
+		_, _ = s.db.Exec(`DELETE FROM story_sessions WHERE story_id=?`, id)
 	}
 	if n > 0 && status == StatusDone {
 		s.fireStoryDone(id)

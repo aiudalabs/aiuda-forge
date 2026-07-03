@@ -354,12 +354,13 @@ type ticketView struct {
 	Status     string   `json:"status"`               // derived: backlog stories whose deps are done report "ready"
 	Deps       []string `json:"deps"`
 	RunID      string   `json:"run_id,omitempty"`
-	SprintID   string   `json:"sprint_id,omitempty"`  // lets the scheduler group running stories by sprint
-	EpicID     string   `json:"epic_id,omitempty"`    // parent epic — the board groups/labels by it
-	Owner      string   `json:"owner,omitempty"`      // agent lane responsible — the board's "assignee"
-	PRURL      string   `json:"pr_url,omitempty"`     // recorded in_review; the reconcile loop checks this PR
-	Repo       string   `json:"repo,omitempty"`       // the repo the PR lives in (needed to address it via gh)
-	ProjectID  string   `json:"project_id,omitempty"` // lets the scheduler group work by project (audit A1)
+	SprintID   string   `json:"sprint_id,omitempty"`   // lets the scheduler group running stories by sprint
+	EpicID     string   `json:"epic_id,omitempty"`     // parent epic — the board groups/labels by it
+	Owner      string   `json:"owner,omitempty"`       // agent lane responsible — the board's "assignee"
+	PRURL      string   `json:"pr_url,omitempty"`      // recorded in_review; the reconcile loop checks this PR
+	SessionURL string   `json:"session_url,omitempty"` // the GitHub agent session executing it (F2 dispatch)
+	Repo       string   `json:"repo,omitempty"`        // the repo the PR lives in (needed to address it via gh)
+	ProjectID  string   `json:"project_id,omitempty"`  // lets the scheduler group work by project (audit A1)
 }
 
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
@@ -387,6 +388,12 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 		readySet[st.ID] = true
 	}
 
+	// Sesiones de agente (F2 dispatch): un solo fetch en bloque para el view.
+	sessions, err := s.Tickets.SessionURLs(project)
+	if err != nil {
+		sessions = map[string]string{} // best-effort: el board no se cae por esto
+	}
+
 	views := make([]ticketView, 0, len(stories))
 	for _, st := range stories {
 		status := string(st.Status)
@@ -409,6 +416,7 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			EpicID:     st.EpicID,
 			Owner:      st.Owner,
 			PRURL:      st.PRURL,
+			SessionURL: sessions[st.ID],
 			Repo:       st.Repo,
 			ProjectID:  st.ProjectID,
 		})

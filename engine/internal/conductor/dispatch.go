@@ -195,19 +195,29 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 			return DispatchResult{}, err
 		}
 		res.Model = ""
+		// El run concreto tarda en materializarse; el link estable es la página
+		// de runs del workflow — suficiente para "ver la sesión".
+		res.TaskURL = fmt.Sprintf("https://github.com/%s/actions/workflows/%s", repoSlug(repoURL), claudeWorkflowFile)
 	default: // copilot
 		url, err := d.GH.CreateAgentTask(ctx, repoURL, prompt, cand.Model)
 		if err != nil {
 			return DispatchResult{}, err
 		}
+		if url == "" {
+			url = "https://github.com/copilot/agents"
+		}
 		res.TaskURL = url
 	}
 
-	// Reflejo inmediato: las stories despachadas pasan a running; la proyección
-	// las mantendrá correctas a partir de aquí (asignación/PR/merge).
+	// Reflejo inmediato: las stories despachadas pasan a running y quedan
+	// ligadas a su sesión de agente (el link "ver sesión" de la consola); la
+	// proyección las mantiene correctas a partir de aquí (PR/merge/reopen).
 	for _, id := range storyIDs {
 		if _, err := d.Tickets.SyncExternalStatus(id, tickets.StatusRunning, ""); err != nil {
 			return res, fmt.Errorf("dispatched but marking %s running failed: %w", id, err)
+		}
+		if err := d.Tickets.SetStorySession(id, res.TaskURL); err != nil {
+			return res, fmt.Errorf("dispatched but recording session for %s failed: %w", id, err)
 		}
 	}
 	return res, nil

@@ -129,6 +129,26 @@ func TestSyncProjectReopenRollsBack(t *testing.T) {
 	}
 }
 
+func TestSyncProjectSessionPinsRunning(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	// S-02 fue despachada (sesión activa) pero su task aún no asignó el issue ni
+	// abrió PR: la proyección NO debe degradarla a backlog (doble-despacho en auto).
+	if _, err := st.SyncExternalStatus("S-02", tickets.StatusRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetStorySession("S-02", "https://github.com/o/r/tasks/t1"); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProjector(st, &fakeGH{issues: []github.IssueState{{Number: 2, State: "open"}}})
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusRunning {
+		t.Fatalf("S-02 = %s, want running (sesión activa ancla)", s.Status)
+	}
+}
+
 func TestClosesRefs(t *testing.T) {
 	body := "Does stuff.\n\nCloses #7, fixes #12; Resolved #3. See #99 (unrelated)."
 	got := closesRefs(body)
