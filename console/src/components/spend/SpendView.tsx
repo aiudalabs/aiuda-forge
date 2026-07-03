@@ -4,9 +4,10 @@
 // Cableado contra GET /metrics del control-plane.
 // Muestra total_cost_usd, cost_by_workflow, cost_by_step, acceptance_rate.
 
-import { useMetrics } from "@/lib/hooks";
+import { useMetrics, useGitHubSpend } from "@/lib/hooks";
 import { useActiveProjectId } from "@/lib/activeProject";
 import { useT } from "@/lib/i18n";
+import type { CSSProperties } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers de formato
@@ -25,6 +26,110 @@ function fmtNum(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return `${n}`;
+}
+
+// Cantidad medida (minutos, requests, GB-h): puede ser fraccionaria.
+function fmtQty(n: number) {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sección "GitHub" — gasto medido del ciclo actual (F4). Degrada a placeholder
+// con la razón si GitHub no expone la facturación del owner del repo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const thCell: CSSProperties = { padding: "8px 12px", fontWeight: 700 };
+const tdCell: CSSProperties = { padding: "8px 12px", color: "var(--ink2)" };
+const numCell: CSSProperties = { textAlign: "right", fontVariantNumeric: "tabular-nums" };
+
+function GitHubSpendSection({ projectId }: { projectId: string | null }) {
+  const t = useT();
+  const { data, isLoading } = useGitHubSpend(projectId);
+
+  if (!projectId) return null;
+
+  const items = data?.items ?? [];
+
+  return (
+    <>
+      <div className="sectitle">
+        <h2>{t("spend.github.title")}</h2>
+        {data?.available && data.cycle && (
+          <span className="c">{t("spend.github.cycle", { cycle: data.cycle })}</span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="placeholder">
+          <div className="ph-ic"><span className="spin" /></div>
+          {t("spend.github.loading")}
+        </div>
+      ) : !data || !data.available ? (
+        <div className="placeholder">
+          <div className="ph-ic">ⓘ</div>
+          {data?.reason ?? t("spend.github.unavailable")}
+        </div>
+      ) : (
+        <>
+          <div className="stats">
+            <div className="stat">
+              <div className="eyebrow">{t("spend.github.copilot")}</div>
+              <div className="n serif">{fmt$(data.totals?.copilot ?? 0)}</div>
+              <div className="sub">{t("spend.github.copilot.sub")}</div>
+            </div>
+            <div className="stat">
+              <div className="eyebrow">{t("spend.github.actions")}</div>
+              <div className="n serif">{fmt$(data.totals?.actions ?? 0)}</div>
+              <div className="sub">{t("spend.github.actions.sub")}</div>
+            </div>
+          </div>
+
+          {items.length > 0 ? (
+            <div className="ttable" style={{ overflowX: "auto", marginTop: 4 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr
+                    style={{
+                      textAlign: "left",
+                      background: "var(--bg2)",
+                      color: "var(--ink4)",
+                      fontSize: 11,
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    <th style={thCell}>{t("spend.github.col.product")}</th>
+                    <th style={thCell}>{t("spend.github.col.sku")}</th>
+                    <th style={{ ...thCell, ...numCell }}>{t("spend.github.col.qty")}</th>
+                    <th style={{ ...thCell, ...numCell }}>{t("spend.github.col.gross")}</th>
+                    <th style={{ ...thCell, ...numCell }}>{t("spend.github.col.net")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it) => (
+                    <tr key={it.product + "·" + it.sku} style={{ borderTop: "1px solid var(--stroke)" }}>
+                      <td style={tdCell}>{it.product}</td>
+                      <td style={tdCell}>{it.sku}</td>
+                      <td style={{ ...tdCell, ...numCell }}>
+                        {fmtQty(it.quantity)} <span style={{ color: "var(--ink4)" }}>{it.unit_type}</span>
+                      </td>
+                      <td style={{ ...tdCell, ...numCell }}>{fmt$(it.gross_amount)}</td>
+                      <td style={{ ...tdCell, ...numCell }}>{fmt$(it.net_amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="placeholder">
+              <div className="ph-ic">ⓘ</div>
+              {t("spend.github.noUsage")}
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +184,9 @@ export function SpendView() {
         <h2>{t("spend.title")}</h2>
         <span className="c">{t("spend.subtitle")}</span>
       </div>
+
+      {/* Gasto medido en GitHub (F4) — al inicio, antes de las métricas del kernel. */}
+      <GitHubSpendSection projectId={projectId} />
 
       {/* KPIs principales */}
       <div className="stats">

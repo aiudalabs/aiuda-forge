@@ -184,6 +184,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /projects/{id}/scaffold/github", s.needProjects(s.scaffoldGitHub))
 	// Cola de PRs + aprobación segura de workflows (F3).
 	m.HandleFunc("GET /projects/{id}/prs", s.needProjects(s.listProjectPRs))
+	// Spend desde GitHub (F4): gasto medido del repo (Copilot/Actions/LFS) del ciclo.
+	m.HandleFunc("GET /projects/{id}/spend/github", s.needProjects(s.githubSpend))
 	m.HandleFunc("POST /projects/{id}/workflows/{runId}/approve", s.needProjects(s.approveWorkflowRun))
 	secret := s.GHWebhookSecret
 	if secret == nil {

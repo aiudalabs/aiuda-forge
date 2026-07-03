@@ -38,6 +38,7 @@ import type {
   DesignStepStatus,
   DispatchCandidates,
   DispatchResult,
+  GitHubSpend,
   McpConnection,
   MetricsPayload,
   Notification,
@@ -775,6 +776,17 @@ export async function dispatchWork(
 export async function getMetrics(project?: string): Promise<MetricsPayload> {
   if (await isMock()) return { ...mockMetrics };
   return http<MetricsPayload>(metricsPath(project));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spend desde GitHub (F4) — GET /projects/{id}/spend/github. Gasto medido del
+// repo (Copilot/Actions/LFS) del ciclo actual. Degrada a { available:false } si
+// GitHub no expone la facturación del owner del repo (no es un error del sistema).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getGitHubSpend(projectId: string): Promise<GitHubSpend> {
+  if (await isMock()) return { available: false, reason: "modo mock" };
+  return http<GitHubSpend>(`/projects/${projectId}/spend/github`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

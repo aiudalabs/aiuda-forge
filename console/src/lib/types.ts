@@ -230,6 +230,27 @@ export interface MetricsPayload {
   agent_calls?: number; // number of agent steps that reported usage
 }
 
+// GET /projects/{id}/spend/github → gasto medido en GitHub del ciclo actual
+// (Copilot premium requests, Actions minutes, LFS, …). Si GitHub no expone la
+// facturación para el owner del repo → { available: false, reason }.
+
+export interface GitHubSpendItem {
+  product: string;      // "actions" | "copilot" | "git_lfs" | …
+  sku: string;
+  quantity: number;
+  unit_type: string;    // "Minutes" | "Requests" | "GigabyteHours" | …
+  gross_amount: number; // USD antes de descuentos/free tier
+  net_amount: number;   // USD realmente adeudado
+}
+
+export interface GitHubSpend {
+  available: boolean;
+  reason?: string;                    // por qué no está disponible (available:false)
+  cycle?: string;                     // "2026-07" (mes = ciclo de facturación)
+  items?: GitHubSpendItem[];          // filas agregadas por SKU
+  totals?: Record<string, number>;    // neto por producto: copilot, actions, …
+}
+
 // ── Studio / Design runs ──────────────────────────────────────────────────────
 // Un DesignRun es un run del workflow "design" en el kernel. La UI del Studio
 // lo presenta como un proyecto de diseño guiado por fases.

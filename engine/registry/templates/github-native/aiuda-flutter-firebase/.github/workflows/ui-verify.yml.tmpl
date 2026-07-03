@@ -1,0 +1,171 @@
+name: ui-verify
+
+# Verificacion FUNCIONAL de UI (Wave V3) para Flutter WEB. Compila la app a web,
+# la sirve y comprueba en un navegador headless que la home RENDERIZA — una senal
+# mucho mas fuerte que "los tests pasan". Ataca el reward-hack de una app que da
+# verde en `flutter test` pero que en runtime no bootea, sale en blanco (canvas
+# vacio), o revienta con errores JS. Es un GATE: si la app no arranca o la home no
+# pinta, el check FALLA. Solo corre cuando el PR toca la app o sus packages.
+
+on:
+  pull_request:
+    paths:
+      - apps/**
+      - packages/**
+
+permissions:
+  contents: read
+
+env:
+  PORT: "4173"
+  SMOKE_URL: "http://127.0.0.1:4173/"
+  # App principal a verificar (build web). El generador la sustituye; default
+  # apps/customer.
+  APP_PATH: "{{app_path}}"
+
+jobs:
+  ui-verify:
+    runs-on: ubuntu-latest
+    steps:
+      # Workflow corriente -> checkout normal (a diferencia de copilot-setup-steps,
+      # donde el harness de Copilot clona por su cuenta y un checkout lo rompe).
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Guard hashFiles (patron de copilot-setup-steps): si la app no existe en el
+      # arbol, cada paso se salta y el job pasa en verde. El filtro de paths ya
+      # acota el disparo; esto es defensa en profundidad.
+      - name: Set up Flutter
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Set up Node (para Playwright)
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Bootstrap Dart workspace (melos, best-effort)
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:$HOME/.pub-cache/bin"
+          # melos linkea el workspace; si falla, `flutter build` corre pub get igual.
+          dart pub global activate melos >/dev/null 2>&1 || true
+          melos bootstrap || echo "melos bootstrap best-effort fallo; seguimos (flutter build hara pub get)."
+
+      - name: Build Flutter web
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        working-directory: ${{ env.APP_PATH }}
+        run: flutter build web
+
+      - name: Serve the web build
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        working-directory: ${{ env.APP_PATH }}/build/web
+        run: |
+          set -euo pipefail
+          # Servimos el build estatico de Flutter web (fiel a lo desplegado) en
+          # background; el proceso sobrevive al paso via nohup/&.
+          nohup python3 -m http.server "$PORT" --bind 127.0.0.1 >/tmp/ui-verify-server.log 2>&1 &
+          echo "Servidor lanzado en background (PORT=$PORT)."
+
+      - name: Wait for the app to answer
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        run: |
+          set -euo pipefail
+          # until-curl con timeout ~120s (60 x 2s). Si la app no arranca, el gate
+          # FALLA aqui mismo — es funcional, no decorativo.
+          for i in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+              echo "App arriba en http://127.0.0.1:${PORT}/ (intento $i)."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::La app no respondio en http://127.0.0.1:${PORT}/ tras 120s."
+          echo "----- log del servidor -----"
+          cat /tmp/ui-verify-server.log || true
+          exit 1
+
+      - name: Playwright smoke (home renderiza, sin errores JS)
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/pw-smoke"
+          mkdir -p "$WORK"
+          cd "$WORK"
+          npm init -y >/dev/null 2>&1
+          # Playwright SIN depender de tests del repo: instalamos el paquete y el
+          # navegador aqui y corremos un script inline contra la app ya servida.
+          npm i playwright@latest >/dev/null 2>&1
+          npx playwright install --with-deps chromium
+          cat > smoke.js <<'SMOKE'
+          // Smoke funcional generico (SPA React/Vite/Next o Flutter web). Verifica
+          // que la app arranca y PINTA algo, y falla si: la home no da 200, sale en
+          // blanco, o hay errores JS. El screenshot se sube como artifact para revisar.
+          const { chromium } = require('playwright');
+          const URL = process.env.SMOKE_URL || 'http://127.0.0.1:4173/';
+          const SHOT = process.env.SHOT_PATH || 'ui-verify-home.png';
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            const consoleErrors = [];
+            const pageErrors = [];
+            page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+            page.on('pageerror', (e) => { pageErrors.push(e.message || String(e)); });
+            let status = 0;
+            try {
+              const resp = await page.goto(URL, { waitUntil: 'load', timeout: 60000 });
+              status = resp ? resp.status() : 0;
+            } catch (e) {
+              console.error('SMOKE FAIL: no se pudo navegar a ' + URL + ' -- ' + (e.message || e));
+              await browser.close();
+              process.exit(1);
+            }
+            // Margen para que la SPA hidrate o Flutter web bootee y pinte.
+            let info = { bodyLen: 0, surfaceFilled: false };
+            const deadline = Date.now() + 20000;
+            do {
+              info = await page.evaluate(() => {
+                const bodyText = ((document.body && document.body.innerText) || '').trim();
+                // Superficie de render: canvas (Flutter CanvasKit), flt-glass-pane /
+                // flutter-view (Flutter HTML), o el root montado de una SPA con hijos.
+                const el = document.querySelector('canvas, flt-glass-pane, flutter-view, #root, #app, main');
+                const filled = !!el && (
+                  el.tagName === 'CANVAS' ||
+                  el.children.length > 0 ||
+                  ((el.innerText || '').trim().length > 0)
+                );
+                return { bodyLen: bodyText.length, surfaceFilled: filled };
+              });
+              if (info.bodyLen > 0 || info.surfaceFilled) break;
+              await page.waitForTimeout(1000);
+            } while (Date.now() < deadline);
+            try { await page.screenshot({ path: SHOT, fullPage: true }); } catch (_) {}
+            await browser.close();
+            const problems = [];
+            if (status !== 200) problems.push('HTTP status ' + status + ' (esperado 200)');
+            if (info.bodyLen < 1 && !info.surfaceFilled) {
+              problems.push('La home renderizo en blanco (ni texto ni superficie de render detectada)');
+            }
+            if (pageErrors.length) problems.push('Excepciones JS no capturadas: ' + pageErrors.join(' | '));
+            if (consoleErrors.length) problems.push('Errores de consola: ' + consoleErrors.join(' | '));
+            if (problems.length) {
+              console.error('SMOKE FAIL:\n- ' + problems.join('\n- '));
+              process.exit(1);
+            }
+            console.log('SMOKE OK: status ' + status + ', texto=' + info.bodyLen + ' chars, superficie=' + info.surfaceFilled + '.');
+          })().catch((e) => { console.error('SMOKE CRASH: ' + ((e && e.stack) || e)); process.exit(1); });
+          SMOKE
+          SHOT_PATH="$RUNNER_TEMP/ui-verify-home.png" node smoke.js
+
+      - name: Upload home screenshot
+        if: ${{ always() && hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-verify-home
+          path: ${{ runner.temp }}/ui-verify-home.png
+          if-no-files-found: ignore

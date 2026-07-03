@@ -318,6 +318,18 @@ export function useMetrics(project?: string | null) {
   });
 }
 
+// ── GitHub spend hook (F4) ──────────────────────────────────────────────────
+// Facturación de GitHub del ciclo actual; refetch cada 5 min (cambia despacio).
+
+export function useGitHubSpend(projectId?: string | null) {
+  return useQuery({
+    queryKey: ["githubSpend", projectId] as const,
+    queryFn: () => api.getGitHubSpend(projectId as string),
+    enabled: !!projectId,
+    refetchInterval: 300000,
+  });
+}
+
 // ── Tickets hook (orquestador) ────────────────────────────────────────────────
 
 export function useTickets(project?: string | null) {
