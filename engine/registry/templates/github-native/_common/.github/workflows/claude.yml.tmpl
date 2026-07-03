@@ -26,3 +26,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ inputs.prompt }}
+          # Visibilidad del agente en el log del run (el default esconde todo y
+          # un run "success" sin PR es indepurable).
+          show_full_output: "true"
+          # CI headless: el runner es efímero y aislado — el agente necesita
+          # escribir/commitear/pushear sin prompts interactivos (sin esto la
+          # sesión "trabaja" 40 turnos y muere sin poder crear un archivo).
+          claude_args: "--permission-mode bypassPermissions"
