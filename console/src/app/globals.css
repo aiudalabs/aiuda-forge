@@ -3316,3 +3316,214 @@ details.log-row[open] > summary::before {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
+
+/* ── Vista Agentes: paneles de sesiones activas + cola de PRs ────────────────
+   Reusa el shell de Tickets (.tickets-shell/head/canvas). El canvas.pad scrollea
+   y apila dos secciones. Sin cajas-widget: encabezado de sección hairline +
+   cards/filas edge-to-edge. */
+.agents-section {
+  margin-bottom: 26px;
+}
+.agents-section:last-child {
+  margin-bottom: 0;
+}
+.agents-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--stroke);
+}
+.agents-section-head h3 {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.agents-count {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink4);
+}
+.agents-empty {
+  font-size: 13px;
+  color: var(--ink4);
+  padding: 14px 2px;
+}
+
+/* Grid de sesiones activas (cards, patrón kb-card) */
+.agents-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.agent-card {
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  background: var(--bg1);
+  padding: 12px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.agent-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-card-id {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink3);
+}
+.agent-card-sprint {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink4);
+  background: var(--bg2);
+  border: 1px solid var(--stroke);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.agent-card-ttl {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink1);
+}
+.agent-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.agent-card-meta .sp {
+  flex: 1;
+}
+.agent-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--navy);
+}
+.agent-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--navy);
+  box-shadow: 0 0 0 0 var(--navy-soft);
+  animation: agentPulse 1.8s var(--ease) infinite;
+}
+@keyframes agentPulse {
+  0% { box-shadow: 0 0 0 0 rgba(20, 40, 80, 0.35); }
+  70% { box-shadow: 0 0 0 6px rgba(20, 40, 80, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(20, 40, 80, 0); }
+}
+.agent-link {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.agent-link:hover {
+  text-decoration: underline;
+}
+
+/* Cola de PRs (filas apiladas) */
+.pr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pr-row {
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  background: var(--bg1);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.pr-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pr-main .sp {
+  flex: 1;
+}
+.pr-num {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink2);
+  text-decoration: none;
+}
+.pr-num:hover {
+  color: var(--accent);
+}
+.pr-ttl {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink1);
+}
+.pr-author {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink4);
+  background: var(--bg2);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+.pr-stories {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pr-stories-lbl {
+  font-size: 11px;
+  color: var(--ink4);
+}
+.pr-story-chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+  background: var(--bg2);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+.pr-workflows {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 3px;
+  border-top: 1px dashed var(--stroke);
+}
+.pr-wf {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pr-wf-ok {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--emerald);
+}
+.pr-wf-blocked {
+  font-size: 11.5px;
+  color: var(--danger);
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

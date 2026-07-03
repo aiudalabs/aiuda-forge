@@ -300,9 +300,9 @@ export const mockSettings: SettingsPayload = {
 // ── Per-project settings mock ─────────────────────────────────────────────────
 // GET/PUT /projects/{id}/settings. execution_unit + merge_mode por proyecto.
 export const mockProjectSettings: Record<string, ProjectSettings> = {
-  proj_001: { execution_unit: "sprint", merge_mode: "manual", dispatch_mode: "approve", executor: "copilot", model_by_lane: {} },
-  proj_002: { execution_unit: "story", merge_mode: "auto", dispatch_mode: "auto", executor: "claude_action", model_by_lane: { "python-dev": "claude-sonnet-4.6" } },
-  proj_003: { execution_unit: "sprint", merge_mode: "manual", dispatch_mode: "approve", executor: "copilot", model_by_lane: {} },
+  proj_001: { execution_unit: "sprint", merge_mode: "manual", dispatch_mode: "approve", executor: "copilot", model_by_lane: {}, workflow_approval: "manual", max_concurrency: 0 },
+  proj_002: { execution_unit: "story", merge_mode: "auto", dispatch_mode: "auto", executor: "claude_action", model_by_lane: { "python-dev": "claude-sonnet-4.6" }, workflow_approval: "auto_if_safe", max_concurrency: 3 },
+  proj_003: { execution_unit: "sprint", merge_mode: "manual", dispatch_mode: "approve", executor: "copilot", model_by_lane: {}, workflow_approval: "manual", max_concurrency: 0 },
 };
 
 // Default para un proyecto que aún no tiene settings guardados.
@@ -312,6 +312,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   dispatch_mode: "approve",
   executor: "copilot",
   model_by_lane: {},
+  workflow_approval: "manual",
+  max_concurrency: 0,
 };
 
 // ── Metrics mock ──────────────────────────────────────────────────────────────

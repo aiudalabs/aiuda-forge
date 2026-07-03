@@ -11,6 +11,11 @@ export const settings = {
     "settings.masked": "(enmascarado)",
     "settings.maskedPlaceholder": "Sin cambios — dejar vacío para preservar",
 
+    "settings.global.title": "Global (instancia)",
+    "settings.global.subtitle": "conexiones · ejecutor legacy — aplican a toda la instancia",
+    "settings.legacy.title": "Ejecutor legacy (self-hosted)",
+    "settings.legacy.note": "Solo aplica al modo fábrica local; la ejecución GitHub-native no las usa.",
+
     "settings.project.title": "Proyecto",
     "settings.project.execOf": "ejecución de {name}",
     "settings.project.execGeneric": "ejecución por proyecto",
@@ -63,6 +68,13 @@ export const settings = {
     "settings.dispatch.helpApprove": "Verás un botón ▶ Despachar en las stories/sprints listas.",
     "settings.dispatch.helpAuto": "El tick del conductor despacha automáticamente el trabajo listo y no gateado.",
     "settings.dispatch.helpOff": "El backlog se sincroniza pero nada se despacha.",
+    "settings.dispatch.workflowApproval": "Aprobación de workflows",
+    "settings.dispatch.wfOptManual": "manual — tú apruebas cada PR de agente",
+    "settings.dispatch.wfOptAutoIfSafe": "auto_if_safe — el conductor aprueba los seguros",
+    "settings.dispatch.wfHelpManual": "Tú clickeas \"Approve and run workflows\" en cada PR de agente.",
+    "settings.dispatch.wfHelpAutoIfSafe": "El conductor los aprueba solo si el PR no toca .github/workflows/**.",
+    "settings.dispatch.maxConcurrency": "Concurrencia máxima",
+    "settings.dispatch.maxConcurrencyHint": "0 = sin límite; stories con agente trabajando a la vez.",
 
     "settings.modelByLane.title": "Modelo por lane",
     "settings.modelByLane.role": "Rutea el modelo del agente por lane: frontera donde importa, barato donde no.",
@@ -86,6 +98,11 @@ export const settings = {
     "settings.loadError": "Could not load settings.",
     "settings.masked": "(masked)",
     "settings.maskedPlaceholder": "No changes — leave empty to keep",
+
+    "settings.global.title": "Global (instance)",
+    "settings.global.subtitle": "connections · legacy executor — apply to the whole instance",
+    "settings.legacy.title": "Legacy executor (self-hosted)",
+    "settings.legacy.note": "Only applies to the local factory mode; GitHub-native execution doesn't use them.",
 
     "settings.project.title": "Project",
     "settings.project.execOf": "execution for {name}",
@@ -139,6 +156,13 @@ export const settings = {
     "settings.dispatch.helpApprove": "You'll see a ▶ Dispatch button on ready stories/sprints.",
     "settings.dispatch.helpAuto": "The conductor tick automatically dispatches ready, ungated work.",
     "settings.dispatch.helpOff": "The backlog stays in sync but nothing is dispatched.",
+    "settings.dispatch.workflowApproval": "Workflow approval",
+    "settings.dispatch.wfOptManual": "manual — you approve each agent PR",
+    "settings.dispatch.wfOptAutoIfSafe": "auto_if_safe — the conductor approves the safe ones",
+    "settings.dispatch.wfHelpManual": "You click \"Approve and run workflows\" on each agent PR.",
+    "settings.dispatch.wfHelpAutoIfSafe": "The conductor approves them only if the PR doesn't touch .github/workflows/**.",
+    "settings.dispatch.maxConcurrency": "Max concurrency",
+    "settings.dispatch.maxConcurrencyHint": "0 = no limit; stories with an agent working at once.",
 
     "settings.modelByLane.title": "Model per lane",
     "settings.modelByLane.role": "Routes the agent model per lane: frontier where it matters, cheap where it doesn't.",
@@ -162,6 +186,11 @@ export const settings = {
     "settings.loadError": "Não foi possível carregar a configuração.",
     "settings.masked": "(mascarado)",
     "settings.maskedPlaceholder": "Sem alterações — deixe vazio para preservar",
+
+    "settings.global.title": "Global (instância)",
+    "settings.global.subtitle": "conexões · executor legacy — aplicam à instância inteira",
+    "settings.legacy.title": "Executor legacy (self-hosted)",
+    "settings.legacy.note": "Só aplica ao modo fábrica local; a execução GitHub-native não os usa.",
 
     "settings.project.title": "Projeto",
     "settings.project.execOf": "execução de {name}",
@@ -215,6 +244,13 @@ export const settings = {
     "settings.dispatch.helpApprove": "Você verá um botão ▶ Despachar nas stories/sprints prontas.",
     "settings.dispatch.helpAuto": "O tick do condutor despacha automaticamente o trabalho pronto e não bloqueado.",
     "settings.dispatch.helpOff": "O backlog sincroniza mas nada é despachado.",
+    "settings.dispatch.workflowApproval": "Aprovação de workflows",
+    "settings.dispatch.wfOptManual": "manual — você aprova cada PR de agente",
+    "settings.dispatch.wfOptAutoIfSafe": "auto_if_safe — o condutor aprova os seguros",
+    "settings.dispatch.wfHelpManual": "Você clica em \"Approve and run workflows\" em cada PR de agente.",
+    "settings.dispatch.wfHelpAutoIfSafe": "O condutor os aprova só se o PR não tocar em .github/workflows/**.",
+    "settings.dispatch.maxConcurrency": "Concorrência máxima",
+    "settings.dispatch.maxConcurrencyHint": "0 = sem limite; stories com agente trabalhando ao mesmo tempo.",
 
     "settings.modelByLane.title": "Modelo por lane",
     "settings.modelByLane.role": "Roteia o modelo do agente por lane: fronteira onde importa, barato onde não.",

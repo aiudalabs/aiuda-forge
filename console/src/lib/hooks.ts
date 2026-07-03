@@ -457,6 +457,31 @@ export function useArtifact(runId: string | null, stepId: string | null) {
   });
 }
 
+// ── Vista Agentes — cola de PRs + aprobación de workflows ─────────────────────
+// Los PRs abiertos del proyecto con stories ligadas + workflow runs pendientes.
+// Polling suave (20s): la actividad de PRs es de minutos, no de segundos.
+
+export function useProjectPRs(projectId: string | null) {
+  return useQuery({
+    queryKey: ["projectPRs", projectId] as const,
+    queryFn: () => api.getProjectPRs(projectId as string),
+    enabled: !!projectId,
+    refetchInterval: 20000,
+  });
+}
+
+export function useApproveWorkflow(projectId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => api.approveWorkflowRun(projectId as string, runId),
+    onSuccess: (res) => {
+      // Solo refrescamos si la aprobación pasó — un 409 (política) deja el run en
+      // su sitio, no hay nada nuevo que traer.
+      if (res.approved) qc.invalidateQueries({ queryKey: ["projectPRs", projectId] });
+    },
+  });
+}
+
 /**
  * Stream de eventos de un run para el live-log. En modo real: replay (GET events) + push WS.
  * En modo mock: replay del mock y, si el run está corriendo, un "tick" simulado que va

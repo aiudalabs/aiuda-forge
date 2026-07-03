@@ -60,6 +60,8 @@ import type {
   Invite,
   MembersPayload,
   Role,
+  ProjectPR,
+  ApproveWorkflowResult,
 } from "./types";
 
 export type ApiMode = "real" | "mock";
@@ -710,6 +712,11 @@ function projectSettingsFrom(r: Partial<ProjectSettings>): ProjectSettings {
       r.dispatch_mode === "auto" || r.dispatch_mode === "off" ? r.dispatch_mode : "approve",
     executor: r.executor === "claude_action" ? "claude_action" : "copilot",
     model_by_lane: r.model_by_lane ?? {},
+    workflow_approval: r.workflow_approval === "auto_if_safe" ? "auto_if_safe" : "manual",
+    max_concurrency:
+      typeof r.max_concurrency === "number" && r.max_concurrency > 0
+        ? Math.floor(r.max_concurrency)
+        : 0,
   };
 }
 
@@ -1182,3 +1189,44 @@ export async function testChannels(projectId: string): Promise<{ sent: number; f
 }
 
 export type { Channel };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vista Agentes — cola de PRs + aprobación de workflows (pivote GitHub-native)
+// GET /projects/{id}/prs → los PRs abiertos con sus stories ligadas y los
+// workflow runs esperando aprobación. Las sesiones activas NO tienen endpoint
+// nuevo: son las stories con session_url en running/in_review (usa useTickets).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getProjectPRs(projectId: string): Promise<ProjectPR[]> {
+  if (await isMock()) return [];
+  const res = await http<{ prs?: ProjectPR[] } | ProjectPR[]>(`/projects/${projectId}/prs`);
+  return Array.isArray(res) ? res : res?.prs ?? [];
+}
+
+// POST /projects/{id}/workflows/{runId}/approve — aprueba un workflow run detenido
+// en action_required. 200 → {approved:true, safe:true}. 409 → la política lo
+// bloqueó (el PR toca .github/workflows/**): el body trae {approved:false,
+// safe:false, reason}; NO es un error de transporte, lo devolvemos como resultado
+// para que la UI muestre el motivo en vez de tirar un throw genérico.
+export async function approveWorkflowRun(
+  projectId: string,
+  runId: string,
+): Promise<ApproveWorkflowResult> {
+  if (await isMock()) return { approved: true, safe: true };
+  const res = await rawFetch(
+    `/projects/${projectId}/workflows/${encodeURIComponent(runId)}/approve`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as Partial<ApproveWorkflowResult>;
+    return { approved: false, safe: false, reason: body.reason };
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(
+      res.status,
+      body || `POST /projects/${projectId}/workflows/${runId}/approve → ${res.status}`,
+    );
+  }
+  return (await res.json()) as ApproveWorkflowResult;
+}

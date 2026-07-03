@@ -7,6 +7,7 @@ import { nav } from "./ns/nav";
 import { common } from "./ns/common";
 import { board } from "./ns/board";
 import { tickets } from "./ns/tickets";
+import { agents } from "./ns/agents";
 import { studio } from "./ns/studio";
 import { registry } from "./ns/registry";
 import { spend } from "./ns/spend";
@@ -17,7 +18,7 @@ import { settings } from "./ns/settings";
 
 type Bundle = { es: Record<string, string>; en: Record<string, string>; pt: Record<string, string> };
 
-const parts: Bundle[] = [nav, common, board, tickets, studio, registry, spend, docs, brain, overview, settings];
+const parts: Bundle[] = [nav, common, board, tickets, agents, studio, registry, spend, docs, brain, overview, settings];
 
 function compose(lang: Lang): Record<string, string> {
   return Object.assign({}, ...parts.map((p) => p[lang]));

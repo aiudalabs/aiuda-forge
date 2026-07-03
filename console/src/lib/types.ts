@@ -181,6 +181,12 @@ export interface ProjectSettings {
   dispatch_mode: "approve" | "auto" | "off"; // "approve" (default, humano confirma) | "auto" | "off"
   executor: "copilot" | "claude_action"; // canal de ejecución (default "copilot")
   model_by_lane: Record<string, string>; // lane → modelo (vacío = modelo auto)
+  // Aprobación de los workflows action_required de los PRs de agentes. "manual"
+  // (default): un humano clickea "Approve and run workflows" en cada PR. "auto_if_safe":
+  // el conductor los aprueba solo si el diff NO toca .github/workflows/**.
+  workflow_approval: "manual" | "auto_if_safe";
+  // Tope de stories con agente trabajando a la vez. Entero ≥0; 0 = sin límite.
+  max_concurrency: number;
 }
 
 // ── Despacho a agentes de GitHub (pivote F2) ──────────────────────────────────
@@ -342,4 +348,34 @@ export interface OrchestratorTicket {
   session_url?: string; // GitHub agent session executing it (Copilot task / Actions run)
   external_ref?: string; // espejo GitHub (github:owner/repo#N) — presente = story exportada
   repo?: string;        // owner/repo the story lands in
+}
+
+// ─── Vista Agentes (pivote GitHub-native, PLAN §4 "Vistas nuevas") ───────────
+// Un workflow run de GitHub detenido en `action_required`: espera aprobación
+// humana antes de correr (primer run de un contributor, o política de seguridad
+// cuando el PR toca .github/workflows/**).
+export interface WorkflowRunRef {
+  id: string;   // id del run (para POST approve)
+  name: string; // nombre del workflow ("CI", "claude-review", …)
+}
+
+// Un PR abierto del repo del proyecto, con las stories que le dieron origen y
+// los workflow runs que esperan aprobación. Proyección del conductor
+// (GET /projects/{id}/prs).
+export interface ProjectPR {
+  number: number;
+  title: string;
+  url: string;
+  draft: boolean;
+  author: string;                       // login del autor (bot o humano)
+  stories: string[];                    // ids de stories ligadas a este PR
+  action_required_runs: WorkflowRunRef[];
+}
+
+// Resultado de aprobar un workflow run. safe=false + reason cuando la política
+// lo bloquea (el diff toca .github/workflows/**).
+export interface ApproveWorkflowResult {
+  approved: boolean;
+  safe: boolean;
+  reason?: string;
 }
