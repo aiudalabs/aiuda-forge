@@ -1,0 +1,60 @@
+name: suite-integrity
+
+# Deterministic floor guard against the #1 reward-hack: deleting the test that
+# fails. It counts test markers (def test_ / it( / test( / testWidgets( ) in the
+# tree at the PR base and at the PR head, and FAILS the check if the head has
+# fewer markers than the base. It does not judge quality — the reviewer does
+# that — it only makes "the tests pass" credible by making it costly to remove
+# tests. Deletions that legitimately remove tests must justify themselves in the
+# PR and be approved by a human review.
+
+on:
+  pull_request:
+  workflow_call:
+
+jobs:
+  suite-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count test markers at base and head
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Test markers across the stacks this repo may use.
+          PATTERN='def test_|(^|[^A-Za-z_])it\(|(^|[^A-Za-z_])test\(|testWidgets\('
+
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA='${{ github.event.pull_request.head.sha }}'
+          # Fallbacks for workflow_call / manual contexts.
+          BASE_SHA="${BASE_SHA:-$(git merge-base origin/HEAD HEAD 2>/dev/null || echo HEAD~1)}"
+          HEAD_SHA="${HEAD_SHA:-HEAD}"
+
+          count_at() {
+            local ref="$1"
+            # Count matching lines across the tracked tree at $ref. git grep on a
+            # ref lists blobs at that ref; -h drops filenames, we count lines.
+            git grep -hIE "$PATTERN" "$ref" 2>/dev/null | wc -l | tr -d '[:space:]'
+          }
+
+          base_count="$(count_at "$BASE_SHA")"
+          head_count="$(count_at "$HEAD_SHA")"
+
+          echo "Test markers at base ($BASE_SHA): $base_count"
+          echo "Test markers at head ($HEAD_SHA): $head_count"
+
+          if [ "$head_count" -lt "$base_count" ]; then
+            echo "::error::Test marker count dropped from $base_count to $head_count."
+            echo "A PR must not reduce the number of tests. If a test was legitimately"
+            echo "removed (e.g. the behavior it covered was deleted), explain it in the"
+            echo "PR description and get a human review — do not delete failing tests to"
+            echo "go green."
+            exit 1
+          fi
+
+          echo "Suite integrity OK: $head_count >= $base_count."

@@ -1,0 +1,43 @@
+---
+applyTo: "src/**,alembic/**,tests/**"
+---
+
+# Backend path rules — {{project_name}}
+
+These rules apply to every change under `src/**`, `alembic/**`, and `tests/**`.
+They are the python-dev lane's contract with the rest of the repo.
+
+## Schema and migrations
+- Any change to a SQLAlchemy model ships its Alembic migration **in the same
+  diff**, and the migration is **reversible** (a real `downgrade`, not `pass`).
+- Never change a table without a migration; never deploy code that assumes a
+  column the migration hasn't added.
+- Let the database enforce invariants where it can — partial `UNIQUE` / `CHECK`
+  constraints for "only one active X", valid-status checks. The Python-level check
+  exists for the error message, not to replace the constraint. Constraints are
+  truth; Python validation is UX.
+
+## Contracts and field-level security
+- Pydantic `Create`/`Update`/`Read` models are separate. Server-only fields
+  (`status`, `total`, computed columns) are simply **absent** from `Create`/
+  `Update` — clients literally cannot send them. Do not accept a `status` from the
+  client and "validate" it; omit it from the input schema.
+- State transitions go through their dedicated endpoint, which validates the
+  transition against the shared `LEGAL_TRANSITIONS` before writing. Clients never
+  PATCH a `status` field.
+
+## Endpoints and workers
+- Every router is authenticated unless it is deliberately public (and documented
+  as such). Read endpoints are not exempt.
+- Write the failure modes the acceptance criteria imply before the happy path:
+  malicious client, retried request (idempotency key), race on a claim.
+- Worker tasks claim from the DB queue (`FOR UPDATE SKIP LOCKED` in Postgres /
+  `BEGIN IMMEDIATE` in SQLite); no ad-hoc double-claim windows.
+
+## Stay in lane
+- Do NOT touch `frontend/**` — that is the react-dev lane. If a change appears to
+  need a frontend edit, that is a separate issue; say so instead of crossing over.
+- No PYTHONPATH/sys.path hacks — the package is installable; tests import the
+  installed package.
+- No secrets in code or committed env files; dev defaults must fail hard when a
+  production signal is present.

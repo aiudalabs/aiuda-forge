@@ -1,0 +1,58 @@
+# {{project_name}} — repo constitution
+
+Autonomous-agent-developed product. Stack: **{{stack}}** — Python 3.11+ (FastAPI +
+Pydantic v2 + SQLAlchemy 2 + Alembic; Postgres in prod, SQLite in dev) + a React +
+Vite frontend. Primary product language: `{{language}}`.
+
+This file is the repo-wide constitution every agent obeys. Lane personas are in
+`.github/agents/`, per-path rules in `.github/instructions/`, and the tool-neutral
+roster in `AGENTS.md`.
+
+## Lanes and ownership
+
+Each issue is owned by one lane; an agent works only inside its lane's paths.
+
+{{lanes}}
+
+Backend paths:
+
+{{path_map_backend}}
+
+Frontend paths:
+
+{{path_map_frontend}}
+
+Shared contract/type paths belong to the backend lane; the frontend consumes them
+read-only.
+
+## Global rules (apply to every lane)
+
+1. **Read the issue in full before writing code.** Its acceptance criteria are the
+   contract. Implement them precisely and minimally — not beyond them.
+2. **Acceptance self-audit is mandatory.** Before opening a PR, verify EACH
+   acceptance criterion against its exact wording (measurable thresholds,
+   enumerated items, named states) and end the PR description with the audit. Most
+   rejections are a criterion you read but never mechanically verified.
+3. **Honest tests only.** Every criterion maps to a test that actually exercises
+   the new behavior; removing the production behavior must make the test fail. No
+   vacuous asserts, no tests hard-coded to pass.
+4. **Error paths before happy path**; early returns; nesting ≤2 levels.
+5. **Constraints are truth.** Where the database can enforce an invariant, it does;
+   Python validation is for the error message. Schema changes ship a reversible
+   Alembic migration in the same diff.
+6. **Stay in your lane and in your stack.** Do not touch another lane's paths, do
+   not add unallowed dependencies (pin exact versions), do not reformat unrelated
+   files.
+7. **The agent commits and opens the PR.** Work on a branch, commit, push, open a
+   PR that links the issue (`Closes #<n>`). Never edit `.github/workflows/**` to
+   make a check pass — that is tampering and is reviewed as such.
+
+## Validation (the gate)
+
+CI runs these on every PR; run them locally and get them green before opening it.
+
+{{validation_commands}}
+
+CI additionally runs `suite-integrity` (fails if the PR reduces the test count), a
+cross-model `claude-review` against the acceptance criteria, and Copilot review. A
+blocking finding comes back as requested changes on the PR.

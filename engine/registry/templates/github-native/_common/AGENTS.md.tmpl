@@ -1,0 +1,63 @@
+# AGENTS.md — {{project_name}}
+
+Tool-neutral agent guide for this repository. `AGENTS.md` is read by multiple
+coding agents (GitHub Copilot coding agent, Claude / `claude-code-action`, Codex,
+Cursor); it defines the lanes, who owns which paths, and how work is validated.
+Per-lane engineering personas live in `.github/agents/<lane>.agent.md`; per-path
+rules live in `.github/instructions/*.instructions.md`.
+
+Stack: **{{stack}}**.
+
+## Lanes
+
+Each issue is owned by exactly one lane. An agent works only inside its lane's
+paths and does not touch another lane's files.
+
+{{lanes}}
+
+## Path ownership
+
+An agent may edit only the paths its lane owns. If a change seems to require
+touching another lane's paths, stop and say so on the issue instead of crossing
+the boundary — the dependency belongs to another issue.
+
+### Backend
+
+{{path_map_backend}}
+
+### Frontend
+
+{{path_map_frontend}}
+
+Shared contract/type paths are owned by the backend lane and consumed read-only
+by the frontend lane; the frontend never edits them.
+
+## How work flows
+
+1. An issue carries the full spec in its body: context, referenced requirements,
+   and falsifiable acceptance criteria. Read it in full before writing code.
+2. Implement on a branch, in your lane only, to the acceptance criteria.
+3. Run the validation commands locally and get them green.
+4. Commit and open a pull request that links the issue (`Closes #<n>`).
+5. CI runs the same validation plus `suite-integrity`; a cross-model reviewer
+   (`claude-review`) and Copilot review check the diff against the acceptance
+   criteria. A blocking finding is returned as requested changes on the PR.
+
+## Validation commands
+
+These are the exact commands CI runs on every pull request. Run them locally
+before opening the PR; the PR does not merge until they pass.
+
+{{validation_commands}}
+
+## Rules that apply to every lane
+
+- Implement the acceptance criteria precisely and minimally — not beyond them.
+- Write the error and edge paths the criteria imply before the happy path.
+- Prefer early returns; keep nesting shallow (≤2 levels).
+- Every acceptance criterion maps to at least one honest test that actually
+  exercises the new behavior. No vacuous asserts, no tests hard-coded to pass.
+- Do not add dependencies the issue does not allow; pin exact versions.
+- Do not reformat unrelated files or rename for taste.
+- Never edit `.github/workflows/**` to make a check pass — changing CI to go
+  green is tampering and is reviewed as such.

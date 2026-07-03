@@ -1,0 +1,41 @@
+---
+applyTo: "frontend/**"
+---
+
+# Frontend path rules — {{project_name}}
+
+These rules apply to every change under `frontend/**`. They are the react-dev
+lane's contract with the rest of the repo.
+
+## Design tokens (non-negotiable)
+Apply the committed design tokens through the Tailwind theme / CSS variables.
+Never invent per-screen hex colors or pixel values, and never fall back to system
+fonts — load the named web fonts and use the palette below.
+
+{{design_tokens}}
+
+The design-system foundation wires these tokens into the theme; every screen
+inherits them. If a value you need is not in the tokens, that is a design gap to
+raise on the issue, not a hex code to invent.
+
+## Required states
+Every screen that reads data implements the states its acceptance criteria imply:
+- **empty** → render the placeholder the AC asks for; hiding the section is NOT an
+  empty state;
+- **loading** → the skeleton/spinner the design implies; do not flash empty then
+  content;
+- **error** → a visible error UI, never a blank screen or a crash.
+
+## Primitives and data layer
+- Reuse the shared primitives (shadcn/ui `Table`, `Dialog`, `Form`, `Button`)
+  rather than hand-rolling equivalents.
+- Server state goes through TanStack Query, not ad-hoc `fetch`; forms go through
+  React Hook Form + Zod, not manual `useState` validation. Inputs are controlled.
+- No hardcoded API URLs or env literals — use the repo's env mechanism.
+- Styling via Tailwind utilities; no inline styles except genuinely dynamic
+  values.
+
+## Stay in lane
+- Do NOT touch `src/**`, `alembic/**`, or shared contract types — those are the
+  python-dev lane and are consumed read-only here. TS types mirrored from the
+  backend enums are the contract; do not edit them to make the UI compile.

@@ -1,0 +1,42 @@
+---
+applyTo: "apps/**,packages/**"
+---
+
+# Flutter app path rules — {{project_name}}
+
+These rules apply to every change under `apps/**` and `packages/**` (the Flutter
+app and its Dart packages). They are the flutter-dev lane's contract with the rest
+of the repo.
+
+## Design tokens (non-negotiable)
+Wire the committed design tokens into `ThemeData` and use them. Load the named
+fonts via `google_fonts`. Never hardcode colors or sizes per widget, and never
+fall back to default Material styling.
+
+{{design_tokens}}
+
+The design-system foundation sets up the theme; every screen inherits it. A value
+you need that is not in the tokens is a design gap to raise on the issue, not a
+literal to invent.
+
+## Required states
+Every screen that reads data implements the states its acceptance criteria imply:
+- **empty** → render the placeholder the AC asks for; hiding the widget is NOT an
+  empty state;
+- **loading** → the skeleton/spinner the design implies; do not flash empty then
+  content;
+- **error** → a visible error UI, never a blank screen or an unhandled exception.
+
+## State management and data
+- Use the repo's state solution (Riverpod / BLoC) when state is shared across
+  widgets; a plain `StatefulWidget` only for self-contained UI state.
+- Widget code goes through the repo's data wrappers (`packages/data`), never raw
+  Firebase SDK calls. Widgets accept entity types, not raw document maps.
+- Keep widgets small; extract sub-widgets as they grow. Respect the package
+  dependency rules (`core` → nothing; `data` → core; `ui` → core; `feature_*` →
+  core/data/ui) — no cyclic imports.
+
+## Stay in lane
+- Do NOT touch `functions/**`, `packages-ts/**`, `admin/**`, or any `*.rules` /
+  `*.indexes.json` — those are the firebase-dev and react-dev lanes. Clients never
+  write `status`/`total`/computed fields; that is enforced server-side.

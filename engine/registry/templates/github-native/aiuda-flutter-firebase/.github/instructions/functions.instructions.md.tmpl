@@ -1,0 +1,38 @@
+---
+applyTo: "functions/**,packages-ts/**,firestore.rules,firestore.indexes.json,database.rules.json,storage.rules"
+---
+
+# Firebase backend path rules — {{project_name}}
+
+These rules apply to Cloud Functions (`functions/**`), the shared TypeScript
+types (`packages-ts/**`), and the security rules / indexes. They are the
+firebase-dev lane's contract with the rest of the repo.
+
+## Server-authoritative state
+- Clients NEVER write `status`, `total`, `commission`, `verificationTier` or other
+  computed/server-owned fields — security rules deny it regardless of role, and the
+  owning callable CF performs the transition.
+- Every state transition is validated against the schema's state machine before
+  writing. If a transition isn't in the schema, stop and say so — do not invent it.
+
+## Callables are hostile-input boundaries
+- Every callable validates auth, validates input, validates current state, and is
+  **idempotent** via a required `clientRequestId` (dedup window per the schema, ≥1h).
+- Write the failure modes the criteria imply before the happy path: unauthorized,
+  invalid input, illegal transition, duplicate request.
+- Cross-document writes use a Firestore transaction (atomic) or batch; denormalized
+  fields are updated by triggers, not by clients.
+- Emit one structured log per invocation (id, duration, outcome). No hardcoded
+  project IDs, keys, or SA paths — config/env only; secrets via Secret Manager.
+
+## Shipping shape changes
+- When a CF changes a document or response shape, update the owned types in
+  `packages-ts/types/**` and any rule/index it requires **in the same diff**. The
+  Dart↔TS type parity check is CI-enforced; do not let it drift.
+- A modified security rule ships a rules test that exercises the allow AND the deny.
+
+## Stay in lane
+- Do NOT touch `apps/**`, `packages/**` (Flutter), or `admin/**` — those are the
+  flutter-dev and react-dev lanes. `packages-ts/types/**` is owned here and
+  consumed read-only by `admin/**`.
+- Develop emulator-first; never run functions against production Firestore.

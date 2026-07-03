@@ -1,0 +1,52 @@
+name: "Copilot Setup Steps"
+
+# Provisions the toolchain the Copilot coding agent (and any Actions-based agent)
+# needs before it starts working on an issue in this repo: Flutter + melos for the
+# Dart workspace, Node + pnpm + firebase-tools (with emulators) for the Cloud
+# Functions and admin. GitHub runs the job named `copilot-setup-steps` to prepare
+# the agent's environment. It can also be run manually to validate the setup.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Bootstrap Dart workspace (melos)
+        run: |
+          dart pub global activate melos
+          melos bootstrap
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install TS workspace deps (functions, admin, types)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Firebase CLI + emulators
+        run: |
+          pnpm add -g firebase-tools
+          firebase setup:emulators:firestore
+          firebase setup:emulators:database
