@@ -68,6 +68,11 @@ func SaveCredentials(path string, c Credentials) error {
 // API, billing) sale del OAuth de la misma App.
 func Manifest(name, org, baseURL, consoleURL string) map[string]any {
 	m := manifestBase(name, baseURL, consoleURL)
+	// GitHub valida hook_attributes.url SI el objeto está presente, y rechaza
+	// localhost. En dev el manifest viaja SIN hook_attributes (webhook off).
+	if strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1") {
+		delete(m, "hook_attributes")
+	}
 	return m
 }
 
@@ -82,7 +87,7 @@ func manifestBase(name, baseURL, consoleURL string) map[string]any {
 			baseURL + "/auth/github/callback",
 		},
 		"setup_url": consoleURL + "/onboarding",
-		"hook_attributes": hookAttributes(baseURL),
+		"hook_attributes": map[string]any{"url": baseURL + "/webhooks/github", "active": true},
 		// Pedir autorización OAuth del usuario durante la instalación: un solo
 		// viaje deja App instalada + token user-to-server emitido.
 		"request_oauth_on_install": true,
@@ -101,17 +106,6 @@ func manifestBase(name, baseURL, consoleURL string) map[string]any {
 			"issues", "pull_request", "workflow_run", "check_run", "issue_comment",
 		},
 	}
-}
-
-// hookAttributes: GitHub RECHAZA el manifest si el webhook apunta a localhost
-// ("Hook url is not supported because it isn't reachable over the public
-// Internet"). En dev la App nace sin webhook (el poll de 25s cubre); con URL
-// pública el webhook viaja en el manifest.
-func hookAttributes(baseURL string) map[string]any {
-	if strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1") {
-		return map[string]any{"active": false}
-	}
-	return map[string]any{"url": baseURL + "/webhooks/github", "active": true}
 }
 
 // ConvertManifest canjea el code temporal del manifest flow por las
