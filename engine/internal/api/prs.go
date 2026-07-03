@@ -6,6 +6,9 @@ package api
 // un PR que toca .github/workflows/** no se auto-aprueba ni con click).
 
 import (
+	"context"
+	"time"
+	"forge/internal/tickets"
 	"errors"
 	"net/http"
 	"regexp"
@@ -100,7 +103,43 @@ func (s *Server) listProjectPRs(w http.ResponseWriter, r *http.Request) {
 		}
 		views = append(views, v)
 	}
+	// Auto-consistencia de relojes (cazado por el usuario): la cola de PRs es
+	// dato VIVO de GitHub, pero las stories son la proyección (tick de 60s).
+	// Si una story in_review/running apunta a un PR que ya NO está abierto
+	// (recién mergeado/cerrado), disparamos el sync aquí mismo para que ambas
+	// superficies converjan en un ciclo de UI en vez de esperar al tick.
+	if s.Projector != nil {
+		open := map[int]bool{}
+		for _, pr := range prs {
+			open[pr.Number] = true
+		}
+		for _, st := range stories {
+			if (st.Status == tickets.StatusInReview || st.Status == tickets.StatusRunning) && st.PRURL != "" {
+				if n := prNumberFrom(st.PRURL); n > 0 && !open[n] {
+					go func(pid, repo string) {
+						ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+						defer cancel()
+						_, _ = s.Projector.SyncProject(ctx, pid, repo)
+					}(id, p.Repo)
+					break // un sync cubre todo el proyecto
+				}
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"prs": views})
+}
+
+// prNumberFrom extrae el número de PR de su URL html.
+func prNumberFrom(url string) int {
+	i := strings.LastIndex(url, "/")
+	if i < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(url[i+1:])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // POST /projects/{id}/workflows/{runId}/approve — aprueba UN run pendiente con
