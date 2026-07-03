@@ -51,8 +51,10 @@ type Server struct {
 	Channels channels.Registry
 	// Projector mirrors GitHub issue/PR state into the ticket store (F1 pivot).
 	// nil disables the sync endpoint + webhook. GHWebhookSecret feeds the webhook
-	// signature check, read per-request (hot-reloadable).
+	// signature check, read per-request (hot-reloadable). Dispatcher fires ready
+	// work to GitHub agents under the project's autonomy policy (F2).
 	Projector       *conductor.Projector
+	Dispatcher      *conductor.Dispatcher
 	GHWebhookSecret func() string
 	linkCodes       *linkCodeStore // short-lived codes binding a channel user to an account
 	mux             *http.ServeMux
@@ -175,6 +177,9 @@ func (s *Server) routes() {
 	// GitHub projection (F1): manual sync + inbound webhook (public route, request
 	// verified by X-Hub-Signature-256 — patrón del webhook de Telegram).
 	m.HandleFunc("POST /projects/{id}/sync/github", s.needProjects(s.syncGitHub))
+	// Dispatch (F2): ready-set del conductor + despacho a agentes de GitHub.
+	m.HandleFunc("GET /projects/{id}/dispatch/candidates", s.needProjects(s.dispatchCandidates))
+	m.HandleFunc("POST /projects/{id}/dispatch", s.needProjects(s.dispatchWork))
 	secret := s.GHWebhookSecret
 	if secret == nil {
 		secret = func() string { return "" }

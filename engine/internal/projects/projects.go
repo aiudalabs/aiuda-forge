@@ -5,6 +5,7 @@ package projects
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -30,6 +31,14 @@ const (
 	ExecutionUnitStory  = "story"  // one run/PR per story
 	MergeModeManual     = "manual" // a human merges the PR on GitHub (default)
 	MergeModeAuto       = "auto"   // the scheduler merges the reviewed PR itself
+
+	// Autonomy of the GitHub-native conductor (F2 pivot): how work reaches agents.
+	DispatchApprove = "approve" // conductor proposes candidates; a human confirms each dispatch (default)
+	DispatchAuto    = "auto"    // conductor dispatches as soon as work is ready + ungated
+	DispatchOff     = "off"     // never dispatch to GitHub agents
+
+	ExecutorCopilot      = "copilot"       // Copilot cloud agent via the Agent tasks REST API (default)
+	ExecutorClaudeAction = "claude_action" // claude-code-action via workflow_dispatch (user's Claude plan)
 )
 
 // DefaultProjectID is the project that pre-multi-tenant data is backfilled to. It
@@ -37,16 +46,21 @@ const (
 // real project row to point at. Mirrors store.DefaultProjectID.
 const DefaultProjectID = "default"
 
-// Settings is a project's execution configuration (audit A2). The scheduler reads
-// it per-project each cycle to apply the right execution_unit and merge_mode.
+// Settings is a project's execution configuration (audit A2 + F2 autonomy). The
+// scheduler/conductor reads it per-project each cycle. ModelByLane routes the
+// agent model per story lane (empty string / missing lane = the executor's auto).
 type Settings struct {
-	ExecutionUnit string `json:"execution_unit"`
-	MergeMode     string `json:"merge_mode"`
+	ExecutionUnit string            `json:"execution_unit"`
+	MergeMode     string            `json:"merge_mode"`
+	DispatchMode  string            `json:"dispatch_mode"`
+	Executor      string            `json:"executor"`
+	ModelByLane   map[string]string `json:"model_by_lane"`
 }
 
 // Project holds the metadata for a single project. OwnerID is the auth user id
 // (usr-…) that created it; GET /projects is filtered by it so a user sees only
-// their own projects. ExecutionUnit/MergeMode are the per-project settings.
+// their own projects. ExecutionUnit/MergeMode/DispatchMode/Executor/ModelByLane
+// are the per-project settings.
 type Project struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -55,6 +69,9 @@ type Project struct {
 	OwnerID       string `json:"owner_id"`
 	ExecutionUnit string `json:"execution_unit"`
 	MergeMode     string `json:"merge_mode"`
+	DispatchMode  string `json:"dispatch_mode"`
+	Executor      string `json:"executor"`
+	ModelByLane   string `json:"model_by_lane"` // JSON map lane→model (raw; Settings decodes it)
 	CreatedAt     int64  `json:"created_at"`
 }
 
@@ -67,6 +84,9 @@ CREATE TABLE IF NOT EXISTS projects (
   owner_id       TEXT NOT NULL DEFAULT '',
   execution_unit TEXT NOT NULL DEFAULT 'sprint',
   merge_mode     TEXT NOT NULL DEFAULT 'manual',
+  dispatch_mode  TEXT NOT NULL DEFAULT 'approve',
+  executor       TEXT NOT NULL DEFAULT 'copilot',
+  model_by_lane  TEXT NOT NULL DEFAULT '{}',
   created_at     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS project_members (
@@ -102,12 +122,19 @@ var migrations = []string{
 	`ALTER TABLE projects ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE projects ADD COLUMN execution_unit TEXT NOT NULL DEFAULT 'sprint'`,
 	`ALTER TABLE projects ADD COLUMN merge_mode TEXT NOT NULL DEFAULT 'manual'`,
+	`ALTER TABLE projects ADD COLUMN dispatch_mode TEXT NOT NULL DEFAULT 'approve'`,
+	`ALTER TABLE projects ADD COLUMN executor TEXT NOT NULL DEFAULT 'copilot'`,
+	`ALTER TABLE projects ADD COLUMN model_by_lane TEXT NOT NULL DEFAULT '{}'`,
 }
 
 // validExecutionUnit / validMergeMode bound the accepted settings values so the
 // scheduler never reads a garbage mode (audit A2).
 func validExecutionUnit(v string) bool { return v == ExecutionUnitSprint || v == ExecutionUnitStory }
 func validMergeMode(v string) bool     { return v == MergeModeManual || v == MergeModeAuto }
+func validDispatchMode(v string) bool {
+	return v == DispatchApprove || v == DispatchAuto || v == DispatchOff
+}
+func validExecutor(v string) bool { return v == ExecutorCopilot || v == ExecutorClaudeAction }
 
 // Store is the project store backed by a sqlite database.
 type Store struct {
@@ -213,11 +240,11 @@ func (s *Store) Create(p Project) (Project, error) {
 	return p, nil
 }
 
-const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, created_at FROM projects`
+const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, created_at FROM projects`
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.CreatedAt)
 	return p, err
 }
 
@@ -281,7 +308,26 @@ func (s *Store) GetSettings(id string) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
-	return Settings{ExecutionUnit: p.ExecutionUnit, MergeMode: p.MergeMode}, nil
+	mbl := map[string]string{}
+	if p.ModelByLane != "" {
+		_ = json.Unmarshal([]byte(p.ModelByLane), &mbl) // garbage → empty map, never an error path
+	}
+	out := Settings{
+		ExecutionUnit: p.ExecutionUnit,
+		MergeMode:     p.MergeMode,
+		DispatchMode:  p.DispatchMode,
+		Executor:      p.Executor,
+		ModelByLane:   mbl,
+	}
+	// Rows predating the F2 migration defaults (or hand-edited to '') fall back to
+	// the safe vocabulary instead of leaking "".
+	if out.DispatchMode == "" {
+		out.DispatchMode = DispatchApprove
+	}
+	if out.Executor == "" {
+		out.Executor = ExecutorCopilot
+	}
+	return out, nil
 }
 
 // PutSettings validates and persists a project's execution settings, returning
@@ -306,8 +352,31 @@ func (s *Store) PutSettings(id string, in Settings) (Settings, error) {
 		}
 		cur.MergeMode = in.MergeMode
 	}
-	res, err := s.db.Exec(`UPDATE projects SET execution_unit=?, merge_mode=? WHERE id=?`,
-		cur.ExecutionUnit, cur.MergeMode, id)
+	if in.DispatchMode != "" {
+		if !validDispatchMode(in.DispatchMode) {
+			return Settings{}, fmt.Errorf("%w: dispatch_mode %q must be %q, %q or %q",
+				ErrInvalid, in.DispatchMode, DispatchApprove, DispatchAuto, DispatchOff)
+		}
+		cur.DispatchMode = in.DispatchMode
+	}
+	if in.Executor != "" {
+		if !validExecutor(in.Executor) {
+			return Settings{}, fmt.Errorf("%w: executor %q must be %q or %q",
+				ErrInvalid, in.Executor, ExecutorCopilot, ExecutorClaudeAction)
+		}
+		cur.Executor = in.Executor
+	}
+	// A present map REPLACES the stored one (the console edits it whole); nil/absent
+	// leaves it unchanged. An explicitly empty map clears the routing.
+	if in.ModelByLane != nil {
+		cur.ModelByLane = in.ModelByLane
+	}
+	mbl, err := json.Marshal(cur.ModelByLane)
+	if err != nil {
+		return Settings{}, err
+	}
+	res, err := s.db.Exec(`UPDATE projects SET execution_unit=?, merge_mode=?, dispatch_mode=?, executor=?, model_by_lane=? WHERE id=?`,
+		cur.ExecutionUnit, cur.MergeMode, cur.DispatchMode, cur.Executor, string(mbl), id)
 	if err != nil {
 		return Settings{}, err
 	}

@@ -1,0 +1,298 @@
+package conductor
+
+// Dispatch (F2 pivot): compute WHAT is ready to hand to a GitHub agent and FIRE
+// it through the configured channel. The policy GitHub doesn't have lives here:
+// per-story readiness (deps done), per-sprint gating (goal-mode order), model
+// routing per lane, and the approve/auto/off autonomy switch. Mirrors the legacy
+// scheduler's fireByProject/fireSprint (internal/orchestrator/native.go) with
+// the store swapped for the GitHub projection.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+
+	"forge/internal/tickets"
+)
+
+// Policy is the slice of project settings dispatch needs (adapted from
+// projects.Settings by the API layer; conductor stays decoupled from that store).
+type Policy struct {
+	ExecutionUnit string            // "sprint" | "story"
+	DispatchMode  string            // "approve" | "auto" | "off"
+	Executor      string            // "copilot" | "claude_action"
+	ModelByLane   map[string]string // lane → model ("" / missing = auto)
+}
+
+// Candidate is one dispatchable unit under the current policy.
+type Candidate struct {
+	Kind     string   `json:"kind"` // "story" | "sprint"
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Stories  []string `json:"stories,omitempty"` // sprint kind: member story ids, dep order
+	Lane     string   `json:"lane"`
+	Model    string   `json:"model"`    // resolved from ModelByLane ("" = auto)
+	Executor string   `json:"executor"` // channel the dispatch would use
+}
+
+// DispatchResult reports one dispatch.
+type DispatchResult struct {
+	Dispatched []string `json:"dispatched"` // story ids now running
+	Channel    string   `json:"channel"`
+	Model      string   `json:"model"`
+	TaskURL    string   `json:"task_url,omitempty"`
+}
+
+// ErrNotCandidate: the requested unit isn't dispatchable anymore (raced by a
+// merge/sync or never was). The API maps it to 409 so the console reloads.
+var ErrNotCandidate = errors.New("not a dispatchable candidate")
+
+// GitHubDispatcher is the write surface (implemented by *github.Client).
+type GitHubDispatcher interface {
+	CreateAgentTask(ctx context.Context, repoURL, prompt, model string) (string, error)
+	DispatchWorkflow(ctx context.Context, repoURL, workflowFile, ref string, inputs map[string]string) error
+}
+
+// Dispatcher computes candidates and fires them.
+type Dispatcher struct {
+	Tickets *tickets.Store
+	GH      GitHubDispatcher
+}
+
+// claudeWorkflowFile is the conductor-dispatch workflow the scaffold bakes into
+// each repo (templates github-native).
+const claudeWorkflowFile = "claude.yml"
+
+// Candidates returns what the policy allows dispatching RIGHT NOW. Empty when
+// dispatch is off. Only mirrored stories (external_ref on this repo) qualify —
+// an unexported backlog has nowhere to be dispatched to.
+func (d *Dispatcher) Candidates(ctx context.Context, projectID, repoURL string, pol Policy) ([]Candidate, error) {
+	if pol.DispatchMode == "off" || repoURL == "" {
+		return nil, nil
+	}
+	slug := repoSlug(repoURL)
+	stories, err := d.Tickets.ListStoriesByProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]tickets.Story{}
+	for _, st := range stories {
+		byID[st.ID] = st
+	}
+	mirrored := func(st tickets.Story) bool {
+		return strings.HasPrefix(st.ExternalRef, "github:"+slug+"#")
+	}
+	done := func(id string) bool {
+		s, ok := byID[id]
+		return ok && s.Status == tickets.StatusDone
+	}
+	storyReady := func(st tickets.Story) bool {
+		if st.Status != tickets.StatusBacklog || !mirrored(st) {
+			return false
+		}
+		for _, dep := range st.Deps {
+			if !done(dep) {
+				return false
+			}
+		}
+		return true
+	}
+
+	if pol.ExecutionUnit != "sprint" {
+		var out []Candidate
+		for _, st := range stories {
+			if storyReady(st) {
+				out = append(out, Candidate{
+					Kind: "story", ID: st.ID, Title: st.Title, Lane: st.Owner,
+					Model: pol.ModelByLane[st.Owner], Executor: pol.Executor,
+				})
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+		return out, nil
+	}
+
+	// Sprint mode: a sprint is dispatchable when it still has backlog work, nothing
+	// of it is already in flight, and every cross-sprint dependency is done.
+	bySprint := map[string][]tickets.Story{}
+	for _, st := range stories {
+		if st.SprintID != "" && mirrored(st) {
+			bySprint[st.SprintID] = append(bySprint[st.SprintID], st)
+		}
+	}
+	var out []Candidate
+	for sid, members := range bySprint {
+		pending, inFlight := 0, 0
+		gated := false
+		for _, st := range members {
+			switch st.Status {
+			case tickets.StatusBacklog:
+				pending++
+			case tickets.StatusRunning, tickets.StatusInReview:
+				inFlight++
+			}
+			for _, dep := range st.Deps {
+				depSt, ok := byID[dep]
+				if ok && depSt.SprintID != sid && !done(dep) {
+					gated = true
+				}
+			}
+		}
+		if pending == 0 || inFlight > 0 || gated {
+			continue
+		}
+		sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID }) // dep order by convention
+		ids := make([]string, 0, pending)
+		for _, st := range members {
+			if st.Status == tickets.StatusBacklog {
+				ids = append(ids, st.ID)
+			}
+		}
+		lane := dominantLane(members)
+		out = append(out, Candidate{
+			Kind: "sprint", ID: sid, Title: sprintTitle(sid, members), Stories: ids,
+			Lane: lane, Model: pol.ModelByLane[lane], Executor: pol.Executor,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return sprintNum(out[i].ID) < sprintNum(out[j].ID) })
+	return out, nil
+}
+
+// Dispatch fires one candidate (story or sprint id) after re-validating it.
+func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, pol Policy, unitID string) (DispatchResult, error) {
+	cands, err := d.Candidates(ctx, projectID, repoURL, pol)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+	var cand *Candidate
+	for i := range cands {
+		if cands[i].ID == unitID {
+			cand = &cands[i]
+			break
+		}
+	}
+	if cand == nil {
+		return DispatchResult{}, fmt.Errorf("%w: %s", ErrNotCandidate, unitID)
+	}
+
+	storyIDs := cand.Stories
+	if cand.Kind == "story" {
+		storyIDs = []string{cand.ID}
+	}
+	prompt, err := d.buildPrompt(projectID, repoURL, cand.Kind, storyIDs)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+
+	res := DispatchResult{Dispatched: storyIDs, Channel: pol.Executor, Model: cand.Model}
+	switch pol.Executor {
+	case "claude_action":
+		// El workflow fija su modelo; el ruteo por lane aplica al canal copilot.
+		if err := d.GH.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", map[string]string{"prompt": prompt}); err != nil {
+			return DispatchResult{}, err
+		}
+		res.Model = ""
+	default: // copilot
+		url, err := d.GH.CreateAgentTask(ctx, repoURL, prompt, cand.Model)
+		if err != nil {
+			return DispatchResult{}, err
+		}
+		res.TaskURL = url
+	}
+
+	// Reflejo inmediato: las stories despachadas pasan a running; la proyección
+	// las mantendrá correctas a partir de aquí (asignación/PR/merge).
+	for _, id := range storyIDs {
+		if _, err := d.Tickets.SyncExternalStatus(id, tickets.StatusRunning, ""); err != nil {
+			return res, fmt.Errorf("dispatched but marking %s running failed: %w", id, err)
+		}
+	}
+	return res, nil
+}
+
+// buildPrompt composes the agent prompt. Story mode points at the issue (its
+// body already carries the full spec + ACs from the export); sprint mode is the
+// goal-mode contract: every story, in order, one branch, ONE PR closing all.
+func (d *Dispatcher) buildPrompt(projectID, repoURL, kind string, storyIDs []string) (string, error) {
+	var b strings.Builder
+	issueOf := func(st tickets.Story) int {
+		if i := strings.LastIndex(st.ExternalRef, "#"); i >= 0 {
+			if n, err := strconv.Atoi(st.ExternalRef[i+1:]); err == nil {
+				return n
+			}
+		}
+		return 0
+	}
+	if kind == "story" {
+		st, err := d.Tickets.GetStory(storyIDs[0])
+		if err != nil {
+			return "", err
+		}
+		n := issueOf(st)
+		fmt.Fprintf(&b, "Resolve issue #%d (%s — %s).\n\n", n, st.ID, st.Title)
+		b.WriteString("Implement EXACTLY what the issue's acceptance criteria specify — every checkbox, nothing more. ")
+		b.WriteString("Write honest tests that exercise each acceptance criterion. ")
+		fmt.Fprintf(&b, "Open a pull request whose description includes `Closes #%d`.\n", n)
+		return b.String(), nil
+	}
+
+	b.WriteString("# Goal mode — implement this entire sprint in ONE pass\n\n")
+	b.WriteString("You are implementing a WHOLE SPRINT in a single run, on a single branch, that becomes ONE pull request. ")
+	b.WriteString("Work through every story below IN THE ORDER GIVEN — they are in dependency order. ")
+	b.WriteString("Do not open separate branches or PRs per story.\n\nStories (in order):\n\n")
+	var closes []string
+	for _, id := range storyIDs {
+		st, err := d.Tickets.GetStory(id)
+		if err != nil {
+			return "", err
+		}
+		n := issueOf(st)
+		closes = append(closes, fmt.Sprintf("Closes #%d", n))
+		fmt.Fprintf(&b, "### %s — %s (issue #%d)\n%s\n", st.ID, st.Title, n, strings.TrimSpace(st.Body))
+		if acs := strings.TrimSpace(st.Accept); acs != "" {
+			fmt.Fprintf(&b, "\nAcceptance criteria:\n%s\n", acs)
+		}
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "The pull request description MUST include: %s.\n", strings.Join(closes, ", "))
+	b.WriteString("Every story's acceptance criteria must pass together; write honest tests per criterion.\n")
+	return b.String(), nil
+}
+
+func dominantLane(members []tickets.Story) string {
+	counts := map[string]int{}
+	best, bestN := "", 0
+	for _, st := range members {
+		if st.Owner == "" {
+			continue
+		}
+		counts[st.Owner]++
+		if counts[st.Owner] > bestN {
+			best, bestN = st.Owner, counts[st.Owner]
+		}
+	}
+	return best
+}
+
+func sprintTitle(sid string, members []tickets.Story) string {
+	return fmt.Sprintf("%s · %d stories", sid, len(members))
+}
+
+func sprintNum(id string) int {
+	n, err := strconv.Atoi(strings.TrimFunc(id, func(r rune) bool { return r < '0' || r > '9' }))
+	if err != nil {
+		return 1 << 30
+	}
+	return n
+}
+
+func repoSlug(repoURL string) string {
+	s := strings.TrimSuffix(repoURL, ".git")
+	if i := strings.Index(s, "github.com/"); i >= 0 {
+		return strings.Trim(s[i+len("github.com/"):], "/")
+	}
+	return s
+}

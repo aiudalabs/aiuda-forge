@@ -269,7 +269,9 @@ func Build(cfg Config) (*App, error) {
 	// the ticket store. The webhook secret is read per-request (env wins, settings
 	// fallback) so it can be configured without a restart.
 	if tix != nil {
-		srv.Projector = conductor.NewProjector(tix, github.New())
+		gh := github.New()
+		srv.Projector = conductor.NewProjector(tix, gh)
+		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh}
 		srv.GHWebhookSecret = func() string {
 			if v := os.Getenv("VIBEFORGE_GITHUB_WEBHOOK_SECRET"); v != "" {
 				return v
@@ -378,9 +380,10 @@ func (a *App) StartBackground(ctx context.Context) {
 	}
 	go a.Engine.ReaperLoop(ctx, 60_000, 10*time.Second)
 	go a.Bus.Run(ctx)
-	// GitHub projection poll (F1): fallback cuando no llegan webhooks (dev/local).
-	// VIBEFORGE_GITHUB_SYNC_INTERVAL en segundos; 0 lo apaga; default 60s. Solo
-	// cuesta 2 llamadas gh por proyecto-con-stories-espejadas por tick.
+	// GitHub conductor tick (F1+F2): sincroniza la proyección y, para proyectos en
+	// dispatch_mode=auto, despacha el trabajo listo. Fallback de polling cuando no
+	// llegan webhooks (dev/local). VIBEFORGE_GITHUB_SYNC_INTERVAL en segundos; 0
+	// lo apaga; default 60s. Cuesta 2 llamadas gh por proyecto-con-repo por tick.
 	if a.Server != nil && a.Server.Projector != nil && a.Projects != nil {
 		interval := 60 * time.Second
 		if v := os.Getenv("VIBEFORGE_GITHUB_SYNC_INTERVAL"); v != "" {
@@ -388,19 +391,68 @@ func (a *App) StartBackground(ctx context.Context) {
 				interval = time.Duration(secs) * time.Second
 			}
 		}
-		go a.Server.Projector.Loop(ctx, interval, func() []conductor.SyncTarget {
-			ps, err := a.Projects.List()
+		if interval > 0 {
+			go a.conductorLoop(ctx, interval)
+		}
+	}
+}
+
+// conductorLoop is the poll-driven conductor tick: projection sync for every
+// project with a repo, then auto-dispatch where the project's policy allows it.
+// Webhook deliveries trigger the same sync out-of-band for faster reaction.
+func (a *App) conductorLoop(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		ps, err := a.Projects.List()
+		if err != nil {
+			continue
+		}
+		for _, p := range ps {
+			if p.Repo == "" {
+				continue
+			}
+			res, err := a.Server.Projector.SyncProject(ctx, p.ID, p.Repo)
 			if err != nil {
-				return nil
+				log.Printf("conductor: sync %s: %v", p.ID, err)
+				continue
 			}
-			out := make([]conductor.SyncTarget, 0, len(ps))
-			for _, p := range ps {
-				if p.Repo != "" {
-					out = append(out, conductor.SyncTarget{ProjectID: p.ID, RepoURL: p.Repo})
+			if res.Changed > 0 {
+				log.Printf("conductor: sync %s — %d/%d stories actualizadas desde GitHub", p.ID, res.Changed, res.Mirrored)
+			}
+			if res.Mirrored == 0 {
+				continue
+			}
+			set, err := a.Projects.GetSettings(p.ID)
+			if err != nil || set.DispatchMode != projects.DispatchAuto {
+				continue
+			}
+			pol := conductor.Policy{
+				ExecutionUnit: set.ExecutionUnit,
+				DispatchMode:  set.DispatchMode,
+				Executor:      set.Executor,
+				ModelByLane:   set.ModelByLane,
+			}
+			cands, err := a.Server.Dispatcher.Candidates(ctx, p.ID, p.Repo, pol)
+			if err != nil {
+				log.Printf("conductor: candidates %s: %v", p.ID, err)
+				continue
+			}
+			for _, c := range cands {
+				dres, err := a.Server.Dispatcher.Dispatch(ctx, p.ID, p.Repo, pol, c.ID)
+				if err != nil {
+					log.Printf("conductor: auto-dispatch %s/%s: %v", p.ID, c.ID, err)
+					continue
 				}
+				log.Printf("conductor: auto-dispatch %s → %s (%s, model=%s): %v",
+					p.ID, c.ID, dres.Channel, dres.Model, dres.Dispatched)
 			}
-			return out
-		})
+		}
 	}
 }
 
