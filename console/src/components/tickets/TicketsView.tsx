@@ -10,9 +10,10 @@
 // run viaja en la URL (linkeable/refresh-safe, patrón ?run= del Board).
 
 import { useEffect, useMemo, useState } from "react";
-import { useCreateStory, useEpics, useTickets } from "@/lib/hooks";
-import { useActiveProjectId } from "@/lib/activeProject";
+import { useCreateStory, useEpics, useExportBacklog, useTickets } from "@/lib/hooks";
+import { useActiveProject, useActiveProjectId } from "@/lib/activeProject";
 import { ApiError } from "@/lib/api";
+import type { ExportResult } from "@/lib/api";
 import { RunDrawer } from "@/components/board/RunDrawer";
 import { DepGraph } from "@/components/tickets/DepGraph";
 import { KanbanBoard } from "@/components/tickets/KanbanBoard";
@@ -58,10 +59,12 @@ function waitingBySprint(tickets: OrchestratorTicket[]): Map<string, string[]> {
 export function TicketsView() {
   const t = useT();
   const projectId = useActiveProjectId();
+  const { project } = useActiveProject();
   const { data: tickets, isLoading, isError, refetch } = useTickets(projectId);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
   const [showNewStory, setShowNewStory] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [view, setView] = useState<ViewKind>(DEFAULT_VIEW);
 
   // Filtros (barra persistente, patrón JIRA). Aplican a las 4 vistas.
@@ -174,6 +177,14 @@ export function TicketsView() {
             </button>
           ))}
         </div>
+        <button
+          className="btn ghost sm"
+          onClick={() => setShowExport(true)}
+          disabled={!project?.repo}
+          title={project?.repo ? t("tickets.export.button") : t("tickets.export.noRepo")}
+        >
+          {t("tickets.export.button")}
+        </button>
         <button className="btn ghost sm" onClick={() => setShowNewStory(true)}>
           {t("tickets.newStory")}
         </button>
@@ -313,6 +324,17 @@ export function TicketsView() {
         <NewStoryModal existingIds={list.map((tk) => tk.id)} onClose={() => setShowNewStory(false)} />
       )}
 
+      {/* Modal: exportar backlog a GitHub */}
+      <div className={`overlay ${showExport ? "on" : ""}`} onClick={() => setShowExport(false)} />
+      {showExport && projectId && (
+        <ExportModal
+          projectId={projectId}
+          repo={project?.repo ?? ""}
+          storyCount={list.length}
+          onClose={() => setShowExport(false)}
+        />
+      )}
+
       {/* Detalle del ticket (la story en sí) — abre para cualquier ticket. Desde
           aquí se baja a la ejecución si la story tiene run. */}
       <TicketDetail
@@ -432,6 +454,153 @@ function TicketRow({
           <span style={{ color: "var(--ink4)", fontSize: 12 }}>—</span>
         )}
       </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modal: exportar backlog a GitHub
+// SÍNCRONO y lento (crea decenas de issues + deps): estado de progreso
+// indeterminado claro mientras corre, resumen created/skipped/deps al terminar.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ExportModal({
+  projectId,
+  repo,
+  storyCount,
+  onClose,
+}: {
+  projectId: string;
+  repo: string;
+  storyCount: number;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const exportBacklog = useExportBacklog();
+  const [result, setResult] = useState<ExportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const running = exportBacklog.isPending;
+
+  // Cerrar con Escape — bloqueado mientras la exportación corre (evita perder el hilo).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !running) onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, running]);
+
+  async function handleExport() {
+    setError(null);
+    try {
+      const res = await exportBacklog.mutateAsync({ projectId, repo: repo || undefined });
+      setResult(res);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) setError(err.message);
+      else setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div className="modal on" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <div className="mh">
+        <h3 id="export-title">{t("tickets.export.confirmTitle")}</h3>
+        <button
+          className="x"
+          onClick={onClose}
+          disabled={running}
+          aria-label={t("tickets.modal.close")}
+        >
+          ✕
+        </button>
+      </div>
+      <div className="mb">
+        {result ? (
+          // Resumen final
+          <>
+            <div className="placeholder" style={{ marginBottom: 12 }}>
+              <div className="ph-ic">✓</div>
+              {t("tickets.export.done")}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+              <span className="tag">{t("tickets.export.issuesCreated", { n: result.issues_created })}</span>
+              <span className="tag">{t("tickets.export.issuesSkipped", { n: result.issues_skipped })}</span>
+              <span className="tag">{t("tickets.export.labelsCreated", { n: result.labels_created })}</span>
+              <span className="tag">{t("tickets.export.depsCreated", { n: result.deps_created })}</span>
+              <span className="tag">{t("tickets.export.depsSkipped", { n: result.deps_skipped })}</span>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              {result.repo && (
+                <a
+                  className="btn ghost"
+                  style={{ flex: 1, textAlign: "center", textDecoration: "none" }}
+                  href={result.repo}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {t("tickets.export.openRepo")}
+                </a>
+              )}
+              <button type="button" className="btn primary" style={{ flex: 1 }} onClick={onClose}>
+                {t("tickets.export.close")}
+              </button>
+            </div>
+          </>
+        ) : (
+          // Confirmación / progreso
+          <>
+            <p style={{ fontSize: 13, color: "var(--ink2)", marginBottom: 8, lineHeight: 1.5 }}>
+              {t("tickets.export.confirmBody", { n: storyCount, repo })}
+            </p>
+            {running && (
+              <div className="placeholder" style={{ marginBottom: 12 }}>
+                <div className="ph-ic">
+                  <span className="spin" />
+                </div>
+                {t("tickets.export.running", { n: storyCount })}
+              </div>
+            )}
+            {error && (
+              <div
+                style={{
+                  padding: "8px 12px",
+                  background: "var(--err-soft, #fff0f0)",
+                  border: "1px solid var(--err-line, #f5c5c5)",
+                  borderRadius: 4,
+                  fontSize: 12,
+                  color: "var(--err, #c00)",
+                  marginBottom: 10,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {t("tickets.export.error")}
+                {"\n"}
+                {error}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+              <button
+                type="button"
+                className="btn ghost"
+                style={{ flex: 1 }}
+                onClick={onClose}
+                disabled={running}
+              >
+                {t("tickets.modal.cancel")}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                style={{ flex: 1 }}
+                onClick={handleExport}
+                disabled={running}
+              >
+                {running ? t("tickets.export.running", { n: storyCount }) : t("tickets.export.confirmCta")}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

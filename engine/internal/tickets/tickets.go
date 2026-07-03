@@ -138,10 +138,11 @@ CREATE TABLE IF NOT EXISTS epics (
 );
 
 CREATE TABLE IF NOT EXISTS sprints (
-  id         TEXT PRIMARY KEY,
+  id         TEXT NOT NULL,
   name       TEXT NOT NULL DEFAULT '',
   goal       TEXT NOT NULL DEFAULT '',
-  project_id TEXT NOT NULL DEFAULT ''
+  project_id TEXT NOT NULL DEFAULT 'default',
+  PRIMARY KEY (id, project_id)
 );
 
 CREATE TABLE IF NOT EXISTS stories (
@@ -270,7 +271,124 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate external_ref index: %w", err)
 	}
+	if err := migrateToCompositePK(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate composite pk: %w", err)
+	}
+	if err := migrateSprintsCompositePK(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate sprints composite pk: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrateToCompositePK upgrades the stories and story_deps tables from a
+// single-column PRIMARY KEY (id) to a composite PRIMARY KEY (id, project_id)
+// so stories from different projects with the same id coexist without collision.
+// Idempotent: if the migration has already run (≥2 PK columns on stories),
+// it returns nil immediately.
+func migrateToCompositePK(db *sql.DB) error {
+	// Check if already migrated: pragma_table_info returns one row per column
+	// where pk > 0 for each column that is part of the primary key.
+	var pkCols int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('stories') WHERE pk > 0`).Scan(&pkCols); err != nil {
+		return fmt.Errorf("migrateToCompositePK: check pk cols: %w", err)
+	}
+	if pkCols >= 2 {
+		return nil // already migrated
+	}
+
+	// Step (f) must run OUTSIDE the transaction: some SQLite drivers handle
+	// ALTER TABLE ... ADD COLUMN poorly inside an explicit transaction.
+	if _, err := db.Exec(`ALTER TABLE story_deps ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumn(err) {
+		return fmt.Errorf("migrateToCompositePK: add story_deps.project_id: %w", err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrateToCompositePK: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	steps := []string{
+		`CREATE TABLE stories_new (
+			id           TEXT NOT NULL,
+			epic_id      TEXT NOT NULL DEFAULT '',
+			sprint_id    TEXT NOT NULL DEFAULT '',
+			title        TEXT NOT NULL DEFAULT '',
+			body         TEXT NOT NULL DEFAULT '',
+			accept       TEXT NOT NULL DEFAULT '',
+			owner        TEXT NOT NULL DEFAULT '',
+			status       TEXT NOT NULL DEFAULT 'backlog',
+			run_id       TEXT NOT NULL DEFAULT '',
+			repo         TEXT NOT NULL DEFAULT '',
+			pr_url       TEXT NOT NULL DEFAULT '',
+			project_id   TEXT NOT NULL DEFAULT '',
+			external_ref TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (id, project_id)
+		)`,
+		`INSERT OR IGNORE INTO stories_new SELECT * FROM stories`,
+		`DROP TABLE stories`,
+		`ALTER TABLE stories_new RENAME TO stories`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_external_ref ON stories(external_ref) WHERE external_ref != ''`,
+		`UPDATE story_deps SET project_id = (SELECT project_id FROM stories WHERE id = story_deps.story_id LIMIT 1) WHERE project_id = ''`,
+		`CREATE TABLE story_deps_new (
+			story_id   TEXT NOT NULL,
+			dep_id     TEXT NOT NULL,
+			project_id TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (story_id, dep_id, project_id)
+		)`,
+		`INSERT OR IGNORE INTO story_deps_new SELECT story_id, dep_id, project_id FROM story_deps`,
+		`DROP TABLE story_deps`,
+		`ALTER TABLE story_deps_new RENAME TO story_deps`,
+		`CREATE INDEX IF NOT EXISTS idx_story_deps_story ON story_deps(story_id, project_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_story_deps_dep ON story_deps(dep_id, project_id)`,
+	}
+
+	for _, step := range steps {
+		if _, err := tx.Exec(step); err != nil {
+			return fmt.Errorf("migrateToCompositePK: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// migrateSprintsCompositePK upgrades the sprints table from a single-column
+// PRIMARY KEY (id) to a composite PRIMARY KEY (id, project_id) so sprints from
+// different projects with the same id coexist without collision. Idempotent.
+func migrateSprintsCompositePK(db *sql.DB) error {
+	var pkCols int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sprints') WHERE pk > 0`).Scan(&pkCols); err != nil {
+		return fmt.Errorf("migrateSprintsCompositePK: check pk cols: %w", err)
+	}
+	if pkCols >= 2 {
+		return nil // already migrated
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrateSprintsCompositePK: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	steps := []string{
+		`CREATE TABLE sprints_new (
+			id         TEXT NOT NULL,
+			name       TEXT NOT NULL DEFAULT '',
+			goal       TEXT NOT NULL DEFAULT '',
+			project_id TEXT NOT NULL DEFAULT 'default',
+			PRIMARY KEY (id, project_id)
+		)`,
+		`INSERT OR IGNORE INTO sprints_new SELECT id, name, goal, project_id FROM sprints`,
+		`DROP TABLE sprints`,
+		`ALTER TABLE sprints_new RENAME TO sprints`,
+	}
+	for _, step := range steps {
+		if _, err := tx.Exec(step); err != nil {
+			return fmt.Errorf("migrateSprintsCompositePK: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // Close closes the underlying database.
@@ -387,7 +505,7 @@ func (s *Store) CreateStory(st Story) error {
 	// pointing at stories not yet created (a forward reference in the same publish
 	// batch) are left for publish-time whole-graph validation (H6); an edge to an
 	// existing story that closes a cycle is rejected here (H7).
-	if err := s.checkNoCycle(st.ID, st.Deps); err != nil {
+	if err := s.checkNoCycle(st.ID, st.Deps, st.ProjectID); err != nil {
 		return err
 	}
 	tx, err := s.db.Begin()
@@ -403,7 +521,7 @@ func (s *Store) CreateStory(st Story) error {
 		return err
 	}
 	for _, dep := range st.Deps {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO story_deps(story_id, dep_id) VALUES(?,?)`, st.ID, dep); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO story_deps(story_id, dep_id, project_id) VALUES(?,?,?)`, st.ID, dep, st.ProjectID); err != nil {
 			return err
 		}
 	}
@@ -428,11 +546,32 @@ func (s *Store) StoryIDByExternalRef(externalRef string) (string, bool, error) {
 	return id, true, nil
 }
 
+// SetStoryExternalRef records the external mirror of a story (e.g.
+// "github:owner/repo#N" after the backlog export), making re-exports idempotent —
+// the exporter skips stories that already carry a ref. The write is guarded so a
+// story never silently flips from one external issue to another.
+func (s *Store) SetStoryExternalRef(id, externalRef string) error {
+	res, err := s.db.Exec(
+		`UPDATE stories SET external_ref=? WHERE id=? AND (external_ref IS NULL OR external_ref='' OR external_ref=?)`,
+		externalRef, id, externalRef)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("story %s: not found or already linked to a different external ref", id)
+	}
+	return nil
+}
+
 // GetStory loads a Story by id, including its deps.
 func (s *Store) GetStory(id string) (Story, error) {
 	var st Story
 	err := s.db.QueryRow(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
-		FROM stories WHERE id=?`, id).
+		FROM stories WHERE id=? LIMIT 1`, id).
 		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Story{}, ErrNotFound
@@ -440,7 +579,7 @@ func (s *Store) GetStory(id string) (Story, error) {
 	if err != nil {
 		return Story{}, err
 	}
-	deps, err := s.loadDeps(id)
+	deps, err := s.loadDeps(id, st.ProjectID)
 	if err != nil {
 		return Story{}, err
 	}
@@ -482,7 +621,7 @@ func (s *Store) ListStoriesByProject(projectID string) ([]Story, error) {
 		return nil, err
 	}
 	for i := range out {
-		deps, err := s.loadDeps(out[i].ID)
+		deps, err := s.loadDeps(out[i].ID, out[i].ProjectID)
 		if err != nil {
 			return nil, err
 		}
@@ -726,12 +865,12 @@ func (s *Store) SetStoryRun(id, runID string) error {
 // resolve to an existing story (ErrDepNotFound), a self-dep is rejected, and a dep
 // that would close a cycle is rejected (ErrDepCycle). All-or-nothing — no edge is
 // written if any dep is invalid.
-func (s *Store) AddDep(storyID string, deps []string) error {
+func (s *Store) AddDep(storyID, projectID string, deps []string) error {
 	for _, dep := range deps {
 		if dep == storyID {
 			return fmt.Errorf("%w: %s depends on itself", ErrDepCycle, storyID)
 		}
-		ok, err := s.storyExists(dep)
+		ok, err := s.storyExists(dep, projectID)
 		if err != nil {
 			return err
 		}
@@ -739,7 +878,7 @@ func (s *Store) AddDep(storyID string, deps []string) error {
 			return fmt.Errorf("%w: %s -> %s", ErrDepNotFound, storyID, dep)
 		}
 	}
-	if err := s.checkNoCycle(storyID, deps); err != nil {
+	if err := s.checkNoCycle(storyID, deps, projectID); err != nil {
 		return err
 	}
 	tx, err := s.db.Begin()
@@ -748,7 +887,7 @@ func (s *Store) AddDep(storyID string, deps []string) error {
 	}
 	defer tx.Rollback()
 	for _, dep := range deps {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO story_deps(story_id, dep_id) VALUES(?,?)`, storyID, dep); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO story_deps(story_id, dep_id, project_id) VALUES(?,?,?)`, storyID, dep, projectID); err != nil {
 			return err
 		}
 	}
@@ -761,15 +900,15 @@ func (s *Store) AddDep(storyID string, deps []string) error {
 // fire order). It is the publish-level whole-graph check that backstops the
 // per-edge checks in CreateStory/AddDep, catching forward references that resolved
 // to nothing after the batch completed. Returns ErrDepNotFound or ErrDepCycle.
-func (s *Store) ValidateDeps() error {
-	adj, err := s.loadAllDeps()
+func (s *Store) ValidateDeps(projectID string) error {
+	adj, err := s.loadAllDeps(projectID)
 	if err != nil {
 		return err
 	}
 	// Every dep_id must resolve to an existing story.
 	for sid, deps := range adj {
 		for _, dep := range deps {
-			ok, err := s.storyExists(dep)
+			ok, err := s.storyExists(dep, projectID)
 			if err != nil {
 				return err
 			}
@@ -789,10 +928,16 @@ func (s *Store) ValidateDeps() error {
 	return nil
 }
 
-// storyExists reports whether a story id is present in the store.
-func (s *Store) storyExists(id string) (bool, error) {
+// storyExists reports whether a story id is present in the store. If projectID
+// is non-empty the lookup is scoped to that project; otherwise any project matches.
+func (s *Store) storyExists(id, projectID string) (bool, error) {
 	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM stories WHERE id=?`, id).Scan(&one)
+	var err error
+	if projectID != "" {
+		err = s.db.QueryRow(`SELECT 1 FROM stories WHERE id=? AND project_id=?`, id, projectID).Scan(&one)
+	} else {
+		err = s.db.QueryRow(`SELECT 1 FROM stories WHERE id=?`, id).Scan(&one)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -809,12 +954,12 @@ func (s *Store) storyExists(id string) (bool, error) {
 // not-yet-stored stories contribute no reachable edges, so they pass here and are
 // validated whole-graph at publish time. Returns ErrDepCycle naming the offending
 // dep, or nil.
-func (s *Store) checkNoCycle(from string, deps []string) error {
+func (s *Store) checkNoCycle(from string, deps []string, projectID string) error {
 	if len(deps) == 0 {
 		return nil
 	}
 	// adjacency: story_id -> its dep_ids (the existing graph).
-	adj, err := s.loadAllDeps()
+	adj, err := s.loadAllDeps(projectID)
 	if err != nil {
 		return err
 	}
@@ -829,8 +974,15 @@ func (s *Store) checkNoCycle(from string, deps []string) error {
 }
 
 // loadAllDeps returns the full story_deps adjacency map (story_id -> dep_ids).
-func (s *Store) loadAllDeps() (map[string][]string, error) {
-	rows, err := s.db.Query(`SELECT story_id, dep_id FROM story_deps`)
+// If projectID is non-empty, only deps for that project are loaded.
+func (s *Store) loadAllDeps(projectID string) (map[string][]string, error) {
+	var rows *sql.Rows
+	var err error
+	if projectID != "" {
+		rows, err = s.db.Query(`SELECT story_id, dep_id FROM story_deps WHERE project_id=?`, projectID)
+	} else {
+		rows, err = s.db.Query(`SELECT story_id, dep_id FROM story_deps`)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -897,12 +1049,12 @@ func (s *Store) Ready() ([]Story, error) {
 
 	var out []Story
 	for i := range candidates {
-		deps, err := s.loadDeps(candidates[i].ID)
+		deps, err := s.loadDeps(candidates[i].ID, candidates[i].ProjectID)
 		if err != nil {
 			return nil, err
 		}
 		candidates[i].Deps = deps
-		ready, err := s.depsDone(deps)
+		ready, err := s.depsDone(deps, candidates[i].ProjectID)
 		if err != nil {
 			return nil, err
 		}
@@ -925,8 +1077,24 @@ func (s *Store) Ready() ([]Story, error) {
 // Ties (no ordering constraint between two stories) are broken stably by id, so
 // the order is deterministic. Returns an empty slice for a sprint with no stories.
 func (s *Store) StoriesBySprint(sprintID string) ([]Story, error) {
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
-		FROM stories WHERE sprint_id=? ORDER BY id ASC`, sprintID)
+	return s.storiesBySprint(sprintID, "")
+}
+
+// StoriesBySprintScoped returns a sprint's stories filtered to projectID (empty = all projects).
+func (s *Store) StoriesBySprintScoped(sprintID, projectID string) ([]Story, error) {
+	return s.storiesBySprint(sprintID, projectID)
+}
+
+func (s *Store) storiesBySprint(sprintID, projectID string) ([]Story, error) {
+	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
+		FROM stories WHERE sprint_id=?`
+	args := []any{sprintID}
+	if projectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
+	q += ` ORDER BY id ASC`
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -943,7 +1111,7 @@ func (s *Store) StoriesBySprint(sprintID string) ([]Story, error) {
 		return nil, err
 	}
 	for i := range stories {
-		deps, err := s.loadDeps(stories[i].ID)
+		deps, err := s.loadDeps(stories[i].ID, stories[i].ProjectID)
 		if err != nil {
 			return nil, err
 		}
@@ -1035,7 +1203,7 @@ func (s *Store) ReadySprintsByProject(projectID string) ([]Sprint, error) {
 	}
 	var out []Sprint
 	for _, sp := range sprints {
-		ready, err := s.sprintReady(sp.ID)
+		ready, err := s.sprintReady(sp.ID, sp.ProjectID)
 		if err != nil {
 			return nil, err
 		}
@@ -1048,8 +1216,8 @@ func (s *Store) ReadySprintsByProject(projectID string) ([]Sprint, error) {
 
 // sprintReady reports whether the sprint at sprintID satisfies the goal-mode
 // readiness rule (≥1 story, all backlog, external deps done).
-func (s *Store) sprintReady(sprintID string) (bool, error) {
-	stories, err := s.StoriesBySprint(sprintID)
+func (s *Store) sprintReady(sprintID, projectID string) (bool, error) {
+	stories, err := s.storiesBySprint(sprintID, projectID)
 	if err != nil {
 		return false, err
 	}
@@ -1068,7 +1236,7 @@ func (s *Store) sprintReady(sprintID string) (bool, error) {
 			if inSprint[dep] {
 				continue // intra-sprint dep — resolved inside the run
 			}
-			done, err := s.depsDone([]string{dep})
+			done, err := s.depsDone([]string{dep}, st.ProjectID)
 			if err != nil {
 				return false, err
 			}
@@ -1086,8 +1254,8 @@ func (s *Store) sprintReady(sprintID string) (bool, error) {
 // abandoned (ok=false, no error) and nothing is written. On success it returns
 // the claimed story IDs in topological order. ok=false with no claimed IDs also
 // covers an empty sprint.
-func (s *Store) ClaimSprint(sprintID string) (claimed []string, ok bool, err error) {
-	ordered, err := s.StoriesBySprint(sprintID)
+func (s *Store) ClaimSprint(sprintID, projectID string) (claimed []string, ok bool, err error) {
+	ordered, err := s.storiesBySprint(sprintID, projectID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1108,15 +1276,26 @@ func (s *Store) ClaimSprint(sprintID string) (claimed []string, ok bool, err err
 
 	// Re-check inside the tx: every story must still be backlog.
 	var backlog int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM stories WHERE sprint_id=? AND status='backlog'`, sprintID).
-		Scan(&backlog); err != nil {
+	cntQ := `SELECT COUNT(*) FROM stories WHERE sprint_id=? AND status='backlog'`
+	cntArgs := []any{sprintID}
+	if projectID != "" {
+		cntQ += ` AND project_id=?`
+		cntArgs = append(cntArgs, projectID)
+	}
+	if err := tx.QueryRow(cntQ, cntArgs...).Scan(&backlog); err != nil {
 		return nil, false, err
 	}
 	if backlog != len(ordered) {
 		return nil, false, nil // a concurrent claimer moved at least one story
 	}
 
-	res, err := tx.Exec(`UPDATE stories SET status='running' WHERE sprint_id=? AND status='backlog'`, sprintID)
+	updQ := `UPDATE stories SET status='running' WHERE sprint_id=? AND status='backlog'`
+	updArgs := []any{sprintID}
+	if projectID != "" {
+		updQ += ` AND project_id=?`
+		updArgs = append(updArgs, projectID)
+	}
+	res, err := tx.Exec(updQ, updArgs...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1240,9 +1419,17 @@ func (s *Store) InReview() ([]Story, error) {
 	return out, rows.Err()
 }
 
-// loadDeps returns the dep IDs for storyID, sorted.
-func (s *Store) loadDeps(storyID string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT dep_id FROM story_deps WHERE story_id=? ORDER BY dep_id ASC`, storyID)
+// loadDeps returns the dep IDs for storyID, sorted. If projectID is non-empty,
+// the query is scoped to that project; otherwise all deps for the story are returned
+// (back-compat for callers that don't have project context yet).
+func (s *Store) loadDeps(storyID, projectID string) ([]string, error) {
+	var rows *sql.Rows
+	var err error
+	if projectID != "" {
+		rows, err = s.db.Query(`SELECT dep_id FROM story_deps WHERE story_id=? AND project_id=? ORDER BY dep_id ASC`, storyID, projectID)
+	} else {
+		rows, err = s.db.Query(`SELECT dep_id FROM story_deps WHERE story_id=? ORDER BY dep_id ASC`, storyID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1258,11 +1445,18 @@ func (s *Store) loadDeps(storyID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// depsDone reports whether every dep story has StatusDone.
-func (s *Store) depsDone(deps []string) (bool, error) {
+// depsDone reports whether every dep story has StatusDone. If projectID is
+// non-empty the lookup is scoped to that project; otherwise the first matching
+// story by id is used (back-compat).
+func (s *Store) depsDone(deps []string, projectID string) (bool, error) {
 	for _, dep := range deps {
 		var st Status
-		err := s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, dep).Scan(&st)
+		var err error
+		if projectID != "" {
+			err = s.db.QueryRow(`SELECT status FROM stories WHERE id=? AND project_id=?`, dep, projectID).Scan(&st)
+		} else {
+			err = s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, dep).Scan(&st)
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			// D7: a dep pointing at a story that does not exist is corrupt data (deps
 			// are validated at publish). Treat it as "not done" so it gates rather

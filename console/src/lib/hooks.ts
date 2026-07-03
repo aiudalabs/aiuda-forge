@@ -171,6 +171,17 @@ export function useRealtime() {
         qc.invalidateQueries({ queryKey: ["stats"] });
         qc.invalidateQueries({ queryKey: ["notifications"] });
       }
+      // El estado de las stories del board cambia cuando un step avanza o el run
+      // termina — refrescamos los tickets (todas las variantes scopeadas por
+      // proyecto vía el prefijo) para que el Kanban refleje el nuevo estado sin
+      // esperar al polling.
+      if (
+        ev.type === "step.status_changed" ||
+        ev.type === "run.done" ||
+        ev.type === "run.failed"
+      ) {
+        qc.invalidateQueries({ queryKey: ["tickets"] });
+      }
     });
     return off;
   }, [mode, qc]);
@@ -305,6 +316,19 @@ export function useCreateStory() {
     onSuccess: () => {
       // Invalida tickets (todas las variantes scopeadas) para que la nueva story
       // aparezca en tabla y DAG.
+      qc.invalidateQueries({ queryKey: ["tickets"] });
+    },
+  });
+}
+
+// Exporta el backlog nativo del proyecto a GitHub Issues con deps. La mutación
+// invalida los tickets al terminar (el backend puede anotar external_ref/issue #).
+export function useExportBacklog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId, repo }: { projectId: string; repo?: string }) =>
+      api.exportBacklogToGitHub(projectId, repo),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tickets"] });
     },
   });

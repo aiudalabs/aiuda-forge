@@ -162,6 +162,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /invites/{token}/accept", s.needProjects(s.acceptInvite))
 	// Ticket import (v1.3): pull a source's issues into the backlog. Editor+ only.
 	m.HandleFunc("POST /projects/{id}/import/github", s.needProjects(s.importGitHub))
+	// Backlog export (F0 GitHub-native pivot): stories → issues + native blocked_by
+	// deps. Editor+ only; synchronous (minutes for big backlogs); idempotent.
+	m.HandleFunc("POST /projects/{id}/export/github", s.needProjects(s.exportGitHub))
 	// Channels (v1.3): issue a link code (authenticated) + the inbound Telegram
 	// webhook (public, verified by the bot secret header).
 	m.HandleFunc("POST /channels/{connector}/link-code", s.issueLinkCode)

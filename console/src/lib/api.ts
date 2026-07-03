@@ -284,9 +284,18 @@ function stepEventLine(data: Record<string, unknown>): string {
     const arg = toolArg(tool, input);
     return arg ? `→ ${tool}: ${arg}` : `→ ${tool}`;
   }
+  if (kind === "tool_result") {
+    const tool = typeof data.tool === "string" ? data.tool : "tool";
+    const output = typeof data.output === "string" ? data.output : "";
+    return `← ${tool}: ${firstLine(output)}`;
+  }
+  if (kind === "thinking") {
+    const text = typeof data.text === "string" ? data.text : "";
+    return `💭 ${truncate(text, 200)}`;
+  }
   if (kind === "text") {
     const text = typeof data.text === "string" ? data.text : "";
-    return firstLine(text);
+    return firstNLines(text, 3, 300);
   }
   if (kind === "system") {
     const sub = typeof data.subtype === "string" ? data.subtype : "";
@@ -324,6 +333,18 @@ function toolArg(tool: string, input: string): string {
 function firstLine(s: string): string {
   const line = s.split("\n", 1)[0].trim();
   return line.length > 160 ? line.slice(0, 160) + "…" : line;
+}
+
+// firstNLines toma las primeras n líneas, las une con un espacio y trunca a
+// maxChars — para mostrar un vistazo multilínea del texto del agente en el log.
+function firstNLines(s: string, n: number, maxChars: number): string {
+  const joined = s.split("\n").slice(0, n).join(" ").trim();
+  return joined.length > maxChars ? joined.slice(0, maxChars) + "…" : joined;
+}
+
+function truncate(s: string, maxChars: number): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > maxChars ? t.slice(0, maxChars) + "…" : t;
 }
 
 // shortPath recorta paths absolutos largos a las últimas 2 componentes para que
@@ -1078,6 +1099,41 @@ export async function importGitHub(projectId: string, repo?: string): Promise<Im
     method: "POST",
     body: JSON.stringify(repo ? { repo } : {}),
   });
+}
+
+export interface ExportResult {
+  repo: string;
+  issues_created: number;
+  issues_skipped: number;
+  labels_created: number;
+  deps_created: number;
+  deps_skipped: number;
+}
+
+/**
+ * POST /projects/{id}/export/github — exporta el backlog nativo a GitHub Issues con
+ * dependencias `blocked_by` (editor+). SÍNCRONO y lento: crea ~44 issues + ~73 deps,
+ * puede tardar 1-3 min. El endpoint es idempotente (un 502 a mitad se reintenta y
+ * continúa donde quedó), así que usamos un timeout largo (5 min) en vez del corto por
+ * defecto. `repo` opcional: ausente → usa el repo del proyecto.
+ */
+export async function exportBacklogToGitHub(projectId: string, repo?: string): Promise<ExportResult> {
+  if (await isMock()) {
+    return { repo: repo ?? "", issues_created: 0, issues_skipped: 0, labels_created: 0, deps_created: 0, deps_skipped: 0 };
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5 * 60_000);
+  const res = await rawFetch(`/projects/${projectId}/export/github`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(repo ? { repo } : {}),
+    signal: ctrl.signal,
+  }).finally(() => clearTimeout(timer));
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(res.status, body || `POST /projects/${projectId}/export/github → ${res.status}`);
+  }
+  return (await res.json()) as ExportResult;
 }
 
 /** POST /projects/{id}/channels/test — envía un mensaje de prueba por el conector real. */
