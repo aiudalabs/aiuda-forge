@@ -64,6 +64,17 @@ func publicPath(method, path string) bool {
 		// Public route, but authenticated by the Telegram bot secret header
 		// (verified in the handler), not the session/service token.
 		return method == http.MethodPost
+	case "/webhooks/github":
+		// Firmado por HMAC X-Hub-Signature-256 (verificado en el handler).
+		return method == http.MethodPost
+	case "/auth/github/start", "/auth/github/callback":
+		// Flujo OAuth de browser: llegan por redirect sin bearer. El callback
+		// se protege con el state anti-CSRF; el start solo redirige a GitHub.
+		return method == http.MethodGet
+	case "/setup/github-app", "/setup/github-app/callback":
+		// Manifest flow del operador: el handler se auto-desactiva (404) en
+		// cuanto la App queda configurada.
+		return method == http.MethodGet
 	}
 	return false
 }

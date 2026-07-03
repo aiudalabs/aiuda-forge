@@ -5,8 +5,10 @@
 // requiere login; el AuthGate ya deja pasar, pero si alguien llega aquí, el form
 // sigue funcionando contra la API real cuando exista.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { login } from "@/lib/auth";
+import { setToken } from "@/lib/auth";
+import { API_URL } from "@/lib/config";
 import { useT } from "@/lib/i18n";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
@@ -16,6 +18,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Retorno del OAuth de GitHub: el control redirige aquí con la sesión en el
+  // FRAGMENT (#gh_session=…) — nunca viaja a servidores ni queda en logs. La
+  // guardamos como cualquier login y limpiamos la URL.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.location.hash.includes("gh_session=")) return;
+    const frag = new URLSearchParams(window.location.hash.slice(1));
+    const tok = frag.get("gh_session");
+    if (!tok) return;
+    setToken(tok);
+    window.history.replaceState(null, "", window.location.pathname);
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get("next");
+    window.location.href = next ? decodeURIComponent(next) : "/";
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,6 +79,23 @@ export default function LoginPage() {
       >
         <h1 style={{ fontWeight: 900, fontSize: 24, margin: 0 }}>{t("auth.loginTitle")}</h1>
         <p style={{ margin: 0, color: "#666", fontSize: 14 }}>{t("auth.loginSubtitle")}</p>
+
+        {/* Identidad primaria (GTM): el producto vive en GitHub. */}
+        <a
+          href={`${API_URL}/auth/github/start`}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            padding: "10px 14px", borderRadius: 8, background: "#1a1a1a", color: "#fff",
+            fontWeight: 700, fontSize: 14, textDecoration: "none",
+          }}
+        >
+           {t("auth.continueGitHub")}
+        </a>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#aaa", fontSize: 12 }}>
+          <span style={{ flex: 1, height: 1, background: "#e5e2dc" }} />
+          {t("auth.orEmail")}
+          <span style={{ flex: 1, height: 1, background: "#e5e2dc" }} />
+        </div>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
           {t("auth.email")}

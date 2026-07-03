@@ -71,6 +71,14 @@ CREATE TABLE IF NOT EXISTS channel_identities (
   PRIMARY KEY (connector, external_user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_channel_identities_user ON channel_identities(user_id);
+CREATE TABLE IF NOT EXISTS github_tokens (
+  user_id       TEXT PRIMARY KEY,
+  gh_login      TEXT NOT NULL DEFAULT '',
+  access_token  TEXT NOT NULL,
+  refresh_token TEXT NOT NULL DEFAULT '',
+  expires_at    INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL DEFAULT 0
+);
 `
 
 // Store is the auth store backed by a sqlite database.

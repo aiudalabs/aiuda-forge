@@ -402,7 +402,9 @@ func (a *App) StartBackground(ctx context.Context) {
 	// llegan webhooks (dev/local). VIBEFORGE_GITHUB_SYNC_INTERVAL en segundos; 0
 	// lo apaga; default 60s. Cuesta 2 llamadas gh por proyecto-con-repo por tick.
 	if a.Server != nil && a.Server.Projector != nil && a.Projects != nil {
-		interval := 60 * time.Second
+		// 25s: la ventana merge→proyección que el usuario percibe (con webhook
+		// en producción esto es instantáneo; el poll es el fallback local).
+		interval := 25 * time.Second
 		if v := os.Getenv("VIBEFORGE_GITHUB_SYNC_INTERVAL"); v != "" {
 			if secs, err := strconv.Atoi(v); err == nil {
 				interval = time.Duration(secs) * time.Second

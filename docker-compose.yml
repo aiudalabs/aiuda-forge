@@ -1,0 +1,128 @@
+name: aiuda-forge
+
+# ── DooD note ────────────────────────────────────────────────────────────────
+# The control service spawns agent containers at runtime via the host Docker
+# socket (Docker-outside-of-Docker). For this to work, FORGE_WORKDIR must be
+# the SAME absolute path on the host AND inside the control container so that
+# `docker run -v <path>:/work` resolves correctly from the host daemon.
+#
+# On macOS with Docker Desktop, paths under /Users, /tmp, /private are shared
+# automatically. The default in .env.example uses /tmp/vibeforge-runs.
+# For persistence across reboots, use a path under /Users.
+#
+# Usage:
+#   cp .env.example .env        # fill in secrets
+#   docker compose up --build
+
+services:
+
+  # ── Control plane (API + queue + agent runner) ─────────────────────────────
+  control:
+    build:
+      context: ./engine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - forge-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # DooD workdir: same absolute path on host and in container (see note above)
+      - ${FORGE_WORKDIR}:${FORGE_WORKDIR}
+    environment:
+      VIBEFORGE_ADDR: ":8080"
+      VIBEFORGE_DB: /data/vibeforge.db
+      VIBEFORGE_TICKETS_DB: /data/tickets.db
+      VIBEFORGE_PROJECTS_DB: /data/projects.db
+      VIBEFORGE_AUTH_DB: /data/auth.db
+      VIBEFORGE_REGISTRY: /app/registry
+      VIBEFORGE_WORKDIR: ${FORGE_WORKDIR}
+      VIBEFORGE_SANDBOX_NETWORK: vibeforge-egress
+      VIBEFORGE_AGENT_IMAGE: ${VIBEFORGE_AGENT_IMAGE:-vibeforge-agent:local}
+      VIBEFORGE_ENGINE: ${VIBEFORGE_ENGINE:-claude}
+      VIBEFORGE_SANDBOX: ${VIBEFORGE_SANDBOX:-docker}
+      VIBEFORGE_CORS_ORIGIN: ${VIBEFORGE_CORS_ORIGIN:-http://localhost:3000}
+      VIBEFORGE_API_TOKEN: ${VIBEFORGE_API_TOKEN}
+      VIBEFORGE_ADMIN_EMAIL: ${VIBEFORGE_ADMIN_EMAIL}
+      VIBEFORGE_ADMIN_PASSWORD: ${VIBEFORGE_ADMIN_PASSWORD}
+      VIBEFORGE_AGENT_AUTH: ${VIBEFORGE_AGENT_AUTH:-oauth_token}
+      VIBEFORGE_GH_ORG: ${VIBEFORGE_GH_ORG}
+      # Onboarding GitHub (Forja): URLs públicas + credenciales de la App
+      VIBEFORGE_PUBLIC_URL: ${VIBEFORGE_PUBLIC_URL:-http://localhost:8080}
+      VIBEFORGE_CONSOLE_URL: ${VIBEFORGE_CONSOLE_URL:-http://localhost:3000}
+      VIBEFORGE_GHAPP_CREDS: /data/github-app.json
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      TARGET_REMOTE: ${TARGET_REMOTE:-}
+    networks:
+      - forge-internal
+    depends_on:
+      - egress-proxy
+
+  # ── Native orchestrator (polls control, fires factory runs) ─────────────────
+  orchestrator:
+    build:
+      context: ./engine
+    restart: unless-stopped
+    command: ["./orchestrator", "-source", "native", "-workflow", "factory"]
+    volumes:
+      - ${FORGE_WORKDIR}:${FORGE_WORKDIR}
+    environment:
+      VIBEFORGE_API_TOKEN: ${VIBEFORGE_API_TOKEN}
+      VIBEFORGE_ADDR: http://control:8080
+      GH_TOKEN: ${GH_TOKEN:-}
+      PR_MODE: ${PR_MODE:-github}
+    networks:
+      - forge-internal
+    depends_on:
+      - control
+
+  # ── Egress proxy (tinyproxy, default-deny allowlist) ──────────────────────
+  # Dual-homed: reaches internet via forge-internet, is reachable by agent
+  # containers via the internal vibeforge-egress network only.
+  egress-proxy:
+    build:
+      context: ./engine/deploy/egress-proxy
+    restart: unless-stopped
+    networks:
+      - forge-internet
+      - vibeforge-egress
+
+  # ── Console (Next.js) ──────────────────────────────────────────────────────
+  console:
+    build:
+      context: ./console
+      args:
+        FORGE_API_INTERNAL: http://control:8080
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      FORGE_API_INTERNAL: http://control:8080
+      NEXT_PUBLIC_VIBEFORGE_API_URL: ${NEXT_PUBLIC_VIBEFORGE_API_URL:-http://localhost:8080}
+    depends_on:
+      - control
+    networks:
+      - forge-internal
+
+volumes:
+  # Persistent SQLite data (vibeforge.db, tickets.db, projects.db, auth.db,
+  # brain.db, billing.db — all open relative to VIBEFORGE_DB directory).
+  forge-data:
+    driver: local
+
+networks:
+  # Internal network between control and console (no internet access).
+  forge-internal:
+    driver: bridge
+
+  # Internet-facing network — only the egress-proxy is attached here.
+  forge-internet:
+    driver: bridge
+
+  # Internal-only network for agent sandboxes. No internet gateway.
+  # Agent containers join this network and reach the LLM via egress-proxy only.
+  vibeforge-egress:
+    name: vibeforge-egress
+    driver: bridge
+    internal: true

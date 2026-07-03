@@ -123,6 +123,12 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /auth/logout", s.needAuth(s.logout))
 	m.HandleFunc("GET /auth/me", s.needAuth(s.me))
 	m.HandleFunc("POST /auth/change-password", s.needAuth(s.changePassword))
+	// GitHub OAuth (onboarding Forja): setup de la App vía manifest + login.
+	m.HandleFunc("GET /setup/github-app", s.setupGitHubApp)
+	m.HandleFunc("GET /setup/github-app/callback", s.setupGitHubAppCallback)
+	m.HandleFunc("GET /auth/github/start", s.githubAuthStart)
+	m.HandleFunc("GET /auth/github/callback", s.githubAuthCallback)
+	m.HandleFunc("GET /auth/github/status", s.githubAuthStatus)
 	// registry CRUD (compose/edit/list/delete agents, skills, workflows — no-code).
 	// Generic by {kind}: workflows|agents|skills. PUT/POST validate against the
 	// SAME parser the kernel uses, so a saved manifest is always runnable.
