@@ -115,3 +115,28 @@ func (c *Client) AddIssueBlockedBy(ctx context.Context, repoURL string, issueNum
 	}
 	return true, nil
 }
+
+// CloseIssue cierra un issue como completado, con un comentario de contexto.
+// El conductor lo usa para cerrar el loop cuando el PR de una story mergeó
+// pero sus closing keywords no auto-cerraron (p.ej. escritos entre backticks,
+// que GitHub no parsea — cazado en vivo).
+func (c *Client) CloseIssue(ctx context.Context, repoURL string, number int, comment string) error {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return err
+	}
+	if comment != "" {
+		out, err := c.runner(ctx, "", "gh", "api", "-X", "POST",
+			fmt.Sprintf("repos/%s/issues/%d/comments", slug, number), "-f", "body="+comment)
+		if err != nil {
+			return fmt.Errorf("gh api comment issue #%d: %w: %s", number, err, strings.TrimSpace(out))
+		}
+	}
+	out, err := c.runner(ctx, "", "gh", "api", "-X", "PATCH",
+		fmt.Sprintf("repos/%s/issues/%d", slug, number),
+		"-f", "state=closed", "-f", "state_reason=completed")
+	if err != nil {
+		return fmt.Errorf("gh api close issue #%d: %w: %s", number, err, strings.TrimSpace(out))
+	}
+	return nil
+}

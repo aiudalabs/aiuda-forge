@@ -31,6 +31,14 @@ type GitHubReader interface {
 	ListOpenPRs(ctx context.Context, repoURL string) ([]github.OpenPR, error)
 }
 
+// IssueCloser cierra el loop de un PR mergeado cuyos closing keywords no
+// auto-cerraron el issue (p.ej. escritos entre backticks). Opcional: nil lo
+// desactiva. *github.Client lo implementa.
+type IssueCloser interface {
+	PRMerged(ctx context.Context, repoURL string, number int) (bool, error)
+	CloseIssue(ctx context.Context, repoURL string, number int, comment string) error
+}
+
 // ProjectLister yields the projects to keep in sync. *projects.Store implements
 // List() ([]projects.Project, error); we only need id+repo, decoupled here.
 type SyncTarget struct {
@@ -59,6 +67,8 @@ type Projector struct {
 	// TaskState, when set, lets the sweep detect dead agent sessions (task
 	// failed/cancelled) and return their stories to backlog automatically.
 	TaskState TaskStater
+	// Closer, when set, closes issues whose story PR merged without auto-close.
+	Closer IssueCloser
 
 	// serializes syncs per repo so a webhook burst doesn't stampede gh.
 	mu    sync.Mutex
@@ -81,6 +91,19 @@ var agentLogins = map[string]bool{
 
 func isAgent(login string) bool {
 	return agentLogins[strings.ToLower(login)] || strings.HasSuffix(login, "[bot]")
+}
+
+// prNum extrae el número de PR de su URL html.
+func prNum(url string) int {
+	i := strings.LastIndex(url, "/")
+	if i < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(url[i+1:])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // taskIDRe extrae el id de task de una session_url de Copilot
@@ -221,6 +244,46 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 			if state == "failed" || state == "cancelled" || state == "error" {
 				deadSession[id] = true
 			}
+		}
+	}
+
+	// Cierre de loop de PRs mergeados (cazado en vivo: closes entre backticks
+	// no auto-cierran): una story con PR que YA no está abierto pero SÍ mergeó,
+	// cierra su issue aquí — GitHub vuelve a ser la verdad y la derivación de
+	// abajo la marca done en este mismo pase.
+	if p.Closer != nil {
+		mergedPR := map[int]bool{} // pr number → merged (cache por pase)
+		for i := range issues {
+			iss := &issues[i]
+			st, mirrored := byNumber[iss.Number]
+			if !mirrored || iss.State != "open" || st.PRURL == "" {
+				continue
+			}
+			n := prNum(st.PRURL)
+			if n == 0 {
+				continue
+			}
+			if _, isOpen := prFor[iss.Number]; isOpen {
+				continue // su PR sigue abierto: nada que cerrar
+			}
+			merged, ok := mergedPR[n]
+			if !ok {
+				var err error
+				merged, err = p.Closer.PRMerged(ctx, repoURL, n)
+				if err != nil {
+					continue // best-effort
+				}
+				mergedPR[n] = merged
+			}
+			if !merged {
+				continue
+			}
+			if err := p.Closer.CloseIssue(ctx, repoURL, iss.Number,
+				fmt.Sprintf("Cerrado por el conductor: el PR %s mergeó pero sus closing keywords no auto-cerraron este issue.", st.PRURL)); err != nil {
+				log.Printf("conductor: close issue #%d: %v", iss.Number, err)
+				continue
+			}
+			iss.State = "closed" // la derivación de este pase ya lo ve done
 		}
 	}
 

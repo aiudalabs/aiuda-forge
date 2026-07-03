@@ -286,6 +286,7 @@ func Build(cfg Config) (*App, error) {
 		gh := github.New()
 		srv.Projector = conductor.NewProjector(tix, gh)
 		srv.Projector.TaskState = gh // barrido de sesiones muertas (F3)
+		srv.Projector.Closer = gh    // cierre de loop de PRs mergeados sin auto-close
 		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh}
 		appApprover = &conductor.Approver{GH: gh}
 		srv.GHWebhookSecret = func() string {
