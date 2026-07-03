@@ -2906,6 +2906,23 @@ details.log-row[open] > summary::before {
 .kb-run:hover {
   border-color: var(--accent-line);
 }
+/* Botón de despacho (F2): la story/sprint está lista — un click la manda al agente. */
+.kb-dispatch {
+  appearance: none;
+  border: 1px solid var(--emerald);
+  background: var(--emerald-soft);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--emerald);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: 0.14s var(--ease);
+}
+.kb-dispatch:hover {
+  background: var(--emerald);
+  color: #fff;
+}
 .kb-gate {
   margin-top: 6px;
   font-size: 10.5px;

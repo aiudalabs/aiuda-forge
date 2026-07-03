@@ -10,7 +10,7 @@
 // JIRA/Linear muestran de un vistazo: lane (assignee), ACs, sprint, PR y run.
 
 import { useState } from "react";
-import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
+import type { DispatchCandidate, OrchestratorTicket, TicketStatus } from "@/lib/types";
 import { LaneChip } from "@/components/tickets/LaneChip";
 import { STATUS_ORDER, statusToken } from "@/lib/statusToken";
 import { useT } from "@/lib/i18n";
@@ -30,11 +30,13 @@ function acceptanceCount(accept?: string): number {
 interface StoryCardProps {
   ticket: OrchestratorTicket;
   gate?: string[];
+  candidate?: DispatchCandidate;
+  onDispatch?: (c: DispatchCandidate) => void;
   onOpenTicket: (id: string) => void;
   onOpenRun: (id: string) => void;
 }
 
-function StoryCard({ ticket, gate, onOpenTicket, onOpenRun }: StoryCardProps) {
+function StoryCard({ ticket, gate, candidate, onDispatch, onOpenTicket, onOpenRun }: StoryCardProps) {
   const t = useT();
   const acs = acceptanceCount(ticket.acceptance);
   const gated = !!gate?.length && (ticket.status === "ready" || ticket.status === "backlog");
@@ -55,6 +57,21 @@ function StoryCard({ ticket, gate, onOpenTicket, onOpenRun }: StoryCardProps) {
         </div>
       )}
       <div className="kb-meta">
+        {candidate && onDispatch && (
+          <button
+            className="kb-dispatch"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDispatch(candidate);
+            }}
+            title={t("tickets.dispatch.buttonTitle", {
+              executor: candidate.executor,
+              model: candidate.model || "auto",
+            })}
+          >
+            ▶ {candidate.kind === "sprint" ? candidate.id : t("tickets.dispatch.button")}
+          </button>
+        )}
         {ticket.owner && <LaneChip lane={ticket.owner} />}
         {acs > 0 && (
           <span className="kb-acs" title={t("tickets.card.acsTitle", { n: acs })}>
@@ -104,13 +121,15 @@ interface KanbanColumnProps {
   status: TicketStatus;
   tickets: OrchestratorTicket[];
   gates: Map<string, string[]>;
+  candidates?: Map<string, DispatchCandidate>;
+  onDispatch?: (c: DispatchCandidate) => void;
   collapsed: boolean;
   onToggle: () => void;
   onOpenTicket: (id: string) => void;
   onOpenRun: (id: string) => void;
 }
 
-function KanbanColumn({ status, tickets, gates, collapsed, onToggle, onOpenTicket, onOpenRun }: KanbanColumnProps) {
+function KanbanColumn({ status, tickets, gates, candidates, onDispatch, collapsed, onToggle, onOpenTicket, onOpenRun }: KanbanColumnProps) {
   const t = useT();
   const tok = statusToken(status);
 
@@ -150,6 +169,8 @@ function KanbanColumn({ status, tickets, gates, collapsed, onToggle, onOpenTicke
               key={tk.id}
               ticket={tk}
               gate={tk.sprint_id ? gates.get(tk.sprint_id) : undefined}
+              candidate={candidates?.get(tk.id)}
+              onDispatch={onDispatch}
               onOpenTicket={onOpenTicket}
               onOpenRun={onOpenRun}
             />
@@ -167,11 +188,13 @@ function KanbanColumn({ status, tickets, gates, collapsed, onToggle, onOpenTicke
 interface KanbanBoardProps {
   tickets: OrchestratorTicket[];
   gates: Map<string, string[]>;
+  candidates?: Map<string, DispatchCandidate>;
+  onDispatch?: (c: DispatchCandidate) => void;
   onOpenTicket: (id: string) => void;
   onOpenRun: (id: string) => void;
 }
 
-export function KanbanBoard({ tickets, gates, onOpenTicket, onOpenRun }: KanbanBoardProps) {
+export function KanbanBoard({ tickets, gates, candidates, onDispatch, onOpenTicket, onOpenRun }: KanbanBoardProps) {
   // Agrupar tickets por estado
   const byStatus = new Map<TicketStatus, OrchestratorTicket[]>();
   for (const s of STATUS_ORDER) byStatus.set(s, []);
@@ -194,6 +217,8 @@ export function KanbanBoard({ tickets, gates, onOpenTicket, onOpenRun }: KanbanB
           status={s}
           tickets={byStatus.get(s) ?? []}
           gates={gates}
+          candidates={candidates}
+          onDispatch={onDispatch}
           collapsed={isCollapsed(s)}
           onToggle={() => setUserCollapsed((c) => ({ ...c, [s]: !isCollapsed(s) }))}
           onOpenTicket={onOpenTicket}

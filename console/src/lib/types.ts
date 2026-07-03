@@ -172,11 +172,41 @@ export interface SettingsPayload {
   };
 }
 
-// PER-PROJECT settings (GET/PUT /projects/{id}/settings, Wave 2). Cómo la fábrica
-// ejecuta el trabajo de ESTE proyecto: la unidad de PR y quién mergea.
+// PER-PROJECT settings (GET/PUT /projects/{id}/settings, Wave 2 + pivote F2). Cómo
+// la fábrica ejecuta el trabajo de ESTE proyecto: la unidad de PR, quién mergea, y
+// (pivote GitHub-native) cómo/con qué se despacha el trabajo a los agentes de GitHub.
 export interface ProjectSettings {
   execution_unit: "sprint" | "story"; // "sprint" (default, 1 PR/sprint) | "story" (1 PR/story)
   merge_mode: "manual" | "auto"; // "manual" (default, humano mergea) | "auto" (la fábrica mergea)
+  dispatch_mode: "approve" | "auto" | "off"; // "approve" (default, humano confirma) | "auto" | "off"
+  executor: "copilot" | "claude_action"; // canal de ejecución (default "copilot")
+  model_by_lane: Record<string, string>; // lane → modelo (vacío = modelo auto)
+}
+
+// ── Despacho a agentes de GitHub (pivote F2) ──────────────────────────────────
+// GET /projects/{id}/dispatch/candidates → lo que está listo para despachar YA.
+// POST /projects/{id}/dispatch → dispara la story/sprint a un agente de GitHub.
+
+export interface DispatchCandidate {
+  kind: "story" | "sprint";
+  id: string;          // id de la story o del sprint
+  title: string;
+  stories: string[];   // ids de las stories del sprint (solo kind="sprint")
+  lane: string;        // lane responsable (define el modelo/executor)
+  model: string;       // modelo resuelto ("" = auto)
+  executor: string;    // canal de ejecución (copilot | claude_action)
+}
+
+export interface DispatchCandidates {
+  execution_unit: "sprint" | "story";
+  candidates: DispatchCandidate[];
+}
+
+export interface DispatchResult {
+  dispatched: string[]; // ids de las stories despachadas
+  channel: string;      // canal usado
+  model: string;        // modelo usado ("" = auto)
+  task_url?: string;    // URL de la Agent task en GitHub, si el canal la expone
 }
 
 // ── Metrics / Spend ───────────────────────────────────────────────────────────

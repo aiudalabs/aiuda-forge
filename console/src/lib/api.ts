@@ -36,6 +36,8 @@ import type {
   DesignPhase,
   DesignRun,
   DesignStepStatus,
+  DispatchCandidates,
+  DispatchResult,
   McpConnection,
   MetricsPayload,
   Notification,
@@ -698,6 +700,10 @@ function projectSettingsFrom(r: Partial<ProjectSettings>): ProjectSettings {
   return {
     execution_unit: r.execution_unit === "story" ? "story" : "sprint",
     merge_mode: r.merge_mode === "auto" ? "auto" : "manual",
+    dispatch_mode:
+      r.dispatch_mode === "auto" || r.dispatch_mode === "off" ? r.dispatch_mode : "approve",
+    executor: r.executor === "claude_action" ? "claude_action" : "copilot",
+    model_by_lane: r.model_by_lane ?? {},
   };
 }
 
@@ -721,6 +727,32 @@ export async function saveProjectSettings(
     body: JSON.stringify(payload),
   });
   return projectSettingsFrom(saved);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dispatch (pivote F2) — el ready-set del conductor y el despacho a agentes de
+// GitHub. GET candidates (miembro+) · POST dispatch (editor+, 409 si la unidad
+// dejó de ser candidata — recargar y reintentar).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getDispatchCandidates(projectId: string): Promise<DispatchCandidates> {
+  if (await isMock()) {
+    return { execution_unit: "sprint", candidates: [] };
+  }
+  return http<DispatchCandidates>(`/projects/${projectId}/dispatch/candidates`);
+}
+
+export async function dispatchWork(
+  projectId: string,
+  unit: { story_id?: string; sprint_id?: string },
+): Promise<DispatchResult> {
+  if (await isMock()) {
+    return { dispatched: [unit.story_id ?? unit.sprint_id ?? ""], channel: "copilot", model: "" };
+  }
+  return http<DispatchResult>(`/projects/${projectId}/dispatch`, {
+    method: "POST",
+    body: JSON.stringify(unit),
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

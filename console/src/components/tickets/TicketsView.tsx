@@ -10,10 +10,18 @@
 // run viaja en la URL (linkeable/refresh-safe, patrón ?run= del Board).
 
 import { useEffect, useMemo, useState } from "react";
-import { useCreateStory, useEpics, useExportBacklog, useTickets } from "@/lib/hooks";
+import {
+  useCreateStory,
+  useDispatch,
+  useDispatchCandidates,
+  useEpics,
+  useExportBacklog,
+  useTickets,
+} from "@/lib/hooks";
 import { useActiveProject, useActiveProjectId } from "@/lib/activeProject";
 import { ApiError } from "@/lib/api";
 import type { ExportResult } from "@/lib/api";
+import type { DispatchCandidate } from "@/lib/types";
 import { RunDrawer } from "@/components/board/RunDrawer";
 import { DepGraph } from "@/components/tickets/DepGraph";
 import { KanbanBoard } from "@/components/tickets/KanbanBoard";
@@ -72,6 +80,30 @@ export function TicketsView() {
   const [fStatus, setFStatus] = useState<TicketStatus | "all">("all");
   const [fSprint, setFSprint] = useState<string>("all");
   const [fLane, setFLane] = useState<string>("all");
+
+  // Despacho (F2): el ready-set del conductor. candidateOf mapea story→candidato
+  // (directo en modo story; vía su sprint en goal-mode) para pintar el botón ▶.
+  const { data: dispatchData } = useDispatchCandidates(projectId);
+  const dispatchMut = useDispatch(projectId);
+  const candidateOf = useMemo(() => {
+    const m = new Map<string, DispatchCandidate>();
+    for (const c of dispatchData?.candidates ?? []) {
+      if (c.kind === "story") m.set(c.id, c);
+      else for (const sid of c.stories ?? []) m.set(sid, c);
+    }
+    return m;
+  }, [dispatchData]);
+
+  function handleDispatch(c: DispatchCandidate) {
+    const msg =
+      c.kind === "sprint"
+        ? t("tickets.dispatch.confirmSprint", { id: c.id, n: c.stories?.length ?? 0, executor: c.executor, model: c.model || "auto" })
+        : t("tickets.dispatch.confirmStory", { id: c.id, executor: c.executor, model: c.model || "auto" });
+    if (!window.confirm(msg)) return;
+    dispatchMut.mutate(c.kind === "sprint" ? { sprint_id: c.id } : { story_id: c.id }, {
+      onError: (err) => window.alert(t("tickets.dispatch.error") + "\n" + (err instanceof Error ? err.message : String(err))),
+    });
+  }
 
   // Hidratar estado desde la URL una vez (deep-link / refresh-safe).
   useEffect(() => {
@@ -308,6 +340,8 @@ export function TicketsView() {
           <KanbanBoard
             tickets={filtered}
             gates={gates}
+            candidates={candidateOf}
+            onDispatch={handleDispatch}
             onOpenTicket={setOpenTicketId}
             onOpenRun={setOpenRunId}
           />
@@ -339,6 +373,8 @@ export function TicketsView() {
           aquí se baja a la ejecución si la story tiene run. */}
       <TicketDetail
         ticket={openTicket}
+        candidate={openTicket ? candidateOf.get(openTicket.id) : undefined}
+        onDispatch={handleDispatch}
         onClose={() => setOpenTicketId(null)}
         onOpenTicket={setOpenTicketId}
         onOpenRun={(rid) => {

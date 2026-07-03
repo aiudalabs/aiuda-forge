@@ -8,7 +8,7 @@
 // If the story has a run, a button drops one level deeper into the execution.
 
 import { useRequeue } from "@/lib/hooks";
-import type { OrchestratorTicket } from "@/lib/types";
+import type { DispatchCandidate, OrchestratorTicket } from "@/lib/types";
 import { LaneChip } from "@/components/tickets/LaneChip";
 import { statusToken } from "@/lib/statusToken";
 import { useT } from "@/lib/i18n";
@@ -24,11 +24,15 @@ function acceptanceLines(accept?: string): string[] {
 
 export function TicketDetail({
   ticket,
+  candidate,
+  onDispatch,
   onClose,
   onOpenTicket,
   onOpenRun,
 }: {
   ticket: OrchestratorTicket | null;
+  candidate?: DispatchCandidate;
+  onDispatch?: (c: DispatchCandidate) => void;
   onClose: () => void;
   onOpenTicket: (id: string) => void;
   onOpenRun: (runId: string) => void;
@@ -125,6 +129,21 @@ export function TicketDetail({
               {/* Resultado + acciones: PR directo, ejecución, y recuperación de
                   una story fallida SIN el viaje ticket→run→requeue. */}
               <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
+                {candidate && onDispatch && (
+                  <button
+                    className="btn primary"
+                    style={{ width: "100%" }}
+                    onClick={() => onDispatch(candidate)}
+                    title={t("tickets.dispatch.buttonTitle", {
+                      executor: candidate.executor,
+                      model: candidate.model || "auto",
+                    })}
+                  >
+                    {candidate.kind === "sprint"
+                      ? t("tickets.dispatch.detailSprint", { id: candidate.id, n: candidate.stories?.length ?? 0 })
+                      : t("tickets.dispatch.detailStory")}
+                  </button>
+                )}
                 {ticket.pr_url && (
                   <a
                     className="btn ghost"

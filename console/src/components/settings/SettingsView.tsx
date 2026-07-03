@@ -252,6 +252,15 @@ function ProjectSettingsSection() {
             mode={form.merge_mode}
             onChange={(merge_mode) => setForm((f) => (f ? { ...f, merge_mode } : f))}
           />
+          <DispatchSection
+            mode={form.dispatch_mode}
+            executor={form.executor}
+            onChange={(p) => setForm((f) => (f ? { ...f, ...p } : f))}
+          />
+          <ModelByLaneSection
+            map={form.model_by_lane}
+            onChange={(model_by_lane) => setForm((f) => (f ? { ...f, model_by_lane } : f))}
+          />
         </div>
       )}
     </div>
@@ -457,6 +466,132 @@ function MergeModeSection({
         {mode === "auto"
           ? t("settings.merge.helpAuto")
           : t("settings.merge.helpManual")}
+      </div>
+    </div>
+  );
+}
+
+// Despacho a agentes de GitHub (pivote F2): cuánta autonomía tiene el conductor
+// y por qué canal ejecuta.
+function DispatchSection({
+  mode,
+  executor,
+  onChange,
+}: {
+  mode: ProjectSettings["dispatch_mode"];
+  executor: ProjectSettings["executor"];
+  onChange: (p: Partial<Pick<ProjectSettings, "dispatch_mode" | "executor">>) => void;
+}) {
+  const t = useT();
+  return (
+    <div className="card">
+      <h3>{t("settings.dispatch.title")}</h3>
+      <div className="role">{t("settings.dispatch.role")}</div>
+      <div className="field" style={{ marginTop: 10 }}>
+        <label>{t("settings.dispatch.mode")}</label>
+        <select
+          className="inp"
+          value={mode}
+          onChange={(e) => onChange({ dispatch_mode: e.target.value as ProjectSettings["dispatch_mode"] })}
+        >
+          <option value="approve">{t("settings.dispatch.optApprove")}</option>
+          <option value="auto">{t("settings.dispatch.optAuto")}</option>
+          <option value="off">{t("settings.dispatch.optOff")}</option>
+        </select>
+      </div>
+      <div className="field" style={{ marginTop: 10 }}>
+        <label>{t("settings.dispatch.executor")}</label>
+        <select
+          className="inp"
+          value={executor}
+          onChange={(e) => onChange({ executor: e.target.value as ProjectSettings["executor"] })}
+        >
+          <option value="copilot">{t("settings.dispatch.optCopilot")}</option>
+          <option value="claude_action">{t("settings.dispatch.optClaude")}</option>
+        </select>
+      </div>
+      <div className="role" style={{ marginTop: 8, fontSize: 12 }}>
+        {mode === "auto"
+          ? t("settings.dispatch.helpAuto")
+          : mode === "off"
+            ? t("settings.dispatch.helpOff")
+            : t("settings.dispatch.helpApprove")}
+      </div>
+    </div>
+  );
+}
+
+// Ruteo de modelo por lane (frontera donde importa, barato donde no): pares
+// lane → modelo que el conductor pasa a la Agent tasks API. Vacío = auto.
+function ModelByLaneSection({
+  map,
+  onChange,
+}: {
+  map: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+}) {
+  const t = useT();
+  const rows = Object.entries(map);
+  const setRow = (oldLane: string, lane: string, model: string) => {
+    const next: Record<string, string> = {};
+    for (const [k, v] of rows) {
+      if (k === oldLane) {
+        if (lane.trim() !== "") next[lane.trim()] = model;
+      } else {
+        next[k] = v;
+      }
+    }
+    onChange(next);
+  };
+  return (
+    <div className="card">
+      <h3>{t("settings.modelByLane.title")}</h3>
+      <div className="role">{t("settings.modelByLane.role")}</div>
+      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.length === 0 && (
+          <div className="role" style={{ fontSize: 12 }}>{t("settings.modelByLane.empty")}</div>
+        )}
+        {rows.map(([lane, model], i) => (
+          <div key={i} style={{ display: "flex", gap: 6 }}>
+            <input
+              className="inp mono"
+              style={{ flex: 1, fontSize: 12 }}
+              value={lane}
+              placeholder="python-dev"
+              onChange={(e) => setRow(lane, e.target.value, model)}
+            />
+            <input
+              className="inp mono"
+              style={{ flex: 1.4, fontSize: 12 }}
+              value={model}
+              placeholder="claude-sonnet-4.6"
+              onChange={(e) => setRow(lane, lane, e.target.value)}
+            />
+            <button
+              className="btn ghost sm"
+              title={t("settings.modelByLane.remove")}
+              onClick={() => {
+                const next = { ...map };
+                delete next[lane];
+                onChange(next);
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        <button
+          className="btn ghost sm"
+          style={{ alignSelf: "flex-start" }}
+          onClick={() => {
+            if (!("" in map)) onChange({ ...map, "": "" });
+          }}
+        >
+          {t("settings.modelByLane.add")}
+        </button>
+      </div>
+      <div className="role" style={{ marginTop: 8, fontSize: 12 }}>
+        {t("settings.modelByLane.hint")}
       </div>
     </div>
   );

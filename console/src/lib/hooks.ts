@@ -273,6 +273,30 @@ export function useSaveProjectSettings(projectId: string | null) {
   });
 }
 
+// ── Dispatch hooks (pivote F2) ────────────────────────────────────────────────
+// El ready-set del conductor + el despacho en modo approve.
+
+export function useDispatchCandidates(projectId: string | null) {
+  return useQuery({
+    queryKey: ["dispatchCandidates", projectId] as const,
+    queryFn: () => api.getDispatchCandidates(projectId as string),
+    enabled: !!projectId,
+    refetchInterval: 30000,
+  });
+}
+
+export function useDispatch(projectId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (unit: { story_id?: string; sprint_id?: string }) =>
+      api.dispatchWork(projectId as string, unit),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dispatchCandidates", projectId] });
+      qc.invalidateQueries({ queryKey: ["tickets"] });
+    },
+  });
+}
+
 // ── Metrics hook ──────────────────────────────────────────────────────────────
 
 export function useMetrics(project?: string | null) {
