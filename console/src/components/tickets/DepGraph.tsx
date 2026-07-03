@@ -27,32 +27,35 @@ import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Node styling by status
+// Node styling by status — única fuente: lib/statusToken (antes había un map
+// local divergente de los otros 4 call sites).
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface StatusStyle {
-  background: string;
-  border: string;
-  color: string;
+import { STATUS_ORDER, statusToken } from "@/lib/statusToken";
+
+function nodeStyle(s: TicketStatus) {
+  const tok = statusToken(s);
+  return {
+    background: s === "backlog" ? "#fff" : tok.soft,
+    border: `1.5px solid ${tok.border}`,
+    color: s === "backlog" ? "var(--ink4)" : tok.color,
+  };
 }
 
-const STATUS_STYLE: Record<TicketStatus, StatusStyle> = {
-  backlog:   { background: "#fff",                 border: "1.5px solid rgba(13,13,15,0.14)", color: "#8a8a92" },
-  ready:     { background: "rgba(232,68,10,0.07)", border: "1.5px solid rgba(232,68,10,0.24)", color: "#e8440a" },
-  running:   { background: "rgba(20,40,80,0.07)",  border: "1.5px solid rgba(20,40,80,0.3)",  color: "#142850" },
-  in_review: { background: "rgba(180,140,20,0.08)",border: "1.5px solid rgba(180,140,20,0.4)", color: "#7a5d00" },
-  done:      { background: "rgba(10,123,90,0.07)", border: "1.5px solid #0a7b5a",             color: "#0a7b5a" },
-  failed:    { background: "rgba(180,30,30,0.08)", border: "1.5px solid #c55",                color: "#9a2020" },
-};
-
-const STATUS_ICON: Record<TicketStatus, string> = {
-  backlog: " ⏳",
-  ready: " ⟳",
-  running: " ⟳",
-  in_review: " ⌾",
-  done: " ✓",
-  failed: " ✗",
-};
+// Aristas: el estado de la DEPENDENCIA (source) colorea la arista — una dep
+// fallida bloquea en rojo, una running está por desbloquear, una done ya no pesa.
+function edgeStroke(source: TicketStatus): { stroke: string; strokeWidth: number } {
+  switch (source) {
+    case "failed":
+      return { stroke: "rgba(180, 30, 30, 0.55)", strokeWidth: 2 };
+    case "running":
+      return { stroke: "rgba(20, 40, 80, 0.45)", strokeWidth: 2 };
+    case "done":
+      return { stroke: "rgba(13, 13, 15, 0.12)", strokeWidth: 1.5 };
+    default:
+      return { stroke: "rgba(13, 13, 15, 0.26)", strokeWidth: 1.5 };
+  }
+}
 
 interface StoryNodeData extends Record<string, unknown> {
   id: string;
@@ -66,11 +69,10 @@ interface StoryNodeData extends Record<string, unknown> {
 function StoryNode({ data }: NodeProps) {
   const t = useT();
   const d = data as StoryNodeData;
-  const style = STATUS_STYLE[d.status] ?? STATUS_STYLE.backlog;
   return (
     <div
       style={{
-        ...style,
+        ...nodeStyle(d.status),
         borderRadius: 11,
         padding: "8px 14px",
         fontSize: 12,
@@ -83,7 +85,7 @@ function StoryNode({ data }: NodeProps) {
         userSelect: "none",
       }}
       onClick={() => d.onOpenTicket(d.id)}
-      title={t("tickets.rowTitle")}
+      title={`${d.title} — ${t("tickets.rowTitle")}`}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
@@ -93,9 +95,19 @@ function StoryNode({ data }: NodeProps) {
           <span style={{ fontFamily: "var(--mono)", fontSize: 9.5, opacity: 0.5 }}>{d.sprint}</span>
         )}
       </div>
-      <div style={{ fontSize: 12, lineHeight: 1.3, color: "inherit", marginTop: 2 }}>
-        {d.title.length > 38 ? d.title.slice(0, 37) + "…" : d.title}
-        {STATUS_ICON[d.status]}
+      <div
+        style={{
+          fontSize: 12,
+          lineHeight: 1.3,
+          color: "inherit",
+          marginTop: 2,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
+        {d.title} {statusToken(d.status).icon}
       </div>
     </div>
   );
@@ -141,13 +153,14 @@ function buildElements(
   const edges: Edge[] = [];
   for (const t of tickets) {
     for (const depId of t.deps) {
-      if (!byId.has(depId)) continue;
+      const dep = byId.get(depId);
+      if (!dep) continue;
       edges.push({
         id: `${depId}->${t.id}`,
         source: depId,
         target: t.id,
-        animated: t.status === "running",
-        style: { stroke: "rgba(13,13,15,0.18)", strokeWidth: 1.5 },
+        animated: t.status === "running" || dep.status === "running",
+        style: edgeStroke(dep.status),
         markerEnd: { type: "arrowclosed", color: "#8a8a92" } as Edge["markerEnd"],
       });
     }
@@ -334,10 +347,17 @@ function DepGraphInner({ tickets, onOpenTicket }: DepGraphProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
 
-  // Refit when entering/leaving full-screen (the viewport size changed).
+  // Refit when entering/leaving full-screen (the viewport size changed). Doble
+  // pase: uno inmediato + uno tras el layout del position:fixed — con uno solo
+  // el fit corría antes de que el canvas tuviera su tamaño nuevo y los nodos
+  // quedaban chiquitos en una esquina.
   useEffect(() => {
-    const id = requestAnimationFrame(() => fitView({ padding: 0.18, duration: 300 }));
-    return () => cancelAnimationFrame(id);
+    const raf = requestAnimationFrame(() => fitView({ padding: 0.18, duration: 200 }));
+    const tid = setTimeout(() => fitView({ padding: 0.18, duration: 300 }), 280);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(tid);
+    };
   }, [fullscreen, fitView]);
 
   // Escape closes full-screen.
@@ -374,6 +394,18 @@ function DepGraphInner({ tickets, onOpenTicket }: DepGraphProps) {
           {fullscreen ? t("tickets.graph.exitFullscreen") : t("tickets.graph.fullscreen")}
         </button>
       </div>
+      {/* Leyenda de estados — sin ella el lenguaje de color del grafo es indecodificable */}
+      <div className="dag-legend" aria-hidden>
+        {STATUS_ORDER.map((s) => {
+          const tok = statusToken(s);
+          return (
+            <span key={s} className="lg">
+              <i style={{ background: s === "backlog" ? "#fff" : tok.soft, borderColor: tok.border }} />
+              {t(`tickets.statusLabel.${s}`)}
+            </span>
+          );
+        })}
+      </div>
       <div className="dag-canvas">
         <ReactFlow
           nodes={nodes}
@@ -393,10 +425,7 @@ function DepGraphInner({ tickets, onOpenTicket }: DepGraphProps) {
             pannable
             zoomable
             style={{ background: "var(--bg2)", border: "1px solid var(--stroke)", borderRadius: 8 }}
-            nodeColor={(n) => {
-              const s = STATUS_STYLE[(n.data as StoryNodeData).status] ?? STATUS_STYLE.backlog;
-              return s.border.replace("1.5px solid ", "");
-            }}
+            nodeColor={(n) => statusToken((n.data as StoryNodeData).status).border}
           />
         </ReactFlow>
       </div>

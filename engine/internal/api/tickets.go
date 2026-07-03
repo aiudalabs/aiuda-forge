@@ -114,7 +114,8 @@ func (s *Server) readySprints(w http.ResponseWriter, r *http.Request) {
 // intra-sprint topological order (the order the goal-mode ticket renders them).
 func (s *Server) sprintStories(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	stories, err := s.Tickets.StoriesBySprint(id)
+	projectID := r.URL.Query().Get("project_id")
+	stories, err := s.Tickets.StoriesBySprintScoped(id, projectID)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -131,7 +132,8 @@ func (s *Server) sprintStories(w http.ResponseWriter, r *http.Request) {
 // claimer already moved any of them (or the sprint is empty).
 func (s *Server) claimSprint(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	claimed, ok, err := s.Tickets.ClaimSprint(id)
+	projectID := r.URL.Query().Get("project_id")
+	claimed, ok, err := s.Tickets.ClaimSprint(id, projectID)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -298,11 +300,17 @@ type addDepsReq struct {
 
 func (s *Server) addStoryDeps(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// Get story first to know its project scope
+	existing, err := s.Tickets.GetStory(id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
 	var req addDepsReq
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if err := s.Tickets.AddDep(id, req.Deps); err != nil {
+	if err := s.Tickets.AddDep(id, existing.ProjectID, req.Deps); err != nil {
 		if depError(w, err) {
 			return
 		}
@@ -347,6 +355,8 @@ type ticketView struct {
 	Deps       []string `json:"deps"`
 	RunID      string   `json:"run_id,omitempty"`
 	SprintID   string   `json:"sprint_id,omitempty"`  // lets the scheduler group running stories by sprint
+	EpicID     string   `json:"epic_id,omitempty"`    // parent epic — the board groups/labels by it
+	Owner      string   `json:"owner,omitempty"`      // agent lane responsible — the board's "assignee"
 	PRURL      string   `json:"pr_url,omitempty"`     // recorded in_review; the reconcile loop checks this PR
 	Repo       string   `json:"repo,omitempty"`       // the repo the PR lives in (needed to address it via gh)
 	ProjectID  string   `json:"project_id,omitempty"` // lets the scheduler group work by project (audit A1)
@@ -396,6 +406,8 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			Deps:       deps,
 			RunID:      st.RunID,
 			SprintID:   st.SprintID,
+			EpicID:     st.EpicID,
+			Owner:      st.Owner,
 			PRURL:      st.PRURL,
 			Repo:       st.Repo,
 			ProjectID:  st.ProjectID,

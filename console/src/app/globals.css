@@ -18,6 +18,10 @@
   --emerald-soft: rgba(10, 123, 90, 0.07);
   --navy: #142850;
   --navy-soft: rgba(20, 40, 80, 0.07);
+  --amber: #7a5d00;
+  --amber-soft: rgba(180, 140, 20, 0.12);
+  --danger: #9a2020;
+  --danger-soft: rgba(180, 30, 30, 0.08);
   --stroke: rgba(13, 13, 15, 0.07);
   --stroke-strong: rgba(13, 13, 15, 0.14);
   --shadow-soft: 0 16px 42px rgba(13, 13, 15, 0.07);
@@ -585,8 +589,18 @@ header.top .sp {
   color: var(--ink3);
 }
 .pill.fail {
-  background: rgba(180, 30, 30, 0.08);
-  color: #9a2020;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+/* Estados de story que antes colapsaban al color de otro (ready→run_,
+   in_review→queued): cada uno con token propio (ver lib/statusToken.ts). */
+.pill.ready {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pill.review {
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 .tag {
   font-size: 10.5px;
@@ -657,12 +671,13 @@ header.top .sp {
 .await-banner .t b {
   color: var(--accent);
 }
+/* ── Live-log — terminal Multica-style ──────────────────────────────────────── */
 .livelog {
   grid-column: 1/-1;
   margin-top: 12px;
   background: var(--ink);
   border-radius: var(--r);
-  padding: 13px 15px;
+  padding: 10px 14px;
   font-family: var(--mono);
   font-size: 11.5px;
   line-height: 1.85;
@@ -670,11 +685,85 @@ header.top .sp {
   max-height: 172px;
   overflow: auto;
 }
-/* Cada evento en su propia línea; los comandos/paths largos (step.event)
-   envuelven en vez de desbordar horizontalmente — se lee como un log real. */
-.livelog > div {
+/* Barra de controles: filter select + sort button — compacta dentro del terminal */
+.log-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.log-filter {
+  background: rgba(255, 255, 255, 0.07);
+  border: none;
+  border-radius: 5px;
+  color: #7f8696;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  outline: none;
+}
+.log-filter:hover,
+.log-filter:focus {
+  background: rgba(255, 255, 255, 0.12);
+  color: #cfd2da;
+}
+.log-sort-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border: none;
+  border-radius: 5px;
+  color: #7f8696;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 7px;
+  cursor: pointer;
+  line-height: 1.6;
+}
+.log-sort-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #cfd2da;
+}
+/* Filas de log — div (no expandible) y details (expandible) */
+.log-row {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* Fila colapsable: quitar triángulo nativo, mostrar cursor pointer */
+details.log-row > summary {
+  list-style: none;
+  cursor: pointer;
+  outline: none;
+}
+details.log-row > summary::-webkit-details-marker {
+  display: none;
+}
+details.log-row > summary::before {
+  content: "▶ ";
+  font-size: 8px;
+  opacity: 0.4;
+  vertical-align: middle;
+}
+details.log-row[open] > summary::before {
+  content: "▼ ";
+}
+/* Contenido expandido: bloque pre con fondo ligeramente más claro */
+.log-detail {
+  margin: 4px 0 6px 12px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 2px solid currentColor;
+  border-radius: 0 4px 4px 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: inherit;
+  opacity: 0.85;
+  max-height: 300px;
+  overflow-y: auto;
 }
 .livelog .k {
   color: #7f8696;
@@ -687,6 +776,91 @@ header.top .sp {
 }
 .livelog .st {
   color: #8fb7ff;
+}
+/* Color por kind del evento — heredado por el badge y el log-detail border. */
+.livelog .log-thinking {
+  color: #b98cff;
+}
+.livelog .log-tool {
+  color: #8fb7ff;
+  font-family: var(--mono);
+}
+.livelog .log-text {
+  color: #cfd2da;
+}
+.livelog .log-system {
+  color: #7f8696;
+}
+.livelog .log-ok {
+  color: #5fcf9e;
+  font-weight: 700;
+}
+.livelog .log-err {
+  color: #ff6b6b;
+}
+.livelog .log-st {
+  color: #8fb7ff;
+}
+.log-badge {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.09);
+  color: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+/* Runtime chip — aparece en la cabecera del RunDrawer junto al ticket id */
+.runtime-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(143, 183, 255, 0.12);
+  color: #8fb7ff;
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+/* Barra de timeline: segmentos proporcionales por tipo de evento. */
+.timeline-bar {
+  display: flex;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 8px;
+  background: var(--bg3);
+}
+.timeline-seg {
+  height: 100%;
+}
+.timeline-seg.log-thinking {
+  background: #b98cff;
+}
+.timeline-seg.log-tool {
+  background: #8fb7ff;
+}
+.timeline-seg.log-text {
+  background: #52525a;
+}
+.timeline-seg.log-system {
+  background: #a8adb8;
+}
+.timeline-seg.log-ok {
+  background: #5fcf9e;
+}
+.timeline-seg.log-err {
+  background: #ff6b6b;
+}
+.timeline-seg.log-st {
+  background: #c7ccd6;
 }
 
 .grid3 {
@@ -1170,8 +1344,9 @@ header.top .sp {
   box-shadow: var(--shadow-soft);
 }
 .trow {
+  /* ID · Título · Lane · Sprint · Depende de · Estado · PR · Run */
   display: grid;
-  grid-template-columns: 90px 1fr 120px 130px 90px;
+  grid-template-columns: 76px minmax(240px, 1fr) 130px 56px minmax(110px, 0.4fr) 112px 52px 104px;
   gap: 12px;
   padding: 12px 16px;
   align-items: center;
@@ -2025,24 +2200,21 @@ header.top .sp {
 }
 
 /* ── Dependency graph (U3) ─────────────────────────────────────────────────── */
+/* El grafo ES la página (JIRA-style): sin borde/radius/sombra de card — llena la
+   región .tickets-canvas. El único marco es el chrome de la app. */
 .dag-wrap {
   position: relative;
-  height: 560px;
-  border: 1px solid var(--stroke);
-  border-radius: var(--r-lg);
+  height: 100%;
   overflow: hidden;
   background:
     radial-gradient(circle at 20% 0%, rgba(232, 68, 10, 0.04), transparent 40%),
     #fff;
-  box-shadow: var(--shadow-soft);
 }
 .dag-wrap.full {
   position: fixed;
   inset: 0;
   z-index: 80;
   height: 100vh;
-  border: none;
-  border-radius: 0;
 }
 .dag-canvas {
   position: absolute;
@@ -2412,13 +2584,19 @@ header.top .sp {
   min-width: 0;
 }
 
-/* ── U6 polish: content fade-in + smoother card lifts ──────────────────────── */
-.wrap {
+/* ── U6 polish: content fade-in + smoother card lifts ────────────────────────
+   OJO: fadeUp anima SOLO opacity. Animar transform aquí (con fill-mode both)
+   deja un transform computado permanente sobre .wrap, que lo convierte en
+   containing block de los .drawer position:fixed → los drawers se posicionan
+   contra .wrap en vez del viewport (banda fantasma a la derecha en monitores
+   anchos + drawer que intercepta clicks). No reintroducir transform. */
+.wrap,
+.tickets-shell {
   animation: fadeUp 0.32s var(--ease) both;
 }
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .run, .stat, .ov-card, .card {
   transition: transform 0.16s var(--ease), box-shadow 0.16s var(--ease), border-color 0.16s var(--ease);
@@ -2484,13 +2662,327 @@ header.top .sp {
   padding: 3px 8px;
   color: var(--ink3);
 }
-
-/* Full-bleed Tickets views (Kanban/Grafo) — use the whole page like JIRA (U6). */
-.wrap.bleed {
-  max-width: none;
+.td-dep.click {
+  appearance: none;
+  cursor: pointer;
+  transition: border-color 0.14s var(--ease), color 0.14s var(--ease);
 }
-.wrap.bleed .dag-wrap {
-  height: calc(100vh - 230px);
+.td-dep.click:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+/* ── Tickets shell (JIRA-style) — header delgado + toolbar sticky + canvas
+   full-bleed que llena el viewport restante. Reemplaza .wrap/.wrap.bleed en la
+   sección Tickets: las visualizaciones SON la página, no cards dentro de ella. */
+.tickets-shell {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 70px);
+  min-height: 0;
+}
+.tickets-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 14px clamp(20px, 2.4vw, 48px) 10px;
+}
+.tickets-head h2 {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.tickets-head .c {
+  color: var(--ink4);
+  font-size: 12.5px;
+  font-family: var(--mono);
+}
+.tickets-head .sp {
+  flex: 1;
+}
+.tickets-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: none;
+  padding: 0 clamp(20px, 2.4vw, 48px) 12px;
+  border-bottom: 1px solid var(--stroke);
+}
+.tickets-toolbar .inp {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  font-size: 12.5px;
+}
+.tickets-count {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink4);
+}
+/* La región de contenido: cada vista la llena. .pad = vistas de documento
+   (tabla, sprints) que scrollean con gutter; sin .pad = superficies de trabajo
+   (kanban, grafo) que sangran edge-to-edge y manejan su propio scroll. */
+.tickets-canvas {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+.tickets-canvas.pad {
+  overflow: auto;
+  padding: 18px clamp(20px, 2.4vw, 48px) 26px;
+}
+
+/* ── Kanban (JIRA-like): columnas hairline edge-to-edge, sin caja wrapper ──── */
+.kanban {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow-x: auto;
+  padding: 0 clamp(8px, 0.9vw, 18px);
+}
+.kb-col {
+  flex: 1 1 210px;
+  min-width: 150px;
+  /* Tope tipo JIRA: en monitores ultra anchos las cards no se estiran a lo
+     absurdo; el espacio sobrante queda a la derecha del board. */
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--stroke);
+  padding: 12px 10px 0;
+}
+.kb-col:last-child {
+  border-right: none;
+}
+.kb-col-head {
+  appearance: none;
+  background: none;
+  border: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-bottom: 10px;
+  padding: 0 2px;
+  cursor: pointer;
+  user-select: none;
+  text-align: left;
+}
+.kb-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+.kb-col-head .kb-caret {
+  margin-left: auto;
+  color: var(--ink4);
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+.kb-col-head:hover .kb-caret {
+  opacity: 1;
+}
+/* Columna colapsada: riel vertical delgado (patrón JIRA) — las vacías colapsan
+   por defecto para que las 6 columnas quepan sin scroll horizontal. */
+.kb-col.collapsed {
+  flex: 0 0 42px;
+  min-width: 42px;
+  cursor: pointer;
+  align-items: center;
+  padding: 12px 0 0;
+  gap: 10px;
+}
+.kb-col.collapsed:hover {
+  background: var(--bg2);
+}
+.kb-vlabel {
+  writing-mode: vertical-rl;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink4);
+}
+.kb-cards {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 1px 2px 16px 1px;
+}
+.kb-card {
+  background: #fff;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+.kb-card:hover {
+  border-color: var(--stroke-strong);
+  box-shadow: 0 6px 18px rgba(13, 13, 15, 0.07);
+}
+.kb-card.gated {
+  opacity: 0.66;
+}
+.kb-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.kb-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink4);
+}
+.kb-sprint {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink4);
+  opacity: 0.85;
+}
+.kb-ttl {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.kb-body {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--ink3);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.kb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.kb-acs {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--emerald);
+  background: var(--emerald-soft);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.kb-pr {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--navy);
+  background: var(--navy-soft);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.kb-pr:hover {
+  text-decoration: underline;
+}
+.kb-run {
+  appearance: none;
+  border: 1px solid var(--stroke);
+  background: var(--bg2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.kb-run:hover {
+  border-color: var(--accent-line);
+}
+.kb-gate {
+  margin-top: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--amber);
+}
+.kb-deps {
+  margin-top: 5px;
+  font-size: 10.5px;
+  font-family: var(--mono);
+  color: var(--ink4);
+}
+.kb-empty {
+  border: 1px dashed var(--stroke-strong);
+  border-radius: 10px;
+  padding: 14px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink4);
+}
+
+/* ── Lane chip — el "assignee" (agente responsable) de una story ───────────── */
+.lane-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px 2px 3px;
+  white-space: nowrap;
+}
+.lane-avatar {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  font-weight: 800;
+  color: #fff;
+  flex: none;
+}
+
+/* ── Leyenda del grafo (esquina superior derecha del canvas) ───────────────── */
+.dag-legend {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  max-width: 44vw;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ink3);
+}
+.dag-legend .lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.dag-legend .lg i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  border: 1.5px solid;
+  font-style: normal;
 }
 
 /* ── Sprints backlog view (JIRA-style) ─────────────────────────────────────── */
@@ -2498,7 +2990,7 @@ header.top .sp {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 1000px;
+  max-width: 1440px;
 }
 .sprint-card {
   background: #fff;
@@ -2574,8 +3066,9 @@ header.top .sp {
   padding: 3px 9px;
   border-radius: 6px;
   flex: none;
-  width: 96px;
+  min-width: 96px;
   text-align: center;
+  white-space: nowrap;
 }
 .sprint-body {
   padding: 4px 18px 16px 42px;

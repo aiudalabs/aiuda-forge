@@ -1,21 +1,17 @@
 "use client";
 
 // TicketDetail (JIRA-like) — the STORY itself, not its execution. Opens for ANY
-// ticket (clickable regardless of run state): id, sprint, status, the user-story
-// description, falsifiable acceptance criteria, and dependencies. If the story has a
-// run, a button drops one level deeper into the execution (the run drawer).
+// ticket (clickable regardless of run state): id, sprint, lane, epic, status, the
+// user-story description, falsifiable acceptance criteria, dependencies (clickable
+// → navigate the graph), the PR when one exists, and the recovery action (requeue)
+// when the story failed — the user shouldn't need to dig 3 levels to unblock work.
+// If the story has a run, a button drops one level deeper into the execution.
 
-import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
+import { useRequeue } from "@/lib/hooks";
+import type { OrchestratorTicket } from "@/lib/types";
+import { LaneChip } from "@/components/tickets/LaneChip";
+import { statusToken } from "@/lib/statusToken";
 import { useT } from "@/lib/i18n";
-
-const STATUS_CLASS: Record<TicketStatus, string> = {
-  backlog: "queued",
-  ready: "run_",
-  running: "run_",
-  in_review: "queued",
-  done: "done",
-  failed: "fail",
-};
 
 // Acceptance criteria come as newline / "- " separated lines; render them as a list.
 function acceptanceLines(accept?: string): string[] {
@@ -29,13 +25,16 @@ function acceptanceLines(accept?: string): string[] {
 export function TicketDetail({
   ticket,
   onClose,
+  onOpenTicket,
   onOpenRun,
 }: {
   ticket: OrchestratorTicket | null;
   onClose: () => void;
+  onOpenTicket: (id: string) => void;
   onOpenRun: (runId: string) => void;
 }) {
   const t = useT();
+  const requeue = useRequeue();
   const open = !!ticket;
   const acs = acceptanceLines(ticket?.acceptance);
 
@@ -50,11 +49,14 @@ export function TicketDetail({
                 <div className="tk">
                   {ticket.id}
                   {ticket.sprint_id ? ` · ${ticket.sprint_id}` : ""}
+                  {ticket.epic_id ? ` · ${ticket.epic_id}` : ""}
                 </div>
                 <h3>{ticket.title}</h3>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span className={`pill ${STATUS_CLASS[ticket.status]}`}>{t(`tickets.statusLabel.${ticket.status}`)}</span>
+                <span className={`pill ${statusToken(ticket.status).pill}`}>
+                  {t(`tickets.statusLabel.${ticket.status}`)}
+                </span>
                 <button className="x" onClick={onClose}>
                   ✕
                 </button>
@@ -62,6 +64,18 @@ export function TicketDetail({
             </div>
 
             <div className="db">
+              {/* Lane (assignee) + repo — la meta que JIRA muestra arriba del fold */}
+              {(ticket.owner || ticket.repo) && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                  {ticket.owner && <LaneChip lane={ticket.owner} title={t("tickets.detail.laneTitle")} />}
+                  {ticket.repo && (
+                    <span className="tag" style={{ fontSize: 11 }} title={ticket.repo}>
+                      {ticket.repo.replace(/^https?:\/\/(www\.)?github\.com\//, "")}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Descripción / historia de usuario */}
               <div className="eyebrow acc">{t("tickets.detail.description")}</div>
               {ticket.body ? (
@@ -74,7 +88,7 @@ export function TicketDetail({
               {acs.length > 0 && (
                 <>
                   <div className="eyebrow acc" style={{ marginTop: 20 }}>
-                    {t("tickets.detail.acceptance")}
+                    {t("tickets.detail.acceptance")} · {acs.length}
                   </div>
                   <ul className="td-acs">
                     {acs.map((ac, i) => (
@@ -87,7 +101,7 @@ export function TicketDetail({
                 </>
               )}
 
-              {/* Dependencias */}
+              {/* Dependencias — clickeables: navegar el grafo sin cerrar el drawer */}
               {ticket.deps && ticket.deps.length > 0 && (
                 <>
                   <div className="eyebrow acc" style={{ marginTop: 20 }}>
@@ -95,24 +109,50 @@ export function TicketDetail({
                   </div>
                   <div className="td-deps">
                     {ticket.deps.map((d) => (
-                      <span key={d} className="td-dep">
-                        {d}
-                      </span>
+                      <button
+                        key={d}
+                        className="td-dep click"
+                        onClick={() => onOpenTicket(d)}
+                        title={t("tickets.rowTitle")}
+                      >
+                        {d} →
+                      </button>
                     ))}
                   </div>
                 </>
               )}
 
-              {/* Enlace a la ejecución (un nivel más abajo) */}
-              <div style={{ marginTop: 24 }}>
+              {/* Resultado + acciones: PR directo, ejecución, y recuperación de
+                  una story fallida SIN el viaje ticket→run→requeue. */}
+              <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
+                {ticket.pr_url && (
+                  <a
+                    className="btn ghost"
+                    style={{ width: "100%", textAlign: "center" }}
+                    href={ticket.pr_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {t("tickets.detail.viewPR")}
+                  </a>
+                )}
                 {ticket.run_id ? (
                   <button className="btn primary" style={{ width: "100%" }} onClick={() => onOpenRun(ticket.run_id as string)}>
                     {t("tickets.detail.viewRun")}
                   </button>
                 ) : (
-                  <div className="td-empty">
-                    {t("tickets.detail.notRun")}
-                  </div>
+                  <div className="td-empty">{t("tickets.detail.notRun")}</div>
+                )}
+                {ticket.status === "failed" && ticket.run_id && (
+                  <button
+                    className="btn ghost"
+                    style={{ width: "100%", color: "var(--danger)" }}
+                    onClick={() => requeue.mutate([ticket.run_id as string], { onSuccess: onClose })}
+                    disabled={requeue.isPending}
+                    title={t("tickets.detail.requeueTitle")}
+                  >
+                    {requeue.isPending ? t("tickets.detail.requeueing") : t("tickets.detail.requeue")}
+                  </button>
                 )}
               </div>
             </div>

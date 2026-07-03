@@ -9,6 +9,8 @@
 import { useMemo, useState } from "react";
 import type { OrchestratorTicket, Sprint, TicketStatus } from "@/lib/types";
 import { useSprints } from "@/lib/hooks";
+import { LaneChip } from "@/components/tickets/LaneChip";
+import { statusToken } from "@/lib/statusToken";
 import { useT } from "@/lib/i18n";
 
 // Dominant status of a sprint: a problem/active state wins so it's visible.
@@ -114,17 +116,30 @@ export function SprintsView({
             {open && (
               <div className="sprint-body">
                 {g.goal && <p className="sprint-goal">🎯 {g.goal}</p>}
-                {g.waitingOn.length > 0 && g.state === "backlog" && (
+                {g.waitingOn.length > 0 && g.state !== "done" && (
                   <p className="sprint-waiting">{t("tickets.sprints.waitingOn", { list: g.waitingOn.join(", ") })}</p>
                 )}
                 <div className="sprint-stories">
-                  {g.stories.map((story) => (
-                    <button key={story.id} className="sprint-story" onClick={() => onOpenTicket(story.id)}>
-                      <span className="sprint-story-id">{story.id}</span>
-                      <span className="sprint-story-ttl">{story.title}</span>
-                      <span className={`pill ${pillClass(story.status)}`}>{t(`tickets.statusLabel.${story.status}`)}</span>
-                    </button>
-                  ))}
+                  {g.stories.map((story) => {
+                    // Un "Listo" dentro de un sprint que espera a otros es engañoso
+                    // (#21): el orquestador no lo va a disparar — se muestra apagado.
+                    const gated =
+                      g.waitingOn.length > 0 && (story.status === "ready" || story.status === "backlog");
+                    return (
+                      <button key={story.id} className="sprint-story" onClick={() => onOpenTicket(story.id)}>
+                        <span className="sprint-story-id">{story.id}</span>
+                        <span className="sprint-story-ttl">{story.title}</span>
+                        {story.owner && <LaneChip lane={story.owner} />}
+                        <span
+                          className={`pill ${statusToken(story.status).pill}`}
+                          style={gated ? { opacity: 0.55 } : undefined}
+                          title={gated ? t("tickets.sprints.waitingOn", { list: g.waitingOn.join(", ") }) : undefined}
+                        >
+                          {t(`tickets.statusLabel.${story.status}`)}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -135,6 +150,3 @@ export function SprintsView({
   );
 }
 
-function pillClass(s: TicketStatus): string {
-  return s === "done" ? "done" : s === "failed" ? "fail" : s === "running" || s === "ready" ? "run_" : "queued";
-}

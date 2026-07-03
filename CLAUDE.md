@@ -44,11 +44,17 @@ Monorepo: `engine/` (Go, module `forge`) + `console/` (Next.js/TS).
    SDLC best practice (PRD = WHAT before architecture = HOW is standard; question is whether an explicit
    requirements/elicitation step belongs between discovery and PRD, and whether architecture should inform
    the PRD). Research and adjust `engine/registry/workflows/design.yaml` + the personas if needed.
-6. **Responsive UI for large/external monitors.** On a laptop it's fine, but on a wide external monitor a
-   fixed max-width container leaves a lot of empty space on the right. Use the full viewport width on large
-   screens (fluid/responsive layout).
-7. **JIRA-style kanban board.** The tickets board should show (almost) all columns in one view; today it
-   requires horizontal scrolling. Make columns fit/condense so the whole kanban is visible at once.
+6. ✅ **Responsive UI for large/external monitors** (RESUELTO 2026-07-02 en Tickets, la peor página). Causa
+   raíz encontrada: `.wrap { animation: fadeUp ... both }` animaba `transform`, dejando un transform computado
+   permanente que convertía `.wrap` en containing block de los `.drawer position:fixed` → drawers posicionados
+   contra el wrap (banda blanca fantasma a la derecha + drawer interceptando clicks). fadeUp ahora anima solo
+   opacity — NO reintroducir transform ahí. Tickets rediseñado a shell full-bleed (header + toolbar + canvas).
+7. ✅ **JIRA-style kanban board** (RESUELTO 2026-07-02). Board full-bleed sin caja wrapper, columnas hairline
+   `flex:1 1 210px; min/max 150-480px`, colapsables a riel vertical (vacías colapsan por default) → las 6
+   columnas caben sin scroll horizontal desde ~1280px. Cards con lane chip (owner), conteo de ACs, sprint,
+   PR link y run link reales. `lib/statusToken.ts` es la ÚNICA fuente del color/pill de estados (antes 5 maps
+   divergentes). Estado view/ticket/run en la URL. Filtros búsqueda/estado/sprint/lane en toolbar persistente.
+   El endpoint GET /tickets ahora expone `owner`/`epic_id` (ticketView, api/tickets.go).
 8b. **Mockup viewer: open full-screen / in a new tab as a functional UI.** The generated
     `docs/mockups/index.html` is self-contained and meant to be clicked through to evaluate. Today it's
     embedded inside the Studio UI (iframe) where you can't do much — add an "open in new tab / full screen"
@@ -103,16 +109,14 @@ Monorepo: `engine/` (Go, module `forge`) + `console/` (Next.js/TS).
     project_id="default" → the factory run got "default" → the project-scoped Board showed nothing. Added
     `project_id: $trigger.project_id` to the handoff step. (Wave-2 integration miss: registry/workflows
     wasn't in MTEngine's lane.)
-21. **"Ready" column is misleading in sprint mode (UX inconsistency).** The Kanban derives "ready" per-STORY
-    (deps satisfied), but in sprint mode the factory fires per-SPRINT. A no-dep story (e.g. S1-28 app shell in
-    SP6 frontend) shows "ready" even though its sprint can't run until earlier sprints are done+merged — so it
-    won't actually fire. Fix: in sprint mode, derive readiness at the sprint level (a story is "ready" only
-    when its whole sprint is ready), or visually indicate the story is gated by its sprint's ordering.
-22. **Ticket card/detail shows only the title — surface the description (body + acceptance).** Each story HAS
-    a user-story `body` ("As a X, I want Y, so that Z") + detailed `acceptance` criteria, but the Kanban card
-    only renders the title, so the user can't see what a story is. Show the body + ACs in the ticket card
-    (truncated) and full in the ticket detail/drawer. (The full build spec is generated just-in-time by
-    draft_story — that's separate; this is just surfacing the skeleton description that already exists.)
+21. ✅ **"Ready" misleading in sprint mode** (RESUELTO 2026-07-02 a nivel UI). `waitingBySprint()` en
+    TicketsView deriva, por story, los sprints que su sprint espera (deps cross-sprint no done); Kanban/Tabla/
+    Sprints muestran "⧗ Esperando a SPn" y apagan la pill de una ready/backlog gated. (El orquestador ya
+    difería el fire — esto alinea lo que la UI promete con lo que va a pasar.)
+22. ✅ **Ticket card/detail: body + acceptance** (RESUELTO 2026-07-02). La card kanban muestra body (clamp 3
+    líneas) + conteo de ACs (✓ n) + lane chip + sprint + PR/run links; el drawer muestra ACs completos con
+    conteo, lane, repo, deps clickeables (navegan al dep) y botón Reencolar cuando la story está failed
+    (antes requerían el viaje ticket→run→RunDrawer).
 
 ## Wave R — Resiliencia / recuperación (HIGH — bloquearon al usuario en vivo, 2026-06-26)
 R1. **Session-limit de Claude marca stories como `failed` permanentemente.** Pegar el límite de sesión

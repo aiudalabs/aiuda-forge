@@ -1,30 +1,27 @@
 "use client";
 
-// KanbanBoard — vista de tickets agrupados por estado en columnas.
-// Columnas (de izquierda a derecha): open · blocked · ready · firing · done · failed
+// KanbanBoard — vista de tickets agrupados por estado en columnas (JIRA-like).
 // Columnas de solo lectura: el scheduler mueve las stories, no la UI.
+//
+// Rediseño 2026-07: el board ES la página (sin caja wrapper con borde/sombra);
+// columnas separadas por hairlines que llenan la altura del canvas, cada una con
+// scroll propio. Columnas colapsables a un riel vertical (las vacías colapsan por
+// defecto) para que las 6 quepan sin scroll horizontal. Cards con la meta que
+// JIRA/Linear muestran de un vistazo: lane (assignee), ACs, sprint, PR y run.
 
+import { useState } from "react";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
+import { LaneChip } from "@/components/tickets/LaneChip";
+import { STATUS_ORDER, statusToken } from "@/lib/statusToken";
 import { useT } from "@/lib/i18n";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Configuración de columnas
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface ColumnConfig {
-  status: TicketStatus;
-  pillClass: string;
-  headerColor: string;
+function acceptanceCount(accept?: string): number {
+  if (!accept) return 0;
+  return accept
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^\s*[-*•]\s*/, "").trim())
+    .filter(Boolean).length;
 }
-
-const COLUMNS: ColumnConfig[] = [
-  { status: "backlog",   pillClass: "queued", headerColor: "var(--ink4)" },
-  { status: "ready",     pillClass: "run_",   headerColor: "var(--accent)" },
-  { status: "running",   pillClass: "run_",   headerColor: "var(--navy)" },
-  { status: "in_review", pillClass: "queued", headerColor: "#7a5d00" },
-  { status: "done",      pillClass: "done",   headerColor: "var(--emerald)" },
-  { status: "failed",    pillClass: "fail",   headerColor: "#9a2020" },
-];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tarjeta de story dentro de una columna
@@ -32,150 +29,130 @@ const COLUMNS: ColumnConfig[] = [
 
 interface StoryCardProps {
   ticket: OrchestratorTicket;
+  gate?: string[];
   onOpenTicket: (id: string) => void;
+  onOpenRun: (id: string) => void;
 }
 
-function StoryCard({ ticket, onOpenTicket }: StoryCardProps) {
+function StoryCard({ ticket, gate, onOpenTicket, onOpenRun }: StoryCardProps) {
   const t = useT();
+  const acs = acceptanceCount(ticket.acceptance);
+  const gated = !!gate?.length && (ticket.status === "ready" || ticket.status === "backlog");
   return (
     <div
-      className="card click"
-      style={{ padding: "11px 13px", boxShadow: "none" }}
+      className={`kb-card${gated ? " gated" : ""}`}
       onClick={() => onOpenTicket(ticket.id)}
       title={t("tickets.rowTitle")}
     >
-      <div
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          color: "var(--ink4)",
-          marginBottom: 3,
-        }}
-      >
-        {ticket.id}
+      <div className="kb-top">
+        <span className="kb-id">{ticket.id}</span>
+        {ticket.sprint_id && <span className="kb-sprint">{ticket.sprint_id}</span>}
       </div>
-      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
-        {ticket.title}
-      </div>
+      <div className="kb-ttl">{ticket.title}</div>
       {ticket.body && (
-        <div
-          title={
-            ticket.body +
-            (ticket.acceptance ? "\n\nAcceptance:\n" + ticket.acceptance : "")
-          }
-          style={{
-            marginTop: 5,
-            fontSize: 11.5,
-            color: "var(--ink3)",
-            lineHeight: 1.4,
-            display: "-webkit-box",
-            WebkitLineClamp: 3,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-          }}
-        >
+        <div className="kb-body" title={ticket.body}>
           {ticket.body}
         </div>
       )}
-      {ticket.run_id && (
-        <div style={{ marginTop: 6 }}>
-          <span
-            className="tag"
-            style={{ fontSize: 10.5, color: "var(--accent)", cursor: "pointer" }}
-          >
-            {ticket.run_id.slice(0, 12)}…
+      <div className="kb-meta">
+        {ticket.owner && <LaneChip lane={ticket.owner} />}
+        {acs > 0 && (
+          <span className="kb-acs" title={t("tickets.card.acsTitle", { n: acs })}>
+            ✓ {acs}
           </span>
-        </div>
+        )}
+        {ticket.pr_url && (
+          <a
+            className="kb-pr"
+            href={ticket.pr_url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={t("tickets.card.openPR")}
+          >
+            PR ↗
+          </a>
+        )}
+        {ticket.run_id && (
+          <button
+            className="kb-run"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenRun(ticket.run_id!);
+            }}
+            title={t("tickets.card.openRun")}
+          >
+            {ticket.run_id.slice(0, 10)}…
+          </button>
+        )}
+      </div>
+      {gated && (
+        <div className="kb-gate">⧗ {t("tickets.sprints.waitingOn", { list: gate!.join(", ") })}</div>
       )}
       {ticket.deps && ticket.deps.length > 0 && (
-        <div
-          className="dep"
-          style={{ marginTop: 5, fontSize: 10.5 }}
-        >
-          dep: {ticket.deps.join(", ")}
-        </div>
+        <div className="kb-deps">dep: {ticket.deps.join(", ")}</div>
       )}
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Columna de Kanban
+// Columna de Kanban (colapsable a riel vertical, patrón JIRA)
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface KanbanColumnProps {
-  config: ColumnConfig;
+  status: TicketStatus;
   tickets: OrchestratorTicket[];
+  gates: Map<string, string[]>;
+  collapsed: boolean;
+  onToggle: () => void;
   onOpenTicket: (id: string) => void;
+  onOpenRun: (id: string) => void;
 }
 
-function KanbanColumn({ config, tickets, onOpenTicket }: KanbanColumnProps) {
+function KanbanColumn({ status, tickets, gates, collapsed, onToggle, onOpenTicket, onOpenRun }: KanbanColumnProps) {
   const t = useT();
-  return (
-    <div
-      style={{
-        flex: "1 1 240px",
-        minWidth: 200,
-        display: "flex",
-        flexDirection: "column",
-        gap: 0,
-      }}
-    >
-      {/* Cabecera de columna */}
+  const tok = statusToken(status);
+
+  if (collapsed) {
+    return (
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginBottom: 10,
-        }}
+        className="kb-col collapsed"
+        onClick={onToggle}
+        role="button"
+        title={t("tickets.kanban.expand")}
       >
-        <span
-          className={`pill ${config.pillClass}`}
-          style={{ fontSize: 10.5, padding: "3px 9px" }}
-        >
-          {t(`tickets.col.${config.status}`)}
-        </span>
-        <span
-          style={{
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-            color: config.headerColor,
-            fontWeight: 700,
-          }}
-        >
+        <span className="kb-count" style={{ color: tok.color }}>
           {tickets.length}
         </span>
+        <span className="kb-vlabel">{t(`tickets.col.${status}`)}</span>
       </div>
+    );
+  }
 
-      {/* Cards con scroll independiente si la columna es alta */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          maxHeight: "calc(100vh - 290px)",
-          overflowY: "auto",
-          paddingBottom: 4,
-          paddingRight: 2,
-        }}
-      >
+  return (
+    <div className="kb-col">
+      <button className="kb-col-head" onClick={onToggle} title={t("tickets.kanban.collapse")}>
+        <span className={`pill ${tok.pill}`} style={{ fontSize: 10.5, padding: "3px 9px" }}>
+          {t(`tickets.col.${status}`)}
+        </span>
+        <span className="kb-count" style={{ color: tok.color }}>
+          {tickets.length}
+        </span>
+        <span className="kb-caret">◂</span>
+      </button>
+      <div className="kb-cards">
         {tickets.length === 0 ? (
-          <div
-            style={{
-              border: "1px dashed var(--stroke-strong)",
-              borderRadius: 10,
-              padding: "14px 10px",
-              textAlign: "center",
-              fontSize: 12,
-              color: "var(--ink4)",
-            }}
-          >
-            {t("tickets.column.empty")}
-          </div>
+          <div className="kb-empty">{t("tickets.column.empty")}</div>
         ) : (
-          tickets.map((t) => (
-            <StoryCard key={t.id} ticket={t} onOpenTicket={onOpenTicket} />
+          tickets.map((tk) => (
+            <StoryCard
+              key={tk.id}
+              ticket={tk}
+              gate={tk.sprint_id ? gates.get(tk.sprint_id) : undefined}
+              onOpenTicket={onOpenTicket}
+              onOpenRun={onOpenRun}
+            />
           ))
         )}
       </div>
@@ -189,39 +166,40 @@ function KanbanColumn({ config, tickets, onOpenTicket }: KanbanColumnProps) {
 
 interface KanbanBoardProps {
   tickets: OrchestratorTicket[];
+  gates: Map<string, string[]>;
   onOpenTicket: (id: string) => void;
+  onOpenRun: (id: string) => void;
 }
 
-export function KanbanBoard({ tickets, onOpenTicket }: KanbanBoardProps) {
+export function KanbanBoard({ tickets, gates, onOpenTicket, onOpenRun }: KanbanBoardProps) {
   // Agrupar tickets por estado
   const byStatus = new Map<TicketStatus, OrchestratorTicket[]>();
-  for (const col of COLUMNS) byStatus.set(col.status, []);
-  for (const t of tickets) {
-    const col = byStatus.get(t.status);
-    if (col) col.push(t);
+  for (const s of STATUS_ORDER) byStatus.set(s, []);
+  for (const tk of tickets) {
+    const col = byStatus.get(tk.status);
+    if (col) col.push(tk);
   }
 
+  // Colapso: manual del usuario > default (vacía = colapsada). El default es
+  // derivado, no estado: al llegar datos la columna se auto-expande sola.
+  const [userCollapsed, setUserCollapsed] = useState<Partial<Record<TicketStatus, boolean>>>({});
+  const isCollapsed = (s: TicketStatus) =>
+    userCollapsed[s] ?? (byStatus.get(s)?.length ?? 0) === 0;
+
   return (
-    <div
-      style={{
-        background: "#fff",
-        border: "1px solid var(--stroke)",
-        borderRadius: "var(--r-lg)",
-        padding: 18,
-        boxShadow: "var(--shadow-soft)",
-        overflowX: "auto",
-      }}
-    >
-      <div style={{ display: "flex", gap: 14 }}>
-        {COLUMNS.map((col) => (
-          <KanbanColumn
-            key={col.status}
-            config={col}
-            tickets={byStatus.get(col.status) ?? []}
-            onOpenTicket={onOpenTicket}
-          />
-        ))}
-      </div>
+    <div className="kanban">
+      {STATUS_ORDER.map((s) => (
+        <KanbanColumn
+          key={s}
+          status={s}
+          tickets={byStatus.get(s) ?? []}
+          gates={gates}
+          collapsed={isCollapsed(s)}
+          onToggle={() => setUserCollapsed((c) => ({ ...c, [s]: !isCollapsed(s) }))}
+          onOpenTicket={onOpenTicket}
+          onOpenRun={onOpenRun}
+        />
+      ))}
     </div>
   );
 }

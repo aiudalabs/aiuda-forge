@@ -3,35 +3,53 @@
 // TICKETS — espejo de JIRA/GitHub por MCP (doc 16 §2.3).
 // Cableado contra GET /tickets del STORE NATIVO (control-plane, API_URL): la UI
 // es self-contained. Si el control-plane no está, cae al mock.
-// Los run_id se enlazan al drawer del Board.
+//
+// Layout JIRA-style (rediseño 2026-07): header delgado + toolbar de filtros
+// persistente + canvas full-bleed que llena el viewport restante. Las vistas
+// (kanban/grafo) SON la página — sin cajas-widget alrededor. Estado view/ticket/
+// run viaja en la URL (linkeable/refresh-safe, patrón ?run= del Board).
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCreateStory, useEpics, useTickets } from "@/lib/hooks";
 import { useActiveProjectId } from "@/lib/activeProject";
 import { ApiError } from "@/lib/api";
 import { RunDrawer } from "@/components/board/RunDrawer";
 import { DepGraph } from "@/components/tickets/DepGraph";
 import { KanbanBoard } from "@/components/tickets/KanbanBoard";
+import { LaneChip } from "@/components/tickets/LaneChip";
 import { SprintsView } from "@/components/tickets/SprintsView";
 import { TicketDetail } from "@/components/tickets/TicketDetail";
+import { statusToken } from "@/lib/statusToken";
 import type { OrchestratorTicket, TicketStatus } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 
-type TicketsView = "tabla" | "sprints" | "kanban" | "grafo";
+type ViewKind = "tabla" | "sprints" | "kanban" | "grafo";
+const VIEWS: ViewKind[] = ["tabla", "sprints", "kanban", "grafo"];
+const DEFAULT_VIEW: ViewKind = "kanban";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// Gating por sprint (CLAUDE.md #21): en modo sprint una story "ready" cuyo
+// sprint espera a otros sprints NO va a dispararse. Devuelve, por story, la
+// lista de sprints que su sprint está esperando (deps cross-sprint no done).
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Clase CSS para la pill de estado — reutiliza los mismos tokens del mockup.
-const STATUS_CLASS: Record<TicketStatus, string> = {
-  backlog: "queued",
-  ready: "run_",
-  running: "run_",
-  in_review: "queued",
-  done: "done",
-  failed: "fail",
-};
+function waitingBySprint(tickets: OrchestratorTicket[]): Map<string, string[]> {
+  const sprintOf = new Map(tickets.map((t) => [t.id, t.sprint_id || ""]));
+  const doneIds = new Set(tickets.filter((t) => t.status === "done").map((t) => t.id));
+  const waiting = new Map<string, Set<string>>();
+  for (const t of tickets) {
+    const sid = t.sprint_id || "";
+    if (!sid) continue;
+    for (const d of t.deps ?? []) {
+      const depSprint = sprintOf.get(d);
+      if (depSprint && depSprint !== sid && !doneIds.has(d)) {
+        (waiting.get(sid) ?? waiting.set(sid, new Set()).get(sid)!).add(depSprint);
+      }
+    }
+  }
+  const out = new Map<string, string[]>();
+  for (const [sid, set] of waiting) out.set(sid, [...set].sort());
+  return out;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Componente raíz
@@ -44,13 +62,81 @@ export function TicketsView() {
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
   const [showNewStory, setShowNewStory] = useState(false);
-  const [view, setView] = useState<TicketsView>("tabla");
+  const [view, setView] = useState<ViewKind>(DEFAULT_VIEW);
 
-  const list = tickets ?? [];
-  const openTicket = openTicketId ? list.find((t) => t.id === openTicketId) ?? null : null;
+  // Filtros (barra persistente, patrón JIRA). Aplican a las 4 vistas.
+  const [q, setQ] = useState("");
+  const [fStatus, setFStatus] = useState<TicketStatus | "all">("all");
+  const [fSprint, setFSprint] = useState<string>("all");
+  const [fLane, setFLane] = useState<string>("all");
 
-  // Single, view-aware descriptor — avoids repeating "store nativo · backlog" on top
-  // of a second "Kanban / Grafo DAG" sub-header (they were redundant).
+  // Hidratar estado desde la URL una vez (deep-link / refresh-safe).
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const v = p.get("view") as ViewKind | null;
+    if (v && VIEWS.includes(v)) setView(v);
+    const tk = p.get("ticket");
+    if (tk) setOpenTicketId(tk);
+    const r = p.get("run");
+    if (r) setOpenRunId(r);
+  }, []);
+
+  // Reflejar estado a la URL (replaceState: sin entradas de history por click).
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (view === DEFAULT_VIEW) p.delete("view");
+    else p.set("view", view);
+    if (openTicketId) p.set("ticket", openTicketId);
+    else p.delete("ticket");
+    if (openRunId) p.set("run", openRunId);
+    else p.delete("run");
+    const qs = p.toString();
+    window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+  }, [view, openTicketId, openRunId]);
+
+  // Escape cierra el drawer superior (run > ticket), espejo del Board.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (openRunId) setOpenRunId(null);
+      else setOpenTicketId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openRunId]);
+
+  const list = useMemo(() => tickets ?? [], [tickets]);
+  const openTicket = openTicketId ? list.find((tk) => tk.id === openTicketId) ?? null : null;
+
+  const sprints = useMemo(
+    () => [...new Set(list.map((tk) => tk.sprint_id).filter(Boolean))].sort() as string[],
+    [list],
+  );
+  const lanes = useMemo(
+    () => [...new Set(list.map((tk) => tk.owner).filter(Boolean))].sort() as string[],
+    [list],
+  );
+  const gates = useMemo(() => waitingBySprint(list), [list]);
+
+  const filtered = useMemo(() => {
+    let out = list;
+    if (fStatus !== "all") out = out.filter((tk) => tk.status === fStatus);
+    if (fSprint !== "all") out = out.filter((tk) => (tk.sprint_id || "") === fSprint);
+    if (fLane !== "all") out = out.filter((tk) => (tk.owner || "") === fLane);
+    const needle = q.trim().toLowerCase();
+    if (needle) {
+      out = out.filter(
+        (tk) =>
+          tk.id.toLowerCase().includes(needle) ||
+          tk.title.toLowerCase().includes(needle) ||
+          (tk.body ?? "").toLowerCase().includes(needle),
+      );
+    }
+    return out;
+  }, [list, fStatus, fSprint, fLane, q]);
+
+  const hasFilter = q.trim() !== "" || fStatus !== "all" || fSprint !== "all" || fLane !== "all";
+
   const viewDesc =
     view === "sprints"
       ? t("tickets.desc.sprints")
@@ -61,14 +147,12 @@ export function TicketsView() {
           : t("tickets.desc.tabla");
 
   return (
-    <div className={`wrap${view === "kanban" || view === "grafo" ? " bleed" : ""}`}>
-      <div className="sectitle">
+    <div className="tickets-shell">
+      {/* Header delgado: título + tabs de vista + acción primaria */}
+      <div className="tickets-head">
         <h2>{t("tickets.title")}</h2>
         <span className="c">{viewDesc}</span>
         <span className="sp" />
-        <span className="tag">{t("tickets.storiesCount", { n: list.length })}</span>
-
-        {/* Toggle Tabla / Kanban / Grafo */}
         <div
           style={{
             display: "flex",
@@ -79,7 +163,7 @@ export function TicketsView() {
             padding: 3,
           }}
         >
-          {(["tabla", "sprints", "kanban", "grafo"] as TicketsView[]).map((v) => (
+          {VIEWS.map((v) => (
             <button
               key={v}
               className={`btn sm${view === v ? " primary" : " ghost"}`}
@@ -90,65 +174,143 @@ export function TicketsView() {
             </button>
           ))}
         </div>
-
         <button className="btn ghost sm" onClick={() => setShowNewStory(true)}>
           {t("tickets.newStory")}
         </button>
       </div>
 
+      {/* Toolbar persistente: búsqueda + filtros por faceta (patrón JIRA) */}
+      <div className="tickets-toolbar">
+        <input
+          className="inp"
+          style={{ width: 220 }}
+          placeholder={t("tickets.toolbar.search")}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <select
+          className="inp"
+          style={{ width: "auto" }}
+          value={fStatus}
+          onChange={(e) => setFStatus(e.target.value as TicketStatus | "all")}
+        >
+          <option value="all">{t("tickets.toolbar.allStatuses")}</option>
+          {(["backlog", "ready", "running", "in_review", "done", "failed"] as TicketStatus[]).map((s) => (
+            <option key={s} value={s}>
+              {t(`tickets.statusLabel.${s}`)}
+            </option>
+          ))}
+        </select>
+        {sprints.length > 0 && (
+          <select
+            className="inp"
+            style={{ width: "auto" }}
+            value={fSprint}
+            onChange={(e) => setFSprint(e.target.value)}
+          >
+            <option value="all">{t("tickets.toolbar.allSprints")}</option>
+            {sprints.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        )}
+        {lanes.length > 0 && (
+          <select
+            className="inp"
+            style={{ width: "auto" }}
+            value={fLane}
+            onChange={(e) => setFLane(e.target.value)}
+          >
+            <option value="all">{t("tickets.toolbar.allLanes")}</option>
+            {lanes.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+        )}
+        {hasFilter && (
+          <button
+            className="btn ghost sm"
+            onClick={() => {
+              setQ("");
+              setFStatus("all");
+              setFSprint("all");
+              setFLane("all");
+            }}
+          >
+            {t("tickets.toolbar.clear")}
+          </button>
+        )}
+        <span className="sp" style={{ flex: 1 }} />
+        <span className="tickets-count">
+          {hasFilter
+            ? t("tickets.toolbar.countFiltered", { n: filtered.length, total: list.length })
+            : t("tickets.storiesCount", { n: list.length })}
+        </span>
+      </div>
+
+      {/* Canvas: cada vista llena la región. */}
       {isLoading ? (
-        <div className="placeholder">
-          <div className="ph-ic"><span className="spin" /></div>
-          {t("tickets.loading")}
+        <div className="tickets-canvas pad">
+          <div className="placeholder">
+            <div className="ph-ic">
+              <span className="spin" />
+            </div>
+            {t("tickets.loading")}
+          </div>
         </div>
       ) : isError ? (
-        <div className="placeholder err">
-          <div className="ph-ic">⚠</div>
-          {t("tickets.error")}{" "}
-          <button className="btn ghost sm" onClick={() => refetch()}>
-            {t("tickets.retry")}
-          </button>
+        <div className="tickets-canvas pad">
+          <div className="placeholder err">
+            <div className="ph-ic">⚠</div>
+            {t("tickets.error")}{" "}
+            <button className="btn ghost sm" onClick={() => refetch()}>
+              {t("tickets.retry")}
+            </button>
+          </div>
         </div>
       ) : list.length === 0 ? (
-        <div className="placeholder">
-          <div className="ph-ic">☰</div>
-          {t("tickets.empty")}
+        <div className="tickets-canvas pad">
+          <div className="placeholder">
+            <div className="ph-ic">☰</div>
+            {t("tickets.empty")}
+          </div>
         </div>
       ) : view === "tabla" ? (
-        <div className="ttable">
-          <div className="trow">
-            <span>{t("tickets.col.id")}</span>
-            <span>{t("tickets.col.title")}</span>
-            <span>{t("tickets.col.deps")}</span>
-            <span>{t("tickets.col.status")}</span>
-            <span>{t("tickets.col.run")}</span>
-          </div>
-          {list.map((t) => (
-            <TicketRow
-              key={t.id}
-              ticket={t}
-              onOpenTicket={setOpenTicketId}
-            />
-          ))}
+        <div className="tickets-canvas pad">
+          <TicketsTable
+            tickets={filtered}
+            gates={gates}
+            onOpenTicket={setOpenTicketId}
+            onOpenRun={setOpenRunId}
+          />
         </div>
       ) : view === "sprints" ? (
-        <SprintsView tickets={list} onOpenTicket={setOpenTicketId} />
+        <div className="tickets-canvas pad">
+          <SprintsView tickets={filtered} onOpenTicket={setOpenTicketId} />
+        </div>
       ) : view === "kanban" ? (
-        <KanbanBoard tickets={list} onOpenTicket={setOpenTicketId} />
+        <div className="tickets-canvas">
+          <KanbanBoard
+            tickets={filtered}
+            gates={gates}
+            onOpenTicket={setOpenTicketId}
+            onOpenRun={setOpenRunId}
+          />
+        </div>
       ) : (
-        <DepGraph tickets={list} onOpenTicket={setOpenTicketId} />
+        <div className="tickets-canvas">
+          <DepGraph tickets={filtered} onOpenTicket={setOpenTicketId} />
+        </div>
       )}
 
       {/* Modal: nueva story */}
-      <div
-        className={`overlay ${showNewStory ? "on" : ""}`}
-        onClick={() => setShowNewStory(false)}
-      />
+      <div className={`overlay ${showNewStory ? "on" : ""}`} onClick={() => setShowNewStory(false)} />
       {showNewStory && (
-        <NewStoryModal
-          existingIds={list.map((t) => t.id)}
-          onClose={() => setShowNewStory(false)}
-        />
+        <NewStoryModal existingIds={list.map((tk) => tk.id)} onClose={() => setShowNewStory(false)} />
       )}
 
       {/* Detalle del ticket (la story en sí) — abre para cualquier ticket. Desde
@@ -156,6 +318,7 @@ export function TicketsView() {
       <TicketDetail
         ticket={openTicket}
         onClose={() => setOpenTicketId(null)}
+        onOpenTicket={setOpenTicketId}
         onOpenRun={(rid) => {
           setOpenTicketId(null);
           setOpenRunId(rid);
@@ -169,32 +332,102 @@ export function TicketsView() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fila de ticket
+// Vista Tabla — lista densa: lane (assignee), sprint, deps, estado, PR y run.
 // ─────────────────────────────────────────────────────────────────────────────
+
+function TicketsTable({
+  tickets,
+  gates,
+  onOpenTicket,
+  onOpenRun,
+}: {
+  tickets: OrchestratorTicket[];
+  gates: Map<string, string[]>;
+  onOpenTicket: (id: string) => void;
+  onOpenRun: (id: string) => void;
+}) {
+  const t = useT();
+  return (
+    <div className="ttable">
+      <div className="trow">
+        <span>{t("tickets.col.id")}</span>
+        <span>{t("tickets.col.title")}</span>
+        <span>{t("tickets.col.lane")}</span>
+        <span>{t("tickets.col.sprint")}</span>
+        <span>{t("tickets.col.deps")}</span>
+        <span>{t("tickets.col.status")}</span>
+        <span>{t("tickets.col.pr")}</span>
+        <span>{t("tickets.col.run")}</span>
+      </div>
+      {tickets.map((tk) => (
+        <TicketRow key={tk.id} ticket={tk} gates={gates} onOpenTicket={onOpenTicket} onOpenRun={onOpenRun} />
+      ))}
+    </div>
+  );
+}
 
 function TicketRow({
   ticket,
+  gates,
   onOpenTicket,
+  onOpenRun,
 }: {
   ticket: OrchestratorTicket;
+  gates: Map<string, string[]>;
   onOpenTicket: (id: string) => void;
+  onOpenRun: (id: string) => void;
 }) {
   const t = useT();
+  const gate = ticket.sprint_id ? gates.get(ticket.sprint_id) : undefined;
+  const gated = !!gate?.length && (ticket.status === "ready" || ticket.status === "backlog");
   return (
     <div className="trow click" onClick={() => onOpenTicket(ticket.id)} title={t("tickets.rowTitle")}>
       <span className="id">{ticket.id}</span>
       <span className="ttl">{ticket.title}</span>
+      <span>
+        {ticket.owner ? <LaneChip lane={ticket.owner} /> : <span style={{ color: "var(--ink4)", fontSize: 12 }}>—</span>}
+      </span>
+      <span className="mono" style={{ fontSize: 11, color: "var(--ink4)" }}>
+        {ticket.sprint_id || "—"}
+      </span>
       <span className="dep">{ticket.deps && ticket.deps.length > 0 ? ticket.deps.join(", ") : "—"}</span>
       <span>
-        <span className={`pill ${STATUS_CLASS[ticket.status]}`}>
+        <span
+          className={`pill ${statusToken(ticket.status).pill}`}
+          title={gated ? t("tickets.sprints.waitingOn", { list: gate!.join(", ") }) : undefined}
+          style={gated ? { opacity: 0.55 } : undefined}
+        >
           {t(`tickets.status.${ticket.status}`)}
         </span>
       </span>
       <span>
+        {ticket.pr_url ? (
+          <a
+            className="kb-pr"
+            href={ticket.pr_url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={t("tickets.card.openPR")}
+          >
+            PR ↗
+          </a>
+        ) : (
+          <span style={{ color: "var(--ink4)", fontSize: 12 }}>—</span>
+        )}
+      </span>
+      <span>
         {ticket.run_id ? (
-          <span className="mono" style={{ fontSize: 11, color: "var(--ink4)" }}>
-            {ticket.run_id.slice(0, 12)}…
-          </span>
+          <button
+            className="kb-run"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenRun(ticket.run_id!);
+            }}
+            title={t("tickets.card.openRun")}
+          >
+            {ticket.run_id.slice(0, 10)}…
+          </button>
         ) : (
           <span style={{ color: "var(--ink4)", fontSize: 12 }}>—</span>
         )}

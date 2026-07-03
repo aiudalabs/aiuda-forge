@@ -306,4 +306,8 @@ export interface OrchestratorTicket {
   deps: string[];
   run_id?: string;
   sprint_id?: string;   // the sprint this story belongs to (SP1, SP2, …)
+  epic_id?: string;     // parent epic (E1, E2, …)
+  owner?: string;       // agent lane responsible (python-dev, react-dev, …) — the "assignee"
+  pr_url?: string;      // PR opened by the story's run, when one exists
+  repo?: string;        // owner/repo the story lands in
 }
