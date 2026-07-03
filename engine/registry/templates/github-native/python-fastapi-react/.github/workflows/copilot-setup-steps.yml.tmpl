@@ -32,8 +32,8 @@ jobs:
           --health-retries 5
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # SIN actions/checkout: el harness de Copilot clona él mismo — un checkout
+      # explícito aquí 404ea con su token y mata la sesión entera (bisect 2026-07-03).
 
       - name: Set up Python
         uses: actions/setup-python@v5

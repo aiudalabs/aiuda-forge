@@ -17,8 +17,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # SIN actions/checkout: el harness de Copilot clona él mismo — un checkout
+      # explícito aquí 404ea con su token y mata la sesión entera (bisect 2026-07-03).
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
