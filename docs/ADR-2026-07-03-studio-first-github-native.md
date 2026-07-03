@@ -151,6 +151,18 @@ leído de `GET /tickets?project=marketpty-597c85e3` del control-plane.
   Ese script + un webhook (`issues.closed` / `pull_request.merged`) + un assign = todo el
   scheduler que hace falta.
 
+- ✅ **El ruteo de modelo por tarea ES automatizable** (probado en vivo): la
+  [Agent tasks REST API](https://docs.github.com/rest/agent-tasks/agent-tasks?apiVersion=2026-03-10)
+  (`POST /agents/repos/{owner}/{repo}/tasks`, public preview, Pro/Pro+/Max desde jun-2026)
+  acepta `prompt`, **`model`** (claude-sonnet-4.6, claude-opus-4.6, gpt-5.3-codex…),
+  `create_pull_request`, `base_ref`/`head_ref`. Se lanzó S1-02 programáticamente con
+  `model=claude-sonnet-4.6` (task `df980789`, state=queued). Implicación: el conductor puede
+  implementar la tesis de "ruteo por paso" (story mecánica → modelo barato; infra compleja →
+  frontera) sin intervención manual — la selección de modelo del panel web es solo la vista
+  manual de esta API. Ojo: preview (sujeta a cambios); el CLI `gh agent-task` aún no tiene
+  `--model` ([cli/cli#13222](https://github.com/cli/cli/issues/13222)), irrelevante porque el
+  conductor habla REST. Asignar-vía-issue usa modelo auto; la API es la vía con control.
+
 **Gaps confirmados (= el valor que queda de nuestro lado):**
 - ⚠️ **Copilot coding agent no estaba asignable** en la cuenta (`suggestedActors` solo devolvió
   al humano): requiere plan Copilot Pro/Business con el coding agent habilitado
