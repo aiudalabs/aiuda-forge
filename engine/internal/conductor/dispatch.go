@@ -190,6 +190,14 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 	res := DispatchResult{Dispatched: storyIDs, Channel: pol.Executor, Model: cand.Model}
 	switch pol.Executor {
 	case "claude_action":
+		// Disciplina de checkpoint para el runner efímero (cazado en vivo, R1
+		// GitHub-edition): un session-limit a mitad de sprint perdió 113 turnos
+		// de trabajo porque nada se había pusheado. El branch nace primero y
+		// cada story se commitea/pushea al completarse.
+		prompt = "IMPORTANT — ephemeral runner discipline: FIRST create your working branch and push it. " +
+			"Commit AND push after completing EACH story (or any substantial unit of work) so progress survives " +
+			"session limits. If you sense you are running out of session, push what is done and open the PR as " +
+			"draft with a checklist of what remains.\n\n" + prompt
 		// El workflow fija su modelo; el ruteo por lane aplica al canal copilot.
 		if err := d.GH.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", map[string]string{"prompt": prompt}); err != nil {
 			return DispatchResult{}, err
