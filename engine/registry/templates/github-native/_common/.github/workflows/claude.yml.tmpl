@@ -1,0 +1,28 @@
+name: Claude Code
+# Canal de despacho del conductor (executor: claude_action): el conductor de
+# aiuda-forge dispara workflow_dispatch con el prompt de la story/sprint y
+# Claude Code implementa y abre el PR, facturado al plan Claude del usuario.
+# SIN trigger de issue_comment a propósito: el partner agent de Agent HQ también
+# responde a "@claude" y ambos dispararían con el mismo comentario.
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Tarea para Claude"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  claude:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: ${{ inputs.prompt }}

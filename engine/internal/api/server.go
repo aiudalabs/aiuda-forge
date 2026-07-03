@@ -180,6 +180,8 @@ func (s *Server) routes() {
 	// Dispatch (F2): ready-set del conductor + despacho a agentes de GitHub.
 	m.HandleFunc("GET /projects/{id}/dispatch/candidates", s.needProjects(s.dispatchCandidates))
 	m.HandleFunc("POST /projects/{id}/dispatch", s.needProjects(s.dispatchWork))
+	// Scaffold (F2): hornear la especialización github-native en el repo del proyecto.
+	m.HandleFunc("POST /projects/{id}/scaffold/github", s.needProjects(s.scaffoldGitHub))
 	secret := s.GHWebhookSecret
 	if secret == nil {
 		secret = func() string { return "" }
