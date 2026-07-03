@@ -4,7 +4,7 @@ import { Providers } from "./providers";
 import { AppShell } from "@/components/AppShell";
 
 export const metadata: Metadata = {
-  title: "Aiuda Factory",
+  title: "Forja — by aiudalabs",
   description: "UI de la fábrica de software autónoma — aiuda labs.",
 };
 

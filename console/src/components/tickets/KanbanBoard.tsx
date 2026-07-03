@@ -102,7 +102,7 @@ function StoryCard({ ticket, gate, candidate, onDispatch, onOpenTicket, onOpenRu
             {t("tickets.card.session")} ↗
           </a>
         )}
-        {ticket.run_id && (
+        {ticket.run_id && !ticket.session_url && !ticket.external_ref && (
           <button
             className="kb-run"
             onClick={(e) => {

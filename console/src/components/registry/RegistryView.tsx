@@ -27,7 +27,7 @@ SyntaxHighlighter.registerLanguage("yaml", yaml);
 // Tipos locales
 // ─────────────────────────────────────────────────────────────────────────────
 
-type ActiveTab = RegistryKind;
+type ActiveTab = Exclude<RegistryKind, "skills">;
 type ItemModal =
   | { kind: RegistryKind; id: string; isNew: false }
   | { kind: RegistryKind; id: string; isNew: true }
@@ -43,7 +43,13 @@ export function RegistryView() {
   const [modal, setModal] = useState<ItemModal>(null);
 
   const { data: listData, isLoading, isError } = useRegistryList(tab);
-  const ids = listData?.ids ?? [];
+  // Solo personas de DISEÑO: la ejecución vive en GitHub (.github/agents del
+  // repo scaffoldeado) — editar aquí un dev/reviewer legacy no afecta nada.
+  const DESIGN_AGENTS = new Set([
+    "analyst", "pm", "architect", "designer", "ux-designer", "scrum-master", "po", "product-owner",
+  ]);
+  const allIds = listData?.ids ?? [];
+  const ids = tab === "agents" ? allIds.filter((id) => DESIGN_AGENTS.has(id)) : allIds;
 
   function openNew() {
     setModal({ kind: tab, id: "", isNew: true });
@@ -55,9 +61,8 @@ export function RegistryView() {
 
   const TAB_LABELS: Record<ActiveTab, string> = {
     agents: t("registry.tab.agents"),
-    skills: t("registry.tab.skills"),
     workflows: t("registry.tab.workflows"),
-  };
+  } as Record<ActiveTab, string>;
 
   return (
     <div className="wrap">
@@ -66,7 +71,7 @@ export function RegistryView() {
         <h2>{t("registry.title")}</h2>
         <span className="c">{t("registry.subtitle")}</span>
         <span className="sp" />
-        {(["agents", "skills", "workflows"] as ActiveTab[]).map((k) => (
+        {(["agents", "workflows"] as ActiveTab[]).map((k) => (
           <button
             key={k}
             className={`btn ghost sm${tab === k ? " on" : ""}`}
