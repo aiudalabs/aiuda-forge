@@ -567,6 +567,40 @@ func (s *Store) SetStoryExternalRef(id, externalRef string) error {
 	return nil
 }
 
+// SyncExternalStatus mirrors a story's status from its external source of truth
+// (the GitHub issue, F1 projection). It deliberately BYPASSES legalSources: that
+// table protects the KERNEL's execution flow, but a mirrored story is driven by
+// GitHub (an issue can reopen: done→backlog; an agent can unassign:
+// running→backlog). The guard is different here: only stories that actually
+// carry an external_ref may be written this way, so the kernel flow is untouched.
+// prURL overwrites when non-empty and is cleared when the story leaves
+// in_review/running back to backlog (the PR is gone).
+func (s *Store) SyncExternalStatus(id string, status Status, prURL string) (changed bool, err error) {
+	set := "status=?"
+	args := []any{string(status)}
+	if prURL != "" {
+		set += ", pr_url=?"
+		args = append(args, prURL)
+	} else if status == StatusBacklog {
+		set += ", pr_url=''"
+	}
+	args = append(args, id, string(status))
+	res, err := s.db.Exec(
+		`UPDATE stories SET `+set+` WHERE id=? AND external_ref IS NOT NULL AND external_ref!='' AND status!=?`,
+		args...)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n > 0 && status == StatusDone {
+		s.fireStoryDone(id)
+	}
+	return n > 0, nil
+}
+
 // GetStory loads a Story by id, including its deps.
 func (s *Store) GetStory(id string) (Story, error) {
 	var st Story

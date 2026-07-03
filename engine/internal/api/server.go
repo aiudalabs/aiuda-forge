@@ -21,6 +21,8 @@ import (
 	"forge/internal/billing"
 	"forge/internal/brain"
 	"forge/internal/channels"
+	"forge/internal/conductor"
+	"forge/internal/ghapp"
 	github "forge/internal/github"
 	"forge/internal/httpx"
 	"forge/internal/projects"
@@ -46,9 +48,14 @@ type Server struct {
 	Billing  *billing.Store  // nil when billing is not configured
 	// Channels is the connector registry, used by inbound webhooks to reply to a
 	// channel (v1.3). Set by the app after construction; nil disables replies.
-	Channels  channels.Registry
-	linkCodes *linkCodeStore // short-lived codes binding a channel user to an account
-	mux       *http.ServeMux
+	Channels channels.Registry
+	// Projector mirrors GitHub issue/PR state into the ticket store (F1 pivot).
+	// nil disables the sync endpoint + webhook. GHWebhookSecret feeds the webhook
+	// signature check, read per-request (hot-reloadable).
+	Projector       *conductor.Projector
+	GHWebhookSecret func() string
+	linkCodes       *linkCodeStore // short-lived codes binding a channel user to an account
+	mux             *http.ServeMux
 }
 
 // workspaceForProject resolves a project's billing workspace via its owner. Returns
@@ -165,6 +172,14 @@ func (s *Server) routes() {
 	// Backlog export (F0 GitHub-native pivot): stories → issues + native blocked_by
 	// deps. Editor+ only; synchronous (minutes for big backlogs); idempotent.
 	m.HandleFunc("POST /projects/{id}/export/github", s.needProjects(s.exportGitHub))
+	// GitHub projection (F1): manual sync + inbound webhook (public route, request
+	// verified by X-Hub-Signature-256 — patrón del webhook de Telegram).
+	m.HandleFunc("POST /projects/{id}/sync/github", s.needProjects(s.syncGitHub))
+	secret := s.GHWebhookSecret
+	if secret == nil {
+		secret = func() string { return "" }
+	}
+	m.Handle("POST /webhooks/github", ghapp.WebhookHandler(secret, webhookSync{s}))
 	// Channels (v1.3): issue a link code (authenticated) + the inbound Telegram
 	// webhook (public, verified by the bot secret header).
 	m.HandleFunc("POST /channels/{connector}/link-code", s.issueLinkCode)

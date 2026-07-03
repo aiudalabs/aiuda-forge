@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"forge/internal/agent"
@@ -19,7 +20,9 @@ import (
 	"forge/internal/brain"
 	"forge/internal/channels"
 	"forge/internal/channels/telegram"
+	"forge/internal/conductor"
 	"forge/internal/gate"
+	"forge/internal/github"
 	"forge/internal/pr"
 	"forge/internal/projects"
 	"forge/internal/sandbox"
@@ -88,10 +91,34 @@ func Build(cfg Config) (*App, error) {
 	}
 	eng.Register("gate", hardGate)
 
+	// Load CLI backends from registry/backends/*.yaml. Each file defines one
+	// engine (id + argv). Adding opencode, copilot-cli, or any other claude-code-
+	// protocol CLI requires only a YAML file — zero Go. The "claude" entry is the
+	// default; all others are opt-in via `backend: <id>` in the agent's manifest.
+	registryBackends, berr := agent.LoadBackends(filepath.Join(cfg.RegistryRoot, "backends"))
+	if berr != nil {
+		log.Printf("app: warn: could not load registry backends: %v", berr)
+		registryBackends = map[string]agent.Backend{}
+	}
+
+	// Env-based overrides: CURSOR_BASE_URL registers the Cursor local API
+	// (OpenAI-compatible /chat/completions). Pure-generation only — no tool loop.
+	if cursorURL := os.Getenv("CURSOR_BASE_URL"); cursorURL != "" {
+		ob := agent.OpenAIBackend{BaseURL: cursorURL, APIKey: os.Getenv("CURSOR_API_KEY")}
+		registryBackends["cursor"] = ob
+		registryBackends["openai"] = ob
+		log.Printf("app: registered cursor/openai backend at %s", cursorURL)
+	}
+
 	backend := cfg.Backend
 	if backend == nil {
 		if cfg.EngineMode == "claude" {
-			backend = ClaudeBackend()
+			// Prefer the registry entry so the argv is configurable via YAML.
+			if b, ok := registryBackends["claude"]; ok {
+				backend = b
+			} else {
+				backend = agent.CliBackend{} // zero-value defaults to claude argv
+			}
 		} else {
 			backend = agent.FakeBackend{Reply: "stub: implemented"}
 		}
@@ -104,6 +131,7 @@ func Build(cfg Config) (*App, error) {
 
 	agentRunner := agent.NewStepRunner(backend, agentLoader)
 	agentRunner.Auth = cfg.AgentAuth
+	agentRunner.Backends = registryBackends
 	// Cost routing (billing step 5): the margin lever. The policy assigns a cheaper
 	// model to decomposition/planning agents and a capable one to complex work,
 	// above the manifest default — lowering our token cost without changing price.
@@ -115,7 +143,7 @@ func Build(cfg Config) (*App, error) {
 		agentRunner.Timeout = cfg.AgentTimeout
 	}
 	// Run the agent INSIDE the per-task sandbox (docker + egress allowlist), on a
-	// .git-less worktree. The agent's image must contain the `claude` CLI
+	// .git-less worktree. The agent's image must contain the agent CLI
 	// (VIBEFORGE_AGENT_IMAGE); the egress network (VIBEFORGE_SANDBOX_NETWORK)
 	// has no internet gateway — only the egress-proxy is reachable.
 	agentRunner.Sandboxed = true
@@ -140,6 +168,7 @@ func Build(cfg Config) (*App, error) {
 	// Inputs may carry `output: <relpath>` to persist the doc to disk.
 	designRunner := agent.NewStepRunner(backend, agentLoader)
 	designRunner.Auth = cfg.AgentAuth
+	designRunner.Backends = registryBackends
 	if cfg.AgentTimeout > 0 {
 		designRunner.Timeout = cfg.AgentTimeout
 	}
@@ -236,6 +265,19 @@ func Build(cfg Config) (*App, error) {
 		srv.Brain = brain.New(llm, ops, bst, emit)
 	}
 
+	// GitHub projection (F1 pivot): mirror exported stories' state (issue/PR) into
+	// the ticket store. The webhook secret is read per-request (env wins, settings
+	// fallback) so it can be configured without a restart.
+	if tix != nil {
+		srv.Projector = conductor.NewProjector(tix, github.New())
+		srv.GHWebhookSecret = func() string {
+			if v := os.Getenv("VIBEFORGE_GITHUB_WEBHOOK_SECRET"); v != "" {
+				return v
+			}
+			return srv.Settings.MCPValue("github", "webhook_secret")
+		}
+	}
+
 	// Billing (SaaS metering + entitlements). Always on: it auto-creates a free
 	// workspace per owner. Meter (a) real token cost is accrued in the usage handler;
 	// meter (b) billable features via the ticket store's done hook (catches story- AND
@@ -298,8 +340,9 @@ func Build(cfg Config) (*App, error) {
 	return &App{Store: st, Tickets: tix, Projects: proj, Auth: au, Engine: eng, Bus: bus, Server: srv, workers: workers}, nil
 }
 
-// ClaudeBackend builds the real claude -p backend.
-func ClaudeBackend() agent.Backend { return agent.ClaudeBackend{} }
+// ClaudeBackend returns a CliBackend pre-configured for the claude CLI.
+// Kept for test compatibility; production code uses the registry loader.
+func ClaudeBackend() agent.Backend { return agent.CliBackend{} }
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -335,6 +378,30 @@ func (a *App) StartBackground(ctx context.Context) {
 	}
 	go a.Engine.ReaperLoop(ctx, 60_000, 10*time.Second)
 	go a.Bus.Run(ctx)
+	// GitHub projection poll (F1): fallback cuando no llegan webhooks (dev/local).
+	// VIBEFORGE_GITHUB_SYNC_INTERVAL en segundos; 0 lo apaga; default 60s. Solo
+	// cuesta 2 llamadas gh por proyecto-con-stories-espejadas por tick.
+	if a.Server != nil && a.Server.Projector != nil && a.Projects != nil {
+		interval := 60 * time.Second
+		if v := os.Getenv("VIBEFORGE_GITHUB_SYNC_INTERVAL"); v != "" {
+			if secs, err := strconv.Atoi(v); err == nil {
+				interval = time.Duration(secs) * time.Second
+			}
+		}
+		go a.Server.Projector.Loop(ctx, interval, func() []conductor.SyncTarget {
+			ps, err := a.Projects.List()
+			if err != nil {
+				return nil
+			}
+			out := make([]conductor.SyncTarget, 0, len(ps))
+			for _, p := range ps {
+				if p.Repo != "" {
+					out = append(out, conductor.SyncTarget{ProjectID: p.ID, RepoURL: p.Repo})
+				}
+			}
+			return out
+		})
+	}
 }
 
 // Close releases resources.
