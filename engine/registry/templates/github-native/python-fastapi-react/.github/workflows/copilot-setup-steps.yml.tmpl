@@ -38,26 +38,33 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
 
-      - name: Install backend (editable, with dev deps)
+      # Robusto al layout real (cazado en vivo: un flat-layout sin `packages`
+      # configurado revienta el editable install y eso tumbó la sesión entera
+      # del agente). requirements.txt manda; el editable es best-effort.
+      - name: Install backend deps
         run: |
           python -m pip install -U pip
-          pip install -e ".[dev]"
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e ".[dev]" || pip install -e . || echo "editable install no soportado — seguimos con requirements"; fi
 
+      # Frontend solo cuando existe (los primeros sprints suelen ser backend-only).
       - name: Set up Node + pnpm (frontend)
+        if: ${{ hashFiles('frontend/package.json') != '' }}
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
       - name: Set up Node runtime
+        if: ${{ hashFiles('frontend/package.json') != '' }}
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          node-version: "22"
 
       - name: Install frontend deps
+        if: ${{ hashFiles('frontend/package.json') != '' }}
         working-directory: frontend
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile || pnpm install
