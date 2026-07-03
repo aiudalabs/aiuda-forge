@@ -619,33 +619,38 @@ func (s *Store) SessionURLs(projectID string) (map[string]string, error) {
 // prURL overwrites when non-empty and is cleared when the story leaves
 // in_review/running back to backlog (the PR is gone).
 func (s *Store) SyncExternalStatus(id string, status Status, prURL string) (changed bool, err error) {
-	set := "status=?"
-	args := []any{string(status)}
-	if prURL != "" {
-		set += ", pr_url=?"
-		args = append(args, prURL)
-	} else if status == StatusBacklog {
-		set += ", pr_url=''"
+	var prev, prevPR string
+	err = s.db.QueryRow(
+		`SELECT status, pr_url FROM stories WHERE id=? AND external_ref IS NOT NULL AND external_ref!=''`, id).
+		Scan(&prev, &prevPR)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil // not mirrored — never touched by the projection
 	}
-	args = append(args, id, string(status))
-	res, err := s.db.Exec(
-		`UPDATE stories SET `+set+` WHERE id=? AND external_ref IS NOT NULL AND external_ref!='' AND status!=?`,
-		args...)
 	if err != nil {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
+	newPR := prevPR
+	switch {
+	case prURL != "":
+		newPR = prURL
+	case status == StatusBacklog:
+		newPR = "" // el PR que hubiera ya no aplica
+	}
+	statusChanged := prev != string(status)
+	if !statusChanged && newPR == prevPR {
+		return false, nil
+	}
+	if _, err := s.db.Exec(`UPDATE stories SET status=?, pr_url=? WHERE id=?`, string(status), newPR, id); err != nil {
 		return false, err
 	}
-	if n > 0 && status == StatusBacklog {
+	if statusChanged && status == StatusBacklog {
 		// De vuelta al backlog: la sesión de agente (si la hubo) ya no ejecuta nada.
 		_, _ = s.db.Exec(`DELETE FROM story_sessions WHERE story_id=?`, id)
 	}
-	if n > 0 && status == StatusDone {
+	if statusChanged && status == StatusDone {
 		s.fireStoryDone(id)
 	}
-	return n > 0, nil
+	return true, nil
 }
 
 // GetStory loads a Story by id, including its deps.

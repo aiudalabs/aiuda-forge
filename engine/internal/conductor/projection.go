@@ -167,6 +167,21 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 			prFor[n] = pr
 		}
 	}
+	// Fallback: los agentes no siempre respetan "Closes #n" (cazado en vivo: el
+	// PR de sprint de Copilot salió sin refs). Una mención del id de la story
+	// (p.ej. "S1-01") en el título/body del PR también la liga — \b evita que
+	// S1-1 matchee dentro de S1-11.
+	for _, pr := range prs {
+		text := pr.Title + "\n" + pr.Body
+		for n, st := range byNumber {
+			if cur, seen := prFor[n]; seen && !cur.Draft {
+				continue
+			}
+			if regexp.MustCompile(`\b` + regexp.QuoteMeta(st.ID) + `\b`).MatchString(text) {
+				prFor[n] = pr
+			}
+		}
+	}
 
 	for _, iss := range issues {
 		st, mirrored := byNumber[iss.Number]

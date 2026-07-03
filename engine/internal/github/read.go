@@ -70,6 +70,7 @@ func (c *Client) ListIssueStates(ctx context.Context, repoURL string) ([]IssueSt
 // OpenPR is the projection's view of one open pull request.
 type OpenPR struct {
 	Number int    `json:"number"`
+	Title  string `json:"title"`
 	Body   string `json:"body"`
 	URL    string `json:"html_url"`
 	Draft  bool   `json:"draft"`

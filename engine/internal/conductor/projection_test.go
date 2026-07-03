@@ -129,6 +129,30 @@ func TestSyncProjectReopenRollsBack(t *testing.T) {
 	}
 }
 
+func TestSyncProjectLinksPRByStoryIDMention(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	// PR de sprint SIN "Closes #n" (cazado en vivo) pero que menciona los ids de
+	// las stories → debe ligarlas igual. S-05 no está espejada: intocable.
+	gh := &fakeGH{
+		issues: []github.IssueState{{Number: 1, State: "open"}, {Number: 2, State: "open"}},
+		prs: []github.OpenPR{{
+			Number: 46, Title: "feat: implement sprint SP1",
+			Body: "## S-01 — Schema\nstuff\n## S-02 — Auth\nmore", URL: "https://github.com/o/r/pull/46", Draft: false,
+		}},
+	}
+	p := NewProjector(st, gh)
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"S-01", "S-02"} {
+		s, _ := st.GetStory(id)
+		if s.Status != tickets.StatusInReview || s.PRURL == "" {
+			t.Fatalf("%s = %s pr=%q, want in_review con pr_url", id, s.Status, s.PRURL)
+		}
+	}
+}
+
 func TestSyncProjectSessionPinsRunning(t *testing.T) {
 	st := newStore(t)
 	seed(t, st)
