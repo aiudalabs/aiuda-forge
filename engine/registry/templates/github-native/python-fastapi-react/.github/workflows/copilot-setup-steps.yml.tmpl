@@ -39,7 +39,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+          # SIN cache: pip — el cache resuelve rutas de requirements/pyproject en
+          # el workspace, que en las sesiones de agente puede estar VACÍO en esta
+          # fase (el harness clona después). Cazado en vivo: mataba la sesión.
 
       # Robusto al layout real (cazado en vivo: un flat-layout sin `packages`
       # configurado revienta el editable install y eso tumbó la sesión entera

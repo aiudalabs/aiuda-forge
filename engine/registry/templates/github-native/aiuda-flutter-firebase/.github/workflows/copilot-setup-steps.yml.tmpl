@@ -40,7 +40,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: pnpm
+          # SIN cache: pnpm — resuelve el lockfile del workspace, que puede estar
+          # vacío en la fase de setup de las sesiones de agente.
 
       - name: Install TS workspace deps (functions, admin, types)
         run: pnpm install --frozen-lockfile
