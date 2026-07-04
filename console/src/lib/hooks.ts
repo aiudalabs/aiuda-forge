@@ -609,6 +609,15 @@ export function useLiveEvents(runId: string | null, isRunning: boolean) {
   return events;
 }
 
+/** Estado de la conexión GitHub del usuario + config de la App (Settings → Conexiones). */
+export function useGitHubStatus() {
+  return useQuery({
+    queryKey: ["githubStatus"],
+    queryFn: () => api.getGitHubStatus(),
+    staleTime: 30_000,
+  });
+}
+
 /** Canales disponibles en el GitHub del proyecto (probe real; cache 60s). */
 export function useExecutors(projectId: string | null) {
   return useQuery({

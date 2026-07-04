@@ -868,6 +868,14 @@ details.log-row[open] > summary::before {
   grid-template-columns: repeat(3, 1fr);
   gap: 14px;
 }
+/* Settings (and other 3-col card grids) stack on small/medium viewports. The
+   mobile bug (2026-07-04 UX audit): the Project card's Agent-dispatch controls
+   ran off-screen because .grid3 never collapsed below ~623px. */
+@media (max-width: 700px) {
+  .grid3 {
+    grid-template-columns: 1fr;
+  }
+}
 .card {
   background: #fff;
   border: 1px solid var(--stroke);

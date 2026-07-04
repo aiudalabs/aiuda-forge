@@ -64,6 +64,7 @@ import type {
   Role,
   ProjectPR,
   ApproveWorkflowResult,
+  GitHubStatus,
 } from "./types";
 
 export type ApiMode = "real" | "mock";
@@ -768,6 +769,17 @@ export async function dispatchWork(
     method: "POST",
     body: JSON.stringify(unit),
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conexión GitHub — GET /auth/github/status. La puerta de entrada del producto:
+// ¿el usuario conectó su GitHub y está la App de la instancia configurada? Sin
+// scope de proyecto (es estado de cuenta/instancia).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getGitHubStatus(): Promise<GitHubStatus> {
+  if (await isMock()) return { connected: false, app_configured: false };
+  return http<GitHubStatus>(`/auth/github/status`);
 }
 
 /** Canales de ejecución realmente disponibles en el GitHub del proyecto. */

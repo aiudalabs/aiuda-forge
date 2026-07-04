@@ -408,3 +408,13 @@ export interface ExecutorInfo {
   reason?: string;
   default: boolean;
 }
+
+// ── Conexión GitHub (Settings → Conexiones) ───────────────────────────────────
+// GET /auth/github/status → ¿este usuario tiene GitHub conectado? + si la App de
+// la instancia ya está configurada (manifest flow completado).
+export interface GitHubStatus {
+  connected: boolean;
+  login?: string;
+  app_configured?: boolean;
+  app_url?: string;
+}

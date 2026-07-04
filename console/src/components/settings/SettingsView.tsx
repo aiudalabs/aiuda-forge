@@ -1,17 +1,16 @@
 "use client";
 
-// SETTINGS — dos planos (Wave 2, multi-tenant), ordenados por lo que el usuario busca:
-//  1. PER-PROYECTO (arriba, proyecto activo): unidad de ejecución · modo de merge ·
-//     despacho a agentes (dispatch/executor/workflow_approval/max_concurrency) · modelo
-//     por lane. GET/PUT /projects/{id}/settings. Se auto-gestiona carga/errores y su
-//     propio guardado.
-//  2. GLOBAL (abajo, por instancia): Tickets (MCP) + el "ejecutor legacy (self-hosted)"
-//     (auth del agente · sandbox), agrupado y separado porque solo aplica al modo fábrica
-//     local — la ejecución GitHub-native no lo usa. GET/PUT /settings.
-// Conectores (Telegram) y Cuenta/seguridad (cambio de password) se renderizan DESPUÉS,
-// como componentes hermanos en app/settings/page.tsx.
-// Los secretos llegan enmascarados (••••••••) y se devuelven sin cambio si el usuario
-// no los edita, para no pisar el valor almacenado.
+// SETTINGS — reorganizado por ALCANCE (auditoría UX 2026-07-04), en 4 secciones:
+//  1. Conexiones (cuenta): GitHub (la puerta de entrada) · Canal Claude · Notificaciones.
+//  2. Este proyecto: un PRESET maestro de autonomía (Manual/Asistido/Autónomo) que fija de
+//     una vez dispatch_mode + merge_mode + workflow_approval, y un bloque "Avanzado" colapsado
+//     con las perillas sueltas reetiquetadas como preguntas.
+//  3. Cuenta y seguridad: cambio de password.
+//  4. Avanzado / Legacy (colapsado): ejecutor self-hosted + Tickets (MCP) — solo modo local.
+// La MECÁNICA de guardado NO cambió: la config de proyecto usa GET/PUT /projects/{id}/settings
+// (su propio form/save), la global usa GET/PUT /settings (form/save aparte). El preset es azúcar
+// sobre los mismos writes del proyecto. Los secretos llegan enmascarados (••••••••) y se
+// devuelven sin cambio si el usuario no los edita, para no pisar el valor almacenado.
 
 import { useEffect, useState } from "react";
 import {
@@ -21,10 +20,14 @@ import {
   useSaveProjectSettings,
   useExecutors,
   useSetClaudeSecret,
+  useGitHubStatus,
 } from "@/lib/hooks";
 import { useActiveProject } from "@/lib/activeProject";
 import { useT } from "@/lib/i18n";
+import { API_URL } from "@/lib/config";
 import type { ProjectSettings, SettingsPayload } from "@/lib/types";
+import { ConnectorsSection } from "./ConnectorsSection";
+import { AccountSecurity } from "./AccountSecurity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -36,146 +39,154 @@ function isMasked(v: string) {
   return v === MASKED;
 }
 
+// Presets de autonomía → los 3 campos del proyecto que FIJAN. execution_unit,
+// executor, model_by_lane y max_concurrency NO los toca el preset (quedan en
+// "Avanzado"). Si los valores actuales no matchean ninguno → "custom".
+type Preset = "manual" | "assisted" | "autonomous" | "custom";
+
+const PRESET_FIELDS: Record<
+  Exclude<Preset, "custom">,
+  Pick<ProjectSettings, "dispatch_mode" | "merge_mode" | "workflow_approval">
+> = {
+  manual: { dispatch_mode: "approve", merge_mode: "manual", workflow_approval: "manual" },
+  assisted: { dispatch_mode: "auto", merge_mode: "manual", workflow_approval: "auto_if_safe" },
+  autonomous: { dispatch_mode: "auto", merge_mode: "auto", workflow_approval: "auto_if_safe" },
+};
+
+function presetOf(f: ProjectSettings): Preset {
+  for (const [name, v] of Object.entries(PRESET_FIELDS) as [
+    Exclude<Preset, "custom">,
+    (typeof PRESET_FIELDS)[keyof typeof PRESET_FIELDS],
+  ][]) {
+    if (
+      f.dispatch_mode === v.dispatch_mode &&
+      f.merge_mode === v.merge_mode &&
+      f.workflow_approval === v.workflow_approval
+    ) {
+      return name;
+    }
+  }
+  return "custom";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Componente raíz
+// Componente raíz — compone las 4 secciones en orden de alcance.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SettingsView() {
-  const t = useT();
-  const { data, isLoading, isError } = useSettings();
-  const save = useSaveSettings();
-
-  // Estado local mutable del formulario.
-  const [form, setForm] = useState<SettingsPayload | null>(null);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  // Inicializar el formulario con los datos del servidor.
-  useEffect(() => {
-    if (data && !form) setForm(structuredClone(data));
-  }, [data, form]);
-
-  async function handleSave() {
-    if (!form) return;
-    setSaveError(null);
-    setSaved(false);
-    try {
-      await save.mutateAsync(form);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setSaveError(msg);
-    }
-  }
-
   return (
     <div className="settings-stack">
-      {/* PER-PROYECTO va PRIMERO: es lo que el usuario busca (cómo se ejecuta su
-          proyecto). Se auto-gestiona su propia carga/errores y su guardado, así que
-          un fallo del fetch global de abajo no lo deja en blanco. */}
+      <ConnectionsSection />
       <ProjectSettingsSection />
+      <AccountSecurity />
+      <GlobalLegacySection />
+    </div>
+  );
+}
 
-      {/* GLOBAL (por instancia): conexiones y ejecutor legacy self-hosted. Renderiza
-          su propio estado de carga/error inline en vez de tumbar toda la página. */}
-      <div style={{ marginTop: 24 }}>
-        <div className="sectitle">
-          <h2>{t("settings.global.title")}</h2>
-          <span className="c">{t("settings.global.subtitle")}</span>
-          <span className="sp" />
-          <button
-            className="btn primary sm"
-            onClick={handleSave}
-            disabled={save.isPending || !form}
-          >
-            {save.isPending ? t("settings.saving") : t("settings.save")}
-          </button>
-        </div>
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. CONEXIONES (cuenta) — GitHub (puerta de entrada) + Canal Claude + Notificaciones.
+// ─────────────────────────────────────────────────────────────────────────────
 
-        {saved && (
-          <div className="shellnote" style={{ borderColor: "var(--ok-line, #b8e4c5)", color: "var(--ok, #1a7a3a)" }}>
-            {t("settings.savedNote")}
-          </div>
-        )}
+function ConnectionsSection() {
+  const t = useT();
+  const { activeId } = useActiveProject();
+  return (
+    <div>
+      <div className="sectitle">
+        <h2>{t("settings.connections.title")}</h2>
+        <span className="c">{t("settings.connections.subtitle")}</span>
+      </div>
+      <div className="grid3" style={{ gap: 16 }}>
+        <GitHubSection projectId={activeId} />
+        <ClaudeSecretSection projectId={activeId} />
+      </div>
+      <div style={{ marginTop: 18 }}>
+        <ConnectorsSection />
+      </div>
+    </div>
+  );
+}
 
-        {saveError && (
-          <div
-            style={{
-              padding: "8px 12px",
-              background: "var(--err-soft, #fff0f0)",
-              border: "1px solid var(--err-line, #f5c5c5)",
-              borderRadius: 4,
-              fontSize: 12,
-              color: "var(--err, #c00)",
-              marginBottom: 12,
-            }}
-          >
-            {saveError}
-          </div>
-        )}
+// GitHub: estado de conexión (GET /auth/github/status) + CTAs (conectar / instalar
+// la App) + semáforos de capacidades del proyecto activo (reusa el probe de
+// executors que consume el picker de canal: copilot y el secret Claude).
+function GitHubSection({ projectId }: { projectId: string | null }) {
+  const t = useT();
+  const { data: status } = useGitHubStatus();
+  const { data: executors } = useExecutors(projectId);
+  const copilot = executors?.find((e) => e.id === "copilot");
+  const claude = executors?.find((e) => e.id === "claude_action");
 
-        {isLoading || !form ? (
-          <div className="placeholder">
-            <div className="ph-ic"><span className="spin" /></div>
-            {t("settings.loading")}
-          </div>
-        ) : isError ? (
-          <div className="placeholder err">
-            <div className="ph-ic">⚠</div>
-            {t("settings.loadError")}
-          </div>
+  return (
+    <div className="card">
+      <h3>{t("settings.github.title")}</h3>
+      <div className="role">{t("settings.github.role")}</div>
+
+      <div style={{ fontSize: 13, margin: "2px 0 10px" }}>
+        {status?.connected ? (
+          <span style={{ color: "var(--ok, #1a7a3a)" }}>
+            🟢 {t("settings.github.connected", { login: status.login ?? "" })}
+          </span>
         ) : (
-          <>
-            {/* Tickets (MCP) — conexión de backlog por instancia. */}
-            <div className="grid3" style={{ gap: 16 }}>
-              <McpSection
-                connections={form.mcp}
-                onChange={(mcp) => setForm((f) => f ? { ...f, mcp } : f)}
-              />
-            </div>
+          <span style={{ color: "var(--muted)" }}>⚪ {t("settings.github.notConnected")}</span>
+        )}
+      </div>
 
-            {/* Ejecutor legacy (self-hosted): auth del agente + sandbox. Solo aplica al
-                modo fábrica local; la ejecución GitHub-native no las usa. Separado y al
-                final para que no se confunda con la config activa del proyecto. */}
-            <div style={{ marginTop: 18 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  gap: 10,
-                  flexWrap: "wrap",
-                  margin: "0 0 12px",
-                  paddingTop: 8,
-                  borderTop: "1px solid var(--line, #e6e6e6)",
-                }}
-              >
-                <h3 style={{ margin: 0, fontSize: 14 }}>{t("settings.legacy.title")}</h3>
-                <span style={{ color: "var(--ink4)", fontSize: 12 }}>
-                  {t("settings.legacy.note")}
-                </span>
-              </div>
-              <div className="grid3" style={{ gap: 16 }}>
-                <AgentAuthSection
-                  auth={form.agent_auth}
-                  onChange={(agent_auth) => setForm((f) => f ? { ...f, agent_auth } : f)}
-                />
-                <SandboxSection
-                  sandbox={form.sandbox}
-                  onChange={(sandbox) => setForm((f) => f ? { ...f, sandbox } : f)}
-                />
-              </div>
-            </div>
-          </>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <a className="btn primary sm" href={`${API_URL}/auth/github/start`}>
+          {status?.connected ? t("settings.github.reconnect") : t("settings.github.connect")}
+        </a>
+        <a className="btn ghost sm" href={`${API_URL}/setup/github-app`} target="_blank" rel="noreferrer">
+          {t("settings.github.installApp")}
+        </a>
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--ink4)", margin: "8px 0 0" }}>
+        {status?.app_configured ? `✓ ${t("settings.github.appConfigured")}` : `⚠ ${t("settings.github.appMissing")}`}
+      </div>
+
+      {/* Semáforos de capacidades del proyecto activo. */}
+      <div style={{ marginTop: 14, borderTop: "1px solid var(--line, #e6e6e6)", paddingTop: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink2)", marginBottom: 6 }}>
+          {t("settings.github.caps")}
+        </div>
+        {!projectId ? (
+          <div style={{ fontSize: 12, color: "var(--ink4)" }}>{t("settings.github.capSelect")}</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5 }}>
+            <Capability label={t("settings.github.capCopilot")} info={copilot} t={t} />
+            <Capability label={t("settings.github.capClaude")} info={claude} t={t} />
+          </div>
         )}
       </div>
     </div>
   );
 }
 
+function Capability({
+  label,
+  info,
+  t,
+}: {
+  label: string;
+  info?: { available: boolean; reason?: string };
+  t: (k: string) => string;
+}) {
+  const on = info?.available === true;
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+      <span>{on ? "🟢" : "⚪"}</span>
+      <span style={{ fontWeight: 600 }}>{label}</span>
+      <span style={{ color: on ? "var(--ok, #1a7a3a)" : "var(--ink4)" }}>
+        {info === undefined ? "…" : on ? t("settings.github.capOn") : info.reason || t("settings.github.capOff")}
+      </span>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Sección PER-PROYECTO — execution_unit + merge_mode del proyecto activo
-// (GET/PUT /projects/{id}/settings). Estado local + guardado independiente del
-// formulario global, porque pega contra otro endpoint.
+// 2. ESTE PROYECTO — preset de autonomía + perillas avanzadas (colapsadas).
+// GET/PUT /projects/{id}/settings. Estado local + guardado independiente.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ProjectSettingsSection() {
@@ -213,6 +224,10 @@ function ProjectSettingsSection() {
       setSaveError(err instanceof Error ? err.message : String(err));
     }
   }
+
+  const preset = form ? presetOf(form) : "custom";
+  const applyPreset = (p: Exclude<Preset, "custom">) =>
+    setForm((f) => (f ? { ...f, ...PRESET_FIELDS[p] } : f));
 
   return (
     <div style={{ marginTop: 22 }}>
@@ -269,32 +284,217 @@ function ProjectSettingsSection() {
           {t("settings.project.loadError")}
         </div>
       ) : (
-        <div className="grid3" style={{ gap: 16 }}>
-          <ExecutionUnitSection
-            unit={form.execution_unit}
-            onChange={(execution_unit) =>
-              setForm((f) => (f ? { ...f, execution_unit } : f))
-            }
-          />
-          <MergeModeSection
-            mode={form.merge_mode}
-            onChange={(merge_mode) => setForm((f) => (f ? { ...f, merge_mode } : f))}
-          />
-          <DispatchSection
-            mode={form.dispatch_mode}
-            executor={form.executor}
-            workflowApproval={form.workflow_approval}
-            maxConcurrency={form.max_concurrency}
-            onChange={(p) => setForm((f) => (f ? { ...f, ...p } : f))}
-          />
-          <ModelByLaneSection
-            map={form.model_by_lane}
-            onChange={(model_by_lane) => setForm((f) => (f ? { ...f, model_by_lane } : f))}
-          />
-          <ClaudeSecretSection projectId={projectId} />
+        <>
+          {/* Preset maestro de autonomía. */}
+          <div className="card" style={{ marginBottom: 14 }}>
+            <h3>{t("settings.preset.q")}</h3>
+            <div className="seg" style={{ marginTop: 12 }}>
+              {(["manual", "assisted", "autonomous"] as const).map((p) => (
+                <button
+                  key={p}
+                  className={`seg-btn${preset === p ? " on" : ""}`}
+                  onClick={() => applyPreset(p)}
+                >
+                  {t(`settings.preset.${p}`)}
+                </button>
+              ))}
+            </div>
+            <div className="role" style={{ marginTop: 10, minHeight: 0 }}>
+              {t(`settings.preset.${preset}Desc`)}
+            </div>
+          </div>
+
+          {/* Avanzado — perillas sueltas, colapsado por default. */}
+          <details className="adv">
+            <summary>{t("settings.preset.advanced")}</summary>
+            <div className="grid3" style={{ gap: 16, marginTop: 12 }}>
+              <DispatchSection
+                mode={form.dispatch_mode}
+                executor={form.executor}
+                workflowApproval={form.workflow_approval}
+                maxConcurrency={form.max_concurrency}
+                onChange={(p) => setForm((f) => (f ? { ...f, ...p } : f))}
+              />
+              <MergeModeSection
+                mode={form.merge_mode}
+                onChange={(merge_mode) => setForm((f) => (f ? { ...f, merge_mode } : f))}
+              />
+              <ExecutionUnitSection
+                unit={form.execution_unit}
+                onChange={(execution_unit) => setForm((f) => (f ? { ...f, execution_unit } : f))}
+              />
+              <ModelByLaneSection
+                map={form.model_by_lane}
+                onChange={(model_by_lane) => setForm((f) => (f ? { ...f, model_by_lane } : f))}
+              />
+            </div>
+          </details>
+        </>
+      )}
+
+      <style jsx>{`
+        .seg {
+          display: inline-flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          border: 1px solid var(--stroke, #e6e6e6);
+          border-radius: 10px;
+          padding: 4px;
+          background: var(--bg2, #faf8f4);
+        }
+        .seg-btn {
+          padding: 8px 18px;
+          border: none;
+          border-radius: 7px;
+          background: transparent;
+          color: var(--ink2, #333);
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .seg-btn.on {
+          background: var(--accent, #e8440a);
+          color: #fff;
+        }
+        .adv > summary {
+          cursor: pointer;
+          font-weight: 800;
+          font-size: 14px;
+          padding: 6px 0;
+          list-style: revert;
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. AVANZADO / LEGACY — ejecutor self-hosted + Tickets (MCP), colapsado.
+// Único consumidor del form GLOBAL (GET/PUT /settings): mcp · agent_auth · sandbox.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function GlobalLegacySection() {
+  const t = useT();
+  const { data, isLoading, isError } = useSettings();
+  const save = useSaveSettings();
+
+  const [form, setForm] = useState<SettingsPayload | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (data && !form) setForm(structuredClone(data));
+  }, [data, form]);
+
+  async function handleSave() {
+    if (!form) return;
+    setSaveError(null);
+    setSaved(false);
+    try {
+      await save.mutateAsync(form);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(msg);
+    }
+  }
+
+  return (
+    <details className="adv" style={{ marginTop: 24 }}>
+      <summary>
+        <span className="adv-title">{t("settings.legacy.sectionTitle")}</span>
+        <span className="adv-sub">{t("settings.legacy.sectionSubtitle")}</span>
+      </summary>
+
+      <div className="sectitle" style={{ marginTop: 14 }}>
+        <span className="sp" />
+        <button className="btn primary sm" onClick={handleSave} disabled={save.isPending || !form}>
+          {save.isPending ? t("settings.saving") : t("settings.save")}
+        </button>
+      </div>
+
+      {saved && (
+        <div className="shellnote" style={{ borderColor: "var(--ok-line, #b8e4c5)", color: "var(--ok, #1a7a3a)" }}>
+          {t("settings.savedNote")}
         </div>
       )}
-    </div>
+      {saveError && (
+        <div
+          style={{
+            padding: "8px 12px",
+            background: "var(--err-soft, #fff0f0)",
+            border: "1px solid var(--err-line, #f5c5c5)",
+            borderRadius: 4,
+            fontSize: 12,
+            color: "var(--err, #c00)",
+            marginBottom: 12,
+          }}
+        >
+          {saveError}
+        </div>
+      )}
+
+      {isLoading || !form ? (
+        <div className="placeholder">
+          <div className="ph-ic"><span className="spin" /></div>
+          {t("settings.loading")}
+        </div>
+      ) : isError ? (
+        <div className="placeholder err">
+          <div className="ph-ic">⚠</div>
+          {t("settings.loadError")}
+        </div>
+      ) : (
+        <>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 10,
+              flexWrap: "wrap",
+              margin: "0 0 12px",
+            }}
+          >
+            <h3 style={{ margin: 0, fontSize: 14 }}>{t("settings.legacy.title")}</h3>
+            <span style={{ color: "var(--ink4)", fontSize: 12 }}>{t("settings.legacy.note")}</span>
+          </div>
+          <div className="grid3" style={{ gap: 16 }}>
+            <AgentAuthSection
+              auth={form.agent_auth}
+              onChange={(agent_auth) => setForm((f) => (f ? { ...f, agent_auth } : f))}
+            />
+            <SandboxSection
+              sandbox={form.sandbox}
+              onChange={(sandbox) => setForm((f) => (f ? { ...f, sandbox } : f))}
+            />
+            <McpSection
+              connections={form.mcp}
+              onChange={(mcp) => setForm((f) => (f ? { ...f, mcp } : f))}
+            />
+          </div>
+        </>
+      )}
+
+      <style jsx>{`
+        .adv > summary {
+          cursor: pointer;
+          padding: 8px 0;
+          list-style: revert;
+        }
+        .adv-title {
+          font-weight: 900;
+          font-size: 16px;
+          letter-spacing: -0.3px;
+        }
+        .adv-sub {
+          font-family: var(--mono);
+          font-size: 12px;
+          color: var(--ink4);
+          margin-left: 10px;
+        }
+      `}</style>
+    </details>
   );
 }
 
@@ -336,7 +536,7 @@ function McpSection({
 
       <ul className="mcp-list">
         {connections.map((conn, i) => {
-          // Telegram is configured in the dedicated "Conectores" section (v1.3); hide
+          // Telegram is configured in the dedicated "Notificaciones" section (v1.3); hide
           // it here so its token isn't edited in two places. Index preserved.
           if (conn.name.toLowerCase() === "telegram") return null;
           const open = editing === i;
@@ -414,6 +614,9 @@ function AgentAuthSection({
           value={auth.mode}
           onChange={(e) => onChange({ ...auth, mode: e.target.value })}
         >
+          {/* subscription = default del backend (settings.go). Estaba ausente en el
+              select (bug L5): un round-trip lo pisaba con oauth_token. */}
+          <option value="subscription">{t("settings.auth.optSubscription")}</option>
           <option value="oauth_token">oauth_token (Max)</option>
           <option value="api_key">api_key</option>
         </select>
@@ -444,7 +647,7 @@ function ExecutionUnitSection({
   const t = useT();
   return (
     <div className="card">
-      <h3>{t("settings.exec.title")}</h3>
+      <h3>{t("settings.exec.q")}</h3>
       <div className="role">
         {t("settings.exec.role")}
       </div>
@@ -478,7 +681,7 @@ function MergeModeSection({
   const t = useT();
   return (
     <div className="card">
-      <h3>{t("settings.merge.title")}</h3>
+      <h3>{t("settings.merge.q")}</h3>
       <div className="role">
         {t("settings.merge.role")}
       </div>
@@ -527,7 +730,7 @@ function DispatchSection({
   const t = useT();
   return (
     <div className="card">
-      <h3>{t("settings.dispatch.title")}</h3>
+      <h3>{t("settings.dispatch.q")}</h3>
       <div className="role">{t("settings.dispatch.role")}</div>
       <div className="field" style={{ marginTop: 10 }}>
         <label>{t("settings.dispatch.mode")}</label>
