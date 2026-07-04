@@ -1276,3 +1276,15 @@ export async function putTemplate(path: string, content: string): Promise<void> 
     body: JSON.stringify({ content }),
   });
 }
+
+/** Aplica (re-aplica) la especialización github-native al repo del proyecto. */
+export async function scaffoldProject(
+  projectId: string,
+  stack: string,
+): Promise<{ written: string[]; skipped: string[]; missing_vars?: string[] }> {
+  if (await isMock()) return { written: [], skipped: [] };
+  return http(`/projects/${projectId}/scaffold/github`, {
+    method: "POST",
+    body: JSON.stringify({ stack }),
+  });
+}

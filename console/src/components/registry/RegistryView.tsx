@@ -4,7 +4,7 @@
 // Cableado contra GET/PUT/DELETE /registry/{agents,skills,workflows}.
 // Modo mock: cae a datos de ejemplo de lib/mock cuando la API no responde.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -18,9 +18,11 @@ import {
   useTemplates,
   useTemplate,
   useSaveTemplate,
+  useScaffoldProject,
   useSaveRegistryItem,
 } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
+import { useActiveProject } from "@/lib/activeProject";
 import type { RegistryKind } from "@/lib/types";
 
 // Register only the YAML language to keep the bundle minimal.
@@ -87,9 +89,11 @@ export function RegistryView() {
             {TAB_LABELS[k]}
           </button>
         ))}
-        <button className="btn ghost sm" onClick={openNew}>
-          {t("registry.new")}
-        </button>
+        {tab !== "templates" && (
+          <button className="btn ghost sm" onClick={openNew}>
+            {t("registry.new")}
+          </button>
+        )}
       </div>
 
       {/* Lista */}
@@ -438,23 +442,65 @@ function ItemEditorModal({
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Templates github-native: la especialización que el scaffold hornea en cada
-// repo (.github/agents/*.agent.md, instructions, AGENTS.md, workflows CI).
-// Editar aquí afecta a los PRÓXIMOS scaffolds; los repos existentes se
-// actualizan re-scaffoldeando (idempotente).
+// Templates GitHub: lo que Forja instala en el repo de cada proyecto nuevo para
+// que los agentes (Copilot / Claude / Codex) sepan CÓMO trabajar en ese código.
+// Cards con nombre humano (mismo patrón visual que Agentes/Workflows); el path
+// real queda como detalle. Editar → afecta proyectos futuros; el botón
+// "Aplicar al proyecto" lo lleva al repo del proyecto activo.
 // ─────────────────────────────────────────────────────────────────────────────
+
+const STACK_LABELS: Record<string, string> = {
+  _common: "registry.templates.groupCommon",
+  "python-fastapi-react": "registry.templates.groupPython",
+  "aiuda-flutter-firebase": "registry.templates.groupFlutter",
+};
+
+/** Traduce un path de template a título + descripción humanos. */
+function templateMeta(path: string, t: (k: string, v?: Record<string, string>) => string) {
+  const base = path.split("/").pop() ?? path;
+  const agent = base.match(/^(.+)\.agent\.md\.tmpl$/);
+  if (agent) return { title: agent[1], desc: t("registry.templates.descAgent", { name: agent[1] }) };
+  const instr = base.match(/^(.+)\.instructions\.md\.tmpl$/);
+  if (instr) return { title: t("registry.templates.titleInstr", { area: instr[1] }), desc: t("registry.templates.descInstr", { area: instr[1] }) };
+  if (base.startsWith("AGENTS.md")) return { title: "AGENTS.md", desc: t("registry.templates.descAgentsMd") };
+  if (base.startsWith("copilot-setup-steps")) return { title: t("registry.templates.titleSetup"), desc: t("registry.templates.descSetup") };
+  if (base.startsWith("claude-review")) return { title: t("registry.templates.titleReview"), desc: t("registry.templates.descReview") };
+  if (base.startsWith("claude.yml")) return { title: t("registry.templates.titleClaude"), desc: t("registry.templates.descClaude") };
+  if (base.startsWith("suite-integrity")) return { title: t("registry.templates.titleSuite"), desc: t("registry.templates.descSuite") };
+  if (base.startsWith("ui-verify")) return { title: t("registry.templates.titleUiVerify"), desc: t("registry.templates.descUiVerify") };
+  return { title: base.replace(/\.tmpl$/, ""), desc: "" };
+}
 
 function TemplatesBrowser() {
   const t = useT();
+  const { project } = useActiveProject();
   const { data: files, isLoading } = useTemplates();
+  const [group, setGroup] = useState<string>("_common");
   const [sel, setSel] = useState<string | null>(null);
-  const { data: content } = useTemplate(sel);
-  const [draft, setDraft] = useState<string | null>(null);
-  const save = useSaveTemplate();
+  const scaffold = useScaffoldProject(project?.id ?? null);
 
-  useEffect(() => {
-    setDraft(null);
-  }, [sel]);
+  const groups = useMemo(() => {
+    const gs = new Set<string>();
+    for (const f of files ?? []) {
+      if (f === "README.md") continue;
+      gs.add(f.split("/")[0]);
+    }
+    return Array.from(gs).sort();
+  }, [files]);
+
+  const visible = (files ?? []).filter((f) => f !== "README.md" && f.split("/")[0] === group);
+
+  function applyToProject() {
+    if (!project || group === "_common") return;
+    if (!window.confirm(t("registry.templates.applyConfirm", { project: project.name }))) return;
+    scaffold.mutate(group, {
+      onSuccess: (r) =>
+        window.alert(
+          t("registry.templates.applyDone", { written: String(r.written?.length ?? 0), skipped: String(r.skipped?.length ?? 0) }),
+        ),
+      onError: (e) => window.alert(t("registry.templates.applyError") + "\n" + (e instanceof Error ? e.message : String(e))),
+    });
+  }
 
   if (isLoading) {
     return (
@@ -466,58 +512,88 @@ function TemplatesBrowser() {
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "start" }}>
-      <div style={{ maxHeight: "70vh", overflowY: "auto", border: "1px solid var(--line)", borderRadius: 8 }}>
-        {(files ?? []).map((f) => (
-          <button
-            key={f}
-            onClick={() => setSel(f)}
-            style={{
-              display: "block", width: "100%", textAlign: "left", padding: "7px 10px",
-              fontSize: 12, fontFamily: "var(--mono, monospace)", border: "none", cursor: "pointer",
-              background: sel === f ? "var(--ink, #1a1a1a)" : "transparent",
-              color: sel === f ? "#fff" : "inherit",
-              borderBottom: "1px solid var(--line)",
-            }}
-          >
-            {f}
+    <>
+      {/* Qué es esto, en cristiano */}
+      <div className="shellnote" style={{ marginBottom: 14 }}>
+        {t("registry.templates.intro")}
+      </div>
+
+      {/* Grupos (stack) + acción de aplicar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {groups.map((g) => (
+          <button key={g} className={`btn ghost sm${group === g ? " on" : ""}`} onClick={() => setGroup(g)}>
+            {STACK_LABELS[g] ? t(STACK_LABELS[g]) : g}
           </button>
         ))}
-      </div>
-      <div>
-        {!sel ? (
-          <div className="placeholder">
-            <div className="ph-ic">❏</div>
-            {t("registry.templates.pick")}
-          </div>
-        ) : (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <code style={{ fontSize: 12 }}>{sel}</code>
-              <span className="sp" style={{ flex: 1 }} />
-              {draft !== null && (
-                <button
-                  className="btn primary sm"
-                  disabled={save.isPending}
-                  onClick={() => save.mutate({ path: sel, content: draft }, { onSuccess: () => setDraft(null) })}
-                >
-                  {save.isPending ? t("registry.templates.saving") : t("registry.templates.save")}
-                </button>
-              )}
-            </div>
-            <textarea
-              value={draft ?? content ?? ""}
-              onChange={(e) => setDraft(e.target.value)}
-              spellCheck={false}
-              style={{
-                width: "100%", minHeight: "62vh", fontFamily: "var(--mono, monospace)", fontSize: 12,
-                lineHeight: 1.5, padding: 12, border: "1px solid var(--line)", borderRadius: 8,
-                background: "var(--panel, #fff)", resize: "vertical",
-              }}
-            />
-            <p className="c" style={{ fontSize: 11, marginTop: 6 }}>{t("registry.templates.note")}</p>
-          </>
+        <span className="sp" style={{ flex: 1 }} />
+        {project && group !== "_common" && (
+          <button className="btn primary sm" onClick={applyToProject} disabled={scaffold.isPending}>
+            {scaffold.isPending
+              ? t("registry.templates.applying")
+              : t("registry.templates.apply", { project: project.name })}
+          </button>
         )}
+      </div>
+
+      {/* Cards — mismo patrón que Agentes/Workflows */}
+      <div className="grid3">
+        {visible.map((f) => {
+          const meta = templateMeta(f, t);
+          return (
+            <div key={f} className="card click" onClick={() => setSel(f)}>
+              <h3><span>{meta.title}</span></h3>
+              {meta.desc && <div className="role" style={{ fontSize: 12 }}>{meta.desc}</div>}
+              <div className="role mono" style={{ fontSize: 10.5, opacity: 0.55, marginTop: 6 }}>{f}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Editor modal — mismo overlay/modal del Registry */}
+      <div className={`overlay ${sel ? "on" : ""}`} onClick={() => setSel(null)} />
+      {sel && <TemplateEditorModal path={sel} onClose={() => setSel(null)} />}
+    </>
+  );
+}
+
+function TemplateEditorModal({ path, onClose }: { path: string; onClose: () => void }) {
+  const t = useT();
+  const { data: content, isLoading } = useTemplate(path);
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = useSaveTemplate();
+  const meta = templateMeta(path, t);
+
+  return (
+    <div className="modal on" role="dialog" aria-modal="true">
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+        <h3 style={{ margin: 0 }}>{meta.title}</h3>
+        <span className="c" style={{ fontSize: 12 }}>{meta.desc}</span>
+      </div>
+      <div className="role mono" style={{ fontSize: 10.5, opacity: 0.55, marginBottom: 10 }}>{path}</div>
+      {isLoading ? (
+        <div className="placeholder"><div className="ph-ic"><span className="spin" /></div></div>
+      ) : (
+        <textarea
+          value={draft ?? content ?? ""}
+          onChange={(e) => setDraft(e.target.value)}
+          spellCheck={false}
+          style={{
+            width: "100%", minHeight: "56vh", fontFamily: "var(--mono, monospace)", fontSize: 12,
+            lineHeight: 1.55, padding: 12, border: "1px solid var(--line)", borderRadius: 8,
+            background: "var(--bg, #faf8f4)", resize: "vertical",
+          }}
+        />
+      )}
+      <p className="c" style={{ fontSize: 11.5, margin: "8px 0 12px" }}>{t("registry.templates.editNote")}</p>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost sm" onClick={onClose}>{t("registry.templates.close")}</button>
+        <button
+          className="btn primary sm"
+          disabled={draft === null || save.isPending}
+          onClick={() => save.mutate({ path, content: draft ?? "" }, { onSuccess: onClose })}
+        >
+          {save.isPending ? t("registry.templates.saving") : t("registry.templates.save")}
+        </button>
       </div>
     </div>
   );

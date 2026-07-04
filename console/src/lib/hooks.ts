@@ -584,3 +584,9 @@ export function useSaveTemplate() {
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["template", v.path] }),
   });
 }
+
+export function useScaffoldProject(projectId: string | null) {
+  return useMutation({
+    mutationFn: (stack: string) => api.scaffoldProject(projectId as string, stack),
+  });
+}
