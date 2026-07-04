@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"forge/internal/auth"
 	"forge/internal/billing"
@@ -58,6 +59,8 @@ type Server struct {
 	GHWebhookSecret func() string
 	linkCodes       *linkCodeStore // short-lived codes binding a channel user to an account
 	mux             *http.ServeMux
+	// exportMus serializa los exports a GitHub por proyecto (ver exportLock).
+	exportMus sync.Map
 }
 
 // workspaceForProject resolves a project's billing workspace via its owner. Returns

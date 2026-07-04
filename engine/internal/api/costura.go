@@ -12,12 +12,26 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"forge/internal/export"
 	"forge/internal/scaffold"
 	"forge/internal/tickets"
 )
+
+// exportLock serializa los exports a GitHub de un proyecto. Sin él, el export
+// automático al crear una story (goroutine de OnStoryCreated) y el botón manual
+// "Enviar a GitHub" pueden solaparse: ambos listan la story sin external_ref y
+// ambos crean issue (carrera real 2026-07-04: S11-02 salió como #63 Y #64).
+// Bajo el lock, el segundo re-lee el store, ve el external_ref ya estampado y
+// la salta (el export es idempotente por external_ref).
+func (s *Server) exportLock(projectID string) func() {
+	mu, _ := s.exportMus.LoadOrStore(projectID, &sync.Mutex{})
+	m := mu.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
+}
 
 // OnBacklogPublished corre tras el handoff del diseño (hook del PublishRunner,
 // en goroutine). Best-effort con log claro: si un paso falla, los botones
@@ -28,8 +42,11 @@ func (s *Server) OnBacklogPublished(projectID, repoURL string) {
 
 	gh := s.ghFor(ctx, projectID)
 
-	// 1) Exportar backlog → GitHub Issues + deps nativas.
+	// 1) Exportar backlog → GitHub Issues + deps nativas (serializado por
+	// proyecto — ver exportLock).
+	unlock := s.exportLock(projectID)
 	res, err := export.GitHubBacklog(ctx, s.Tickets, gh, projectID, repoURL)
+	unlock()
 	if err != nil {
 		log.Printf("costura(%s): export a GitHub falló (queda el botón manual): %v", projectID, err)
 	} else {
@@ -77,6 +94,9 @@ func (s *Server) OnStoryCreated(st tickets.Story) {
 // resultado real para que el endpoint síncrono POST /stories/{id}/export lo
 // exponga; OnStoryCreated (best-effort) descarta el retorno.
 func (s *Server) exportStoryBacklog(ctx context.Context, gh export.GitHubWriter, st tickets.Story, repo string) (export.Result, error) {
+	// Serializado por proyecto: cubre a la vez el auto-export de OnStoryCreated
+	// y el endpoint manual POST /stories/{id}/export (ver exportLock).
+	defer s.exportLock(st.ProjectID)()
 	res, err := export.GitHubBacklog(ctx, s.Tickets, gh, st.ProjectID, repo)
 	if err != nil {
 		log.Printf("costura(%s): export de la story %s a GitHub falló (queda el botón manual): %v", st.ProjectID, st.ID, err)

@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"forge/internal/github"
@@ -154,4 +156,59 @@ func TestExportRepoFor(t *testing.T) {
 			t.Errorf("%s: exportRepoFor = %q, want %q", tc.name, got, tc.want)
 		}
 	}
+}
+
+// La carrera real del 2026-07-04: el auto-export de OnStoryCreated (goroutine)
+// y el botón manual "Enviar a GitHub" corriendo A LA VEZ creaban el issue por
+// duplicado (#63 y #64) — el segundo listaba la story aún sin external_ref.
+// exportLock serializa por proyecto: el segundo re-lee y la salta.
+func TestConcurrentStoryExportsCreateOneIssue(t *testing.T) {
+	store := newTicketsStore(t)
+	srv := &Server{Tickets: store}
+
+	st := tickets.Story{ID: "S9-02", Title: "Race", ProjectID: "p1"}
+	if err := store.CreateStory(st); err != nil {
+		t.Fatalf("create story: %v", err)
+	}
+
+	gh := &raceFakeGH{}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			srv.exportStoryBacklog(context.Background(), gh, st, "https://github.com/o/r")
+		}()
+	}
+	wg.Wait()
+
+	if n := gh.created.Load(); n != 1 {
+		t.Fatalf("issues creados en exports concurrentes = %d, want 1 (duplicado = la carrera #63/#64)", n)
+	}
+	got, err := store.GetStoryInProject("p1", "S9-02")
+	if err != nil {
+		t.Fatalf("GetStoryInProject: %v", err)
+	}
+	if got.ExternalRef == "" {
+		t.Fatalf("external_ref vacío tras exports concurrentes")
+	}
+}
+
+// raceFakeGH: fake mínimo race-safe (el costuraFakeGH muta slices sin lock).
+type raceFakeGH struct {
+	created atomic.Int64
+}
+
+func (f *raceFakeGH) EnsureLabel(_ context.Context, _, _, _ string) (bool, error) {
+	return false, nil
+}
+func (f *raceFakeGH) CreateIssue(_ context.Context, _, _, _ string, _ []string) (github.CreatedIssue, error) {
+	n := f.created.Add(1)
+	return github.CreatedIssue{Number: int(n), ID: n * 10}, nil
+}
+func (f *raceFakeGH) IssueID(_ context.Context, _ string, number int) (int64, error) {
+	return int64(number) * 10, nil
+}
+func (f *raceFakeGH) AddIssueBlockedBy(_ context.Context, _ string, _ int, _ int64) (bool, error) {
+	return true, nil
 }
