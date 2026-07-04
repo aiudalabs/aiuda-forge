@@ -31,6 +31,7 @@ import {
   mockTicketsByProject,
 } from "./mock";
 import type {
+  ExecutorInfo,
   BoardStats,
   ControlStatus,
   DesignPhase,
@@ -758,15 +759,27 @@ export async function getDispatchCandidates(projectId: string): Promise<Dispatch
 
 export async function dispatchWork(
   projectId: string,
-  unit: { story_id?: string; sprint_id?: string },
+  unit: { story_id?: string; sprint_id?: string; executor?: string },
 ): Promise<DispatchResult> {
   if (await isMock()) {
-    return { dispatched: [unit.story_id ?? unit.sprint_id ?? ""], channel: "copilot", model: "" };
+    return { dispatched: [unit.story_id ?? unit.sprint_id ?? ""], channel: unit.executor ?? "copilot", model: "" };
   }
   return http<DispatchResult>(`/projects/${projectId}/dispatch`, {
     method: "POST",
     body: JSON.stringify(unit),
   });
+}
+
+/** Canales de ejecución realmente disponibles en el GitHub del proyecto. */
+export async function getExecutors(projectId: string): Promise<ExecutorInfo[]> {
+  if (await isMock()) {
+    return [
+      { id: "copilot", available: true, default: true },
+      { id: "claude_action", available: true, default: false },
+    ];
+  }
+  const r = await http<{ executors: ExecutorInfo[] }>(`/projects/${projectId}/executors`);
+  return r.executors;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

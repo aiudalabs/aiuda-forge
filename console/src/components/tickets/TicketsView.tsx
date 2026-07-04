@@ -14,6 +14,7 @@ import {
   useCreateStory,
   useDispatch,
   useDispatchCandidates,
+  useExecutors,
   useEpics,
   useExportBacklog,
   useTickets,
@@ -21,7 +22,7 @@ import {
 import { useActiveProject, useActiveProjectId } from "@/lib/activeProject";
 import { ApiError } from "@/lib/api";
 import type { ExportResult } from "@/lib/api";
-import type { DispatchCandidate } from "@/lib/types";
+import type { DispatchCandidate, ExecutorInfo } from "@/lib/types";
 import { RunDrawer } from "@/components/board/RunDrawer";
 import { DepGraph } from "@/components/tickets/DepGraph";
 import { KanbanBoard } from "@/components/tickets/KanbanBoard";
@@ -94,15 +95,24 @@ export function TicketsView() {
     return m;
   }, [dispatchData]);
 
+  // Selector de canal: el despacho abre un picker con los canales REALMENTE
+  // disponibles en el GitHub del proyecto (probe del backend), en vez de un
+  // confirm ciego con el canal del setting.
+  const [pickerFor, setPickerFor] = useState<DispatchCandidate | null>(null);
+  const { data: executors } = useExecutors(project?.id ?? null);
+
   function handleDispatch(c: DispatchCandidate) {
-    const msg =
-      c.kind === "sprint"
-        ? t("tickets.dispatch.confirmSprint", { id: c.id, n: c.stories?.length ?? 0, executor: c.executor, model: c.model || "auto" })
-        : t("tickets.dispatch.confirmStory", { id: c.id, executor: c.executor, model: c.model || "auto" });
-    if (!window.confirm(msg)) return;
-    dispatchMut.mutate(c.kind === "sprint" ? { sprint_id: c.id } : { story_id: c.id }, {
-      onError: (err) => window.alert(t("tickets.dispatch.error") + "\n" + (err instanceof Error ? err.message : String(err))),
-    });
+    setPickerFor(c);
+  }
+
+  function fireDispatch(c: DispatchCandidate, executor: string) {
+    setPickerFor(null);
+    dispatchMut.mutate(
+      c.kind === "sprint" ? { sprint_id: c.id, executor } : { story_id: c.id, executor },
+      {
+        onError: (err) => window.alert(t("tickets.dispatch.error") + "\n" + (err instanceof Error ? err.message : String(err))),
+      },
+    );
   }
 
   // Hidratar estado desde la URL una vez (deep-link / refresh-safe).
@@ -356,6 +366,39 @@ export function TicketsView() {
       <div className={`overlay ${showNewStory ? "on" : ""}`} onClick={() => setShowNewStory(false)} />
       {showNewStory && (
         <NewStoryModal existingIds={list.map((tk) => tk.id)} onClose={() => setShowNewStory(false)} />
+      )}
+
+      {pickerFor && (
+        <>
+          <div className="overlay on" onClick={() => setPickerFor(null)} />
+          <div className="chan-picker" role="dialog" aria-modal="true">
+            <h3>
+              {pickerFor.kind === "sprint"
+                ? t("tickets.dispatch.pickerSprint", { id: pickerFor.id, n: String(pickerFor.stories?.length ?? 0) })
+                : t("tickets.dispatch.pickerStory", { id: pickerFor.id })}
+            </h3>
+            <p className="c">{t("tickets.dispatch.pickerHint")}</p>
+            {(executors ?? []).map((ex: ExecutorInfo) => (
+              <button
+                key={ex.id}
+                className="chan-opt"
+                disabled={!ex.available}
+                onClick={() => fireDispatch(pickerFor, ex.id)}
+                title={ex.available ? "" : ex.reason}
+              >
+                <span className="chan-name">
+                  {ex.id === "copilot" ? t("tickets.dispatch.chanCopilot") : t("tickets.dispatch.chanClaude")}
+                  {ex.default ? ` · ${t("tickets.dispatch.chanDefault")}` : ""}
+                </span>
+                <span className="chan-state">{ex.available ? "🟢" : "⛔"}</span>
+                {!ex.available && ex.reason && <span className="chan-why">{ex.reason}</span>}
+              </button>
+            ))}
+            <button className="btn ghost sm" onClick={() => setPickerFor(null)} style={{ marginTop: 10 }}>
+              {t("tickets.dispatch.pickerCancel")}
+            </button>
+          </div>
+        </>
       )}
 
       {/* Modal: exportar backlog a GitHub */}

@@ -400,3 +400,11 @@ export interface ApproveWorkflowResult {
   safe: boolean;
   reason?: string;
 }
+
+/** Un canal de ejecución y su disponibilidad real en el GitHub del proyecto. */
+export interface ExecutorInfo {
+  id: string; // "copilot" | "claude_action"
+  available: boolean;
+  reason?: string;
+  default: boolean;
+}

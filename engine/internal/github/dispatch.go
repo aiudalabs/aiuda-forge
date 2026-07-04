@@ -104,3 +104,24 @@ func (c *Client) DispatchWorkflow(ctx context.Context, repoURL, workflowFile, re
 	}
 	return nil
 }
+
+// AgentTasksAvailable sondea si la Agent tasks API de Copilot responde para
+// este repo (el canal copilot depende de la suscripción/ajustes del usuario).
+// 200 = disponible; 403/404/402 = no (con la razón cruda para la UI).
+func (c *Client) AgentTasksAvailable(ctx context.Context, repoURL string) (bool, string) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return false, err.Error()
+	}
+	out, err := c.runner(ctx, "", "gh", "api",
+		"-H", "X-GitHub-Api-Version: "+agentTasksAPIVersion,
+		fmt.Sprintf("/agents/repos/%s/tasks?per_page=1", slug))
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if len(msg) > 140 {
+			msg = msg[:140]
+		}
+		return false, msg
+	}
+	return true, ""
+}

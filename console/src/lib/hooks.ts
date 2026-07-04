@@ -288,7 +288,7 @@ export function useDispatchCandidates(projectId: string | null) {
 export function useDispatch(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (unit: { story_id?: string; sprint_id?: string }) =>
+    mutationFn: (unit: { story_id?: string; sprint_id?: string; executor?: string }) =>
       api.dispatchWork(projectId as string, unit),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dispatchCandidates", projectId] });
@@ -552,4 +552,14 @@ export function useLiveEvents(runId: string | null, isRunning: boolean) {
   }, [runId, mode, isRunning]);
 
   return events;
+}
+
+/** Canales disponibles en el GitHub del proyecto (probe real; cache 60s). */
+export function useExecutors(projectId: string | null) {
+  return useQuery({
+    queryKey: ["executors", projectId],
+    queryFn: () => api.getExecutors(projectId as string),
+    enabled: !!projectId,
+    staleTime: 60_000,
+  });
 }

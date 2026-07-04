@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"forge/internal/conductor"
+	"forge/internal/github"
 	"forge/internal/projects"
 )
 
@@ -82,6 +83,8 @@ func (s *Server) dispatchWork(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		StoryID  string `json:"story_id"`
 		SprintID string `json:"sprint_id"`
+		// Executor opcional: override del canal SOLO para este despacho.
+		Executor string `json:"executor"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -117,6 +120,15 @@ func (s *Server) dispatchWork(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusConflict, "dispatch is off for this project")
 		return
 	}
+	if req.Executor != "" {
+		if req.Executor != projects.ExecutorCopilot && req.Executor != projects.ExecutorClaudeAction {
+			httpErr(w, http.StatusBadRequest, "invalid executor: "+req.Executor)
+			return
+		}
+		// Override del canal SOLO para este despacho; el ruteo por lane cede.
+		pol.Executor = req.Executor
+		pol.ExecutorByLane = nil
+	}
 	res, err := s.Dispatcher.Dispatch(r.Context(), id, p.Repo, pol, unit)
 	if err != nil {
 		if errors.Is(err, conductor.ErrNotCandidate) {
@@ -127,4 +139,40 @@ func (s *Server) dispatchWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// GET /projects/{id}/executors — qué canales están REALMENTE disponibles en
+// el GitHub del proyecto: copilot (probe de la Agent tasks API) y
+// claude_action (¿existe claude.yml en main?). La UI arma el selector con esto.
+func (s *Server) listExecutors(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireRole(r.Context(), id, projects.RoleViewer) {
+		httpErr(w, http.StatusForbidden, "listing executors requires project membership")
+		return
+	}
+	p, err := s.Projects.Get(id)
+	if err != nil {
+		httpErr(w, http.StatusNotFound, "project not found: "+id)
+		return
+	}
+	set, _ := s.Projects.GetSettings(id)
+	type executorView struct {
+		ID        string `json:"id"`
+		Available bool   `json:"available"`
+		Reason    string `json:"reason,omitempty"`
+		Default   bool   `json:"default"`
+	}
+	gh := github.New()
+	out := make([]executorView, 0, 2)
+	okCop, why := gh.AgentTasksAvailable(r.Context(), p.Repo)
+	out = append(out, executorView{ID: projects.ExecutorCopilot, Available: okCop, Reason: why, Default: set.Executor == projects.ExecutorCopilot})
+	okCl, clErr := gh.FileOnBranch(r.Context(), p.Repo, "main", ".github/workflows/claude.yml")
+	clWhy := ""
+	if clErr != nil {
+		clWhy = clErr.Error()
+	} else if !okCl {
+		clWhy = "el repo no tiene .github/workflows/claude.yml en main (scaffold pendiente)"
+	}
+	out = append(out, executorView{ID: projects.ExecutorClaudeAction, Available: okCl, Reason: clWhy, Default: set.Executor == projects.ExecutorClaudeAction})
+	writeJSON(w, http.StatusOK, map[string]any{"executors": out})
 }
