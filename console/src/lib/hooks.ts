@@ -10,7 +10,7 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import * as api from "./api";
-import type { ApiMode, CreateDesignRunInput, CreateStoryInput } from "./api";
+import type { ApiMode, CreateDesignRunInput, CreateIterationRunInput, CreateStoryInput } from "./api";
 import { subscribe } from "./ws";
 import type { ProjectSettings, RegistryKind, RunEvent } from "./types";
 
@@ -466,6 +466,16 @@ export function useCreateDesignRun() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateDesignRunInput) => api.createDesignRun(input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["designRuns"] });
+    },
+  });
+}
+
+export function useCreateIterationRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateIterationRunInput) => api.createIterationRun(input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["designRuns"] });
     },

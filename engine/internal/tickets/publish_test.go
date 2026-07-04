@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"forge/internal/tickets"
@@ -298,6 +299,40 @@ func TestPublishRunnerIdempotent(t *testing.T) {
 	}
 	if len(stories) != 2 {
 		t.Errorf("story count after 2 runs: got %d, want 2", len(stories))
+	}
+}
+
+// TestPublishRunnerSurfacesSkippedIDs: re-publishing a backlog whose ids already
+// exist (e.g. an iteration whose planner reused an id) must report the CONCRETE
+// colliding ids in the step output, not just a count — otherwise the story is
+// dropped silently and the user can't tell which one.
+func TestPublishRunnerSurfacesSkippedIDs(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	writeBacklog(t, workdir, "docs/backlog.yaml", fixture)
+
+	if res := runPublish(t, st, workdir, nil); !res.Success {
+		t.Fatalf("first run failed: %s", res.Detail)
+	}
+
+	// Second publish: both ids collide → skipped, and their ids are surfaced.
+	res := runPublish(t, st, workdir, nil)
+	if !res.Success {
+		t.Fatalf("second run failed: %s", res.Detail)
+	}
+	ids, ok := res.Output["skipped_ids"].([]string)
+	if !ok {
+		t.Fatalf("skipped_ids missing or wrong type: %T %v", res.Output["skipped_ids"], res.Output["skipped_ids"])
+	}
+	got := map[string]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got["S1-01"] || !got["S1-02"] {
+		t.Errorf("skipped_ids: got %v, want both S1-01 and S1-02", ids)
+	}
+	if !strings.Contains(res.Detail, "S1-01") || !strings.Contains(res.Detail, "S1-02") {
+		t.Errorf("detail should name the skipped ids: %q", res.Detail)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"forge/internal/workflow"
 	"gopkg.in/yaml.v3"
@@ -156,6 +157,7 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 	}
 
 	created, skipped := 0, 0
+	var skippedIDs []string
 	for _, s := range bf.Stories {
 		if s.ID == "" {
 			continue
@@ -175,7 +177,12 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		})
 		if err != nil {
 			if isSQLiteConflict(err) {
+				// An id that already exists is dropped here. Silent in the count-only
+				// output before: an iteration whose planner reused an existing id would
+				// lose that story with no signal. Record the concrete ids so the run
+				// surfaces exactly which stories collided.
 				skipped++
+				skippedIDs = append(skippedIDs, s.ID)
 				continue
 			}
 			return workflow.StepResult{
@@ -202,15 +209,20 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		go r.OnPublished(projectID, repo)
 	}
 
+	detail := fmt.Sprintf("ticket_publish: epic=%s sprints=%d created=%d skipped=%d", bf.Epic.ID, len(declared), created, skipped)
+	if len(skippedIDs) > 0 {
+		detail += " (skipped ids: " + strings.Join(skippedIDs, ", ") + ")"
+	}
 	return workflow.StepResult{
 		Success: true,
 		Output: map[string]any{
-			"epic":    bf.Epic.ID,
-			"sprints": len(declared),
-			"created": created,
-			"skipped": skipped,
+			"epic":        bf.Epic.ID,
+			"sprints":     len(declared),
+			"created":     created,
+			"skipped":     skipped,
+			"skipped_ids": skippedIDs,
 		},
-		Detail: fmt.Sprintf("ticket_publish: epic=%s sprints=%d created=%d skipped=%d", bf.Epic.ID, len(declared), created, skipped),
+		Detail: detail,
 	}, nil
 }
 

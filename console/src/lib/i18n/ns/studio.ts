@@ -52,9 +52,11 @@ export const studio = {
     "studio.view.selectProject": "Selecciona un proyecto.",
     "studio.view.phasesProgress": "{done}/{total} fases",
     "studio.view.cycle": "Ciclo {n}",
+    "studio.view.iteration": "Iteración",
     "studio.view.loadingProject": "Cargando proyecto…",
     "studio.view.relaunchDesign": "↺ Nuevo ciclo de diseño",
     "studio.view.relaunching": "Relanzando…",
+    "studio.view.newIteration": "＋ Nueva iteración",
     "studio.view.generatingDoc": "Generando documento…",
     "studio.view.docWillShow": "El documento se mostrará aquí cuando la fase complete.",
     "studio.view.loadingArtifact": "Cargando artefacto…",
@@ -83,6 +85,16 @@ export const studio = {
 
     // Backlog artifact
     "studio.view.acceptanceCriteria": "Criterios de aceptación",
+
+    // Iteration modal
+    "studio.iteration.title": "Nueva iteración",
+    "studio.iteration.hint": "El producto ya está diseñado y publicado. Describe qué quieres añadir o cambiar — se planifica solo el backlog nuevo (delta) sobre lo ya construido, sin rehacer el diseño.",
+    "studio.iteration.label": "¿Qué quieres añadir o cambiar?",
+    "studio.iteration.placeholder": "Ej: añade login con Google, un panel de métricas para el admin, y notificaciones por email cuando cambie el estado de un pedido.",
+    "studio.iteration.validation": "Describe el cambio o la nueva funcionalidad.",
+    "studio.iteration.cancel": "Cancelar",
+    "studio.iteration.launch": "Planificar iteración",
+    "studio.iteration.launching": "Lanzando…",
 
     // New project modal
     "studio.modal.validation.name": "El nombre del proyecto es obligatorio.",
@@ -150,9 +162,11 @@ export const studio = {
     "studio.view.selectProject": "Select a project.",
     "studio.view.phasesProgress": "{done}/{total} phases",
     "studio.view.cycle": "Cycle {n}",
+    "studio.view.iteration": "Iteration",
     "studio.view.loadingProject": "Loading project…",
     "studio.view.relaunchDesign": "↺ New design cycle",
     "studio.view.relaunching": "Relaunching…",
+    "studio.view.newIteration": "＋ New iteration",
     "studio.view.generatingDoc": "Generating document…",
     "studio.view.docWillShow": "The document will appear here once the phase completes.",
     "studio.view.loadingArtifact": "Loading artifact…",
@@ -181,6 +195,16 @@ export const studio = {
 
     // Backlog artifact
     "studio.view.acceptanceCriteria": "Acceptance criteria",
+
+    // Iteration modal
+    "studio.iteration.title": "New iteration",
+    "studio.iteration.hint": "The product is already designed and published. Describe what you want to add or change — only the new (delta) backlog is planned on top of what's already built, without redoing the design.",
+    "studio.iteration.label": "What do you want to add or change?",
+    "studio.iteration.placeholder": "E.g.: add Google login, a metrics dashboard for the admin, and email notifications when an order's status changes.",
+    "studio.iteration.validation": "Describe the change or the new feature.",
+    "studio.iteration.cancel": "Cancel",
+    "studio.iteration.launch": "Plan iteration",
+    "studio.iteration.launching": "Launching…",
 
     // New project modal
     "studio.modal.validation.name": "The project name is required.",
@@ -248,7 +272,11 @@ export const studio = {
     "studio.view.selectProject": "Selecione um projeto.",
     "studio.view.phasesProgress": "{done}/{total} fases",
     "studio.view.cycle": "Ciclo {n}",
+    "studio.view.iteration": "Iteração",
     "studio.view.loadingProject": "Carregando projeto…",
+    "studio.view.relaunchDesign": "↺ Novo ciclo de design",
+    "studio.view.relaunching": "Reiniciando…",
+    "studio.view.newIteration": "＋ Nova iteração",
     "studio.view.generatingDoc": "Gerando documento…",
     "studio.view.docWillShow": "O documento aparecerá aqui quando a fase for concluída.",
     "studio.view.loadingArtifact": "Carregando artefato…",
@@ -277,6 +305,16 @@ export const studio = {
 
     // Backlog artifact
     "studio.view.acceptanceCriteria": "Critérios de aceitação",
+
+    // Iteration modal
+    "studio.iteration.title": "Nova iteração",
+    "studio.iteration.hint": "O produto já está desenhado e publicado. Descreva o que você quer adicionar ou mudar — apenas o novo backlog (delta) é planejado sobre o que já foi construído, sem refazer o design.",
+    "studio.iteration.label": "O que você quer adicionar ou mudar?",
+    "studio.iteration.placeholder": "Ex.: adicione login com Google, um painel de métricas para o admin e notificações por e-mail quando o status de um pedido mudar.",
+    "studio.iteration.validation": "Descreva a mudança ou a nova funcionalidade.",
+    "studio.iteration.cancel": "Cancelar",
+    "studio.iteration.launch": "Planejar iteração",
+    "studio.iteration.launching": "Iniciando…",
 
     // New project modal
     "studio.modal.validation.name": "O nome do projeto é obrigatório.",

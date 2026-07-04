@@ -267,7 +267,7 @@ export interface DesignPhase {
 
 export interface DesignRun {
   id: string;
-  workflow_id: string; // siempre "design"
+  workflow_id: string; // "design" (ciclo completo) o "iterate" (backlog delta)
   status: RunStatus;
   idea: string;        // .payload.instructions — la descripción del proyecto
   created_at: number;  // epoch ms

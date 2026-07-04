@@ -951,6 +951,20 @@ const DESIGN_PHASE_MAP: { stepId: string; name: string; gateId: string }[] = [
   { stepId: "handoff", name: "Handoff → stories", gateId: "" },
 ];
 
+// El workflow "iterate" (registry/workflows/iterate.yaml) NO regenera los docs:
+// planifica un backlog DELTA sobre el producto ya desplegado y lo publica. Solo
+// dos fases: el plan (con su gate) y el handoff. Step ids reales: plan / plan_gate
+// / handoff.
+const ITERATE_PHASE_MAP: { stepId: string; name: string; gateId: string }[] = [
+  { stepId: "plan", name: "Plan de iteración", gateId: "plan_gate" },
+  { stepId: "handoff", name: "Handoff → stories", gateId: "" },
+];
+
+// Selecciona el mapa de fases según el workflow del run.
+function phaseMapFor(workflowID?: string) {
+  return workflowID === "iterate" ? ITERATE_PHASE_MAP : DESIGN_PHASE_MAP;
+}
+
 interface KernelRunWithSteps extends KernelRun {
   steps?: KernelStep[];
 }
@@ -982,7 +996,7 @@ function mapDesignRun(r: KernelRunWithSteps): DesignRun {
     return (s?.status ?? "QUEUED") as DesignStepStatus;
   };
 
-  const phases: DesignPhase[] = DESIGN_PHASE_MAP.map(({ stepId, name, gateId }) => ({
+  const phases: DesignPhase[] = phaseMapFor(r.workflow_id).map(({ stepId, name, gateId }) => ({
     stepId,
     name,
     gateId,
@@ -1011,13 +1025,18 @@ function mapDesignRun(r: KernelRunWithSteps): DesignRun {
   };
 }
 
-/** Lista los runs del workflow "design" (filtrando client-side). */
+/**
+ * Lista los runs de diseño (filtrando client-side). Incluye tanto los runs del
+ * workflow "design" (el ciclo completo idea→backlog) como los de "iterate" (el
+ * delta sobre un producto ya desplegado): ambos son "proyectos" que Studio lista
+ * y cuyas fases presenta.
+ */
 export async function listDesignRuns(): Promise<DesignRun[]> {
   if (await isMock()) return [...mockDesignRuns];
   const res = await http<KernelRun[] | { runs: KernelRun[] }>(`/runs`);
   const raw = Array.isArray(res) ? res : res?.runs ?? [];
   return raw
-    .filter((r) => r.workflow_id === "design")
+    .filter((r) => r.workflow_id === "design" || r.workflow_id === "iterate")
     .map((r) => mapDesignRun(r));
 }
 
@@ -1057,6 +1076,53 @@ export async function createDesignRun(input: CreateDesignRunInput): Promise<Desi
         project_id: input.project_id,
         repo: input.repo,
         instructions: input.instructions,
+      },
+    }),
+  });
+  return mapDesignRun(r);
+}
+
+export interface CreateIterationRunInput {
+  project_id: string;
+  repo: string;
+  changeRequest: string; // qué añadir / cambiar sobre el producto ya desplegado
+}
+
+/**
+ * Lanza una ITERACIÓN sobre un proyecto ya diseñado y publicado: dispara el
+ * workflow "iterate", que planifica solo el backlog DELTA (nuevas historias sobre
+ * lo ya construido) sin regenerar los docs. El change request va como
+ * `instructions` — la entrada `change_request` de iterate.yaml.
+ */
+export async function createIterationRun(input: CreateIterationRunInput): Promise<DesignRun> {
+  if (await isMock()) {
+    const newRun: DesignRun = {
+      id: `run_iterate_${String(mockDesignRuns.length + 1).padStart(3, "0")}`,
+      workflow_id: "iterate",
+      status: "QUEUED",
+      idea: input.changeRequest,
+      created_at: Date.now(),
+      project_id: input.project_id,
+      repo: input.repo,
+      phases: ITERATE_PHASE_MAP.map(({ stepId, name, gateId }) => ({
+        stepId,
+        name,
+        gateId,
+        designStatus: "QUEUED" as DesignStepStatus,
+        gateStatus: "QUEUED" as DesignStepStatus,
+      })),
+    };
+    mockDesignRuns.unshift(newRun);
+    return newRun;
+  }
+  const r = await http<KernelRun>(`/runs`, {
+    method: "POST",
+    body: JSON.stringify({
+      workflow: "iterate",
+      payload: {
+        project_id: input.project_id,
+        repo: input.repo,
+        instructions: input.changeRequest,
       },
     }),
   });

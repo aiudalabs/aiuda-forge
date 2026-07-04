@@ -93,18 +93,23 @@ func main() {
 		// Prefer the repo from the run's trigger payload when present; capture the
 		// sprint id so the seed can resume that sprint's branch (resumable sprints),
 		// and the project id so a repo-less trigger can resolve it from the project.
+		// The workflow id decides the base branch below (iterate → trunk `main`).
+		workflowID := ""
 		run, err := a.Store.GetRun(runID)
-		if err == nil && run.Payload != "" {
-			var payload map[string]any
-			if json.Unmarshal([]byte(run.Payload), &payload) == nil {
-				if r, ok := payload["repo"].(string); ok && r != "" {
-					remote = r
-				}
-				if s, ok := payload["sprint_id"].(string); ok {
-					sprintID = s
-				}
-				if p, ok := payload["project_id"].(string); ok {
-					projectID = p
+		if err == nil {
+			workflowID = run.WorkflowID
+			if run.Payload != "" {
+				var payload map[string]any
+				if json.Unmarshal([]byte(run.Payload), &payload) == nil {
+					if r, ok := payload["repo"].(string); ok && r != "" {
+						remote = r
+					}
+					if s, ok := payload["sprint_id"].(string); ok {
+						sprintID = s
+					}
+					if p, ok := payload["project_id"].(string); ok {
+						projectID = p
+					}
 				}
 			}
 		}
@@ -128,10 +133,19 @@ func main() {
 		if out, err := exec.Command("git", "clone", "--quiet", remote, workdir).CombinedOutput(); err != nil {
 			return fmt.Errorf("clone target: %v: %s", err, out)
 		}
-		// GitHub Flow: base the run's work on `dev` (prior MERGED sprints) — or
-		// RESUME this sprint's own branch if it has unmerged work from a prior run,
-		// rebased onto current dev (resumable sprints).
-		seedSprintBranch(workdir, sprintID)
+		// An `iterate` run plans a delta ON TOP of the SHIPPED product. The pivot is
+		// trunk-based: merged sprints land on `main`, and the vestigial `dev` branch
+		// (legacy factory) may still exist but is stale. Base the iteration on `main`
+		// so the iteration-planner reads the current PRD/architecture/backlog, not an
+		// outdated dev. Factory runs keep the `dev` base via seedSprintBranch.
+		if workflowID == "iterate" {
+			checkoutBranch(workdir, "main", remote)
+		} else {
+			// GitHub Flow: base the run's work on `dev` (prior MERGED sprints) — or
+			// RESUME this sprint's own branch if it has unmerged work from a prior run,
+			// rebased onto current dev (resumable sprints).
+			seedSprintBranch(workdir, sprintID)
+		}
 		return gate.SealWorkdir(workdir)
 	}
 
@@ -197,14 +211,13 @@ func main() {
 	}
 }
 
-// checkoutDev switches the freshly cloned workdir to the `dev` branch so the
-// agent's work is based on dev (which includes prior MERGED sprints). If `dev`
-// does not exist on the remote, the default branch stays checked out and we log
-// the fallback rather than failing the seed.
-func checkoutDev(workdir, remote string) {
-	chk := exec.Command("git", "-C", workdir, "checkout", "dev")
+// checkoutBranch switches the freshly cloned workdir to branch so the agent's
+// work is based on it. If the branch does not exist on the remote, the default
+// branch stays checked out and we log the fallback rather than failing the seed.
+func checkoutBranch(workdir, branch, remote string) {
+	chk := exec.Command("git", "-C", workdir, "checkout", branch)
 	if out, err := chk.CombinedOutput(); err != nil {
-		log.Printf("seed: repo %s has no dev branch (%s) — using default branch", remote, exitText(out, err))
+		log.Printf("seed: repo %s has no %s branch (%s) — using default branch", remote, branch, exitText(out, err))
 	}
 }
 
@@ -233,7 +246,7 @@ func gitC(workdir string, args ...string) (string, error) {
 //   - no sprint id (story mode) or no prior branch → a fresh branch off dev, as before.
 func seedSprintBranch(workdir, sprintID string) {
 	if sprintID == "" {
-		checkoutDev(workdir, "") // story mode: base on dev (prior merged work)
+		checkoutBranch(workdir, "dev", "") // story mode: base on dev (prior merged work)
 		return
 	}
 	branch := "vibeforge/sprint_" + sprintID
