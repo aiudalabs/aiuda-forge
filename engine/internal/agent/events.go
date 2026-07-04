@@ -61,12 +61,26 @@ func eventPayload(e Event) (map[string]any, bool) {
 			"kind": "text",
 			"text": truncate(redactSecrets(e.Text), maxTextLen),
 		}, true
+	case KindThinking:
+		if e.Text == "" {
+			return nil, false
+		}
+		// Truncate thinking heavily — it can be tens of thousands of chars; the
+		// board just needs a glimpse to confirm the agent is reasoning, not a
+		// transcript of the full thought.
+		return map[string]any{
+			"kind": "thinking",
+			"text": truncate(e.Text, 300),
+		}, true
 	case KindSystem:
 		// Minimal: enough to mark a system notice on the timeline without the
 		// noisy init blob (model list, tool inventory, cwd, ...).
+		// "backend" is set by the runner's synthetic "engine" event so the UI
+		// can show a runtime chip without an extra API call.
 		return map[string]any{
 			"kind":    "system",
 			"subtype": asString(e.Raw["subtype"]),
+			"backend": asString(e.Raw["backend"]),
 		}, true
 	default:
 		// KindResult and anything else: the result is already the step detail.

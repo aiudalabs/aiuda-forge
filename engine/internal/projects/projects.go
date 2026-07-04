@@ -73,20 +73,20 @@ type Settings struct {
 // their own projects. ExecutionUnit/MergeMode/DispatchMode/Executor/ModelByLane
 // are the per-project settings.
 type Project struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	Repo          string `json:"repo"` // HTTPS GitHub URL
-	OwnerID       string `json:"owner_id"`
-	ExecutionUnit string `json:"execution_unit"`
-	MergeMode     string `json:"merge_mode"`
-	DispatchMode  string `json:"dispatch_mode"`
-	Executor      string `json:"executor"`
-	ModelByLane   string `json:"model_by_lane"` // JSON map lane→model (raw; Settings decodes it)
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Repo             string `json:"repo"` // HTTPS GitHub URL
+	OwnerID          string `json:"owner_id"`
+	ExecutionUnit    string `json:"execution_unit"`
+	MergeMode        string `json:"merge_mode"`
+	DispatchMode     string `json:"dispatch_mode"`
+	Executor         string `json:"executor"`
+	ModelByLane      string `json:"model_by_lane"` // JSON map lane→model (raw; Settings decodes it)
 	ExecutorByLane   string `json:"executor_by_lane"`
 	WorkflowApproval string `json:"workflow_approval"`
 	MaxConcurrency   int    `json:"max_concurrency"`
-	CreatedAt     int64  `json:"created_at"`
+	CreatedAt        int64  `json:"created_at"`
 }
 
 const schema = `

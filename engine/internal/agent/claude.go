@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,31 +15,49 @@ import (
 	"time"
 )
 
-// ClaudeBackend runs Anthropic's `claude` CLI in headless print mode. It ports
-// the validated semantics from v1's claude_code engine: stream-json NDJSON
-// parsing, hard timeout, and process-group kill on cancel so no agent is
-// orphaned. This is the REAL engine; the automated suite uses FakeBackend.
-type ClaudeBackend struct {
-	// Bin is the claude binary (default "claude").
-	Bin string
-	// ExtraArgs are appended verbatim (escape hatch for new CLI flags).
+// CliBackend spawns an agent CLI in headless print mode and streams its NDJSON
+// output. It is protocol-agnostic: the CLI to invoke comes from BaseArgv (set
+// by the backend registry), and the stream is parsed with the claude-code
+// stream-json protocol (parseStreamLine). Any CLI that implements that protocol
+// — claude, opencode, etc. — works without adding Go code.
+//
+// The only required YAML to add a new engine is engine/registry/backends/<id>.yaml.
+type CliBackend struct {
+	// BaseArgv is the base command and fixed flags, e.g.:
+	//   ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
+	// When nil/empty, defaults to the claude CLI argv so existing deployments
+	// need no configuration change (zero-value = claude, same as before).
+	BaseArgv []string
+
+	// ExtraArgs are appended verbatim after the dynamic flags and before the
+	// prompt — an escape hatch for new CLI flags not yet in the schema.
 	ExtraArgs []string
 }
 
-// Run spawns `claude -p` and streams its NDJSON output.
-func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onEvent func(Event)) (Result, error) {
-	bin := c.Bin
-	if bin == "" {
-		bin = "claude"
+// defaultArgv is the argv used when BaseArgv is nil/empty. It targets the
+// claude CLI so the zero-value CliBackend (and the ClaudeBackend alias) behave
+// exactly as the old ClaudeBackend{} did.
+var defaultArgv = []string{
+	"claude", "-p",
+	"--output-format", "stream-json",
+	"--verbose",
+	"--permission-mode", "acceptEdits",
+}
+
+// ClaudeBackend is a type alias for CliBackend so existing code that creates
+// agent.ClaudeBackend{} or refers to ClaudeBackend by name compiles unchanged.
+type ClaudeBackend = CliBackend
+
+// Run spawns the CLI and streams its NDJSON output.
+func (c CliBackend) Run(ctx context.Context, prompt string, opts Options, onEvent func(Event)) (Result, error) {
+	base := c.BaseArgv
+	if len(base) == 0 {
+		base = defaultArgv
 	}
 
-	args := []string{
-		bin,
-		"-p",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--permission-mode", "acceptEdits",
-	}
+	args := make([]string, len(base), len(base)+8)
+	copy(args, base)
+
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
@@ -51,10 +70,8 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	args = append(args, c.ExtraArgs...)
 	args = append(args, prompt)
 
-	// Run INSIDE the per-task sandbox when one is provided (v1's
-	// `popen_cmd = sandbox.wrap(cmd)`): only the invoked argv + env change; the
-	// streaming loop below is identical. Without a sandbox, run on the host with
-	// the legacy auth env (used by pure unit tests).
+	// Run INSIDE the per-task sandbox when one is provided; otherwise run on the
+	// host with the legacy auth env (used by pure unit tests).
 	var hostArgv, hostEnv []string
 	if opts.Sandbox != nil {
 		hostArgv, hostEnv = opts.Sandbox.WrapAgent(args, opts.ContainerEnv)
@@ -63,19 +80,15 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 		hostEnv = childEnv(opts.Auth)
 	}
 
-	// Timeout via a child context; cancellation kills the whole process group.
-	runCtx := ctx
-	var cancel context.CancelFunc
-	if opts.Timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
-		defer cancel()
-	}
+	// The absolute timeout is handled by a renewable timer in the watchdog
+	// goroutine (not a hard context deadline) so it can be extended when the agent
+	// is still actively streaming. An extended-thinking run emits thinking_tokens
+	// events continuously — it is NOT stalled even if it exceeds the absolute wall.
+	// Only true silence (no events for IdleTimeout) means stuck.
 
 	cmd := exec.Command(hostArgv[0], hostArgv[1:]...)
-	cmd.Dir = opts.Workdir // ignored by `docker run` (-w sets the container cwd); needed for local
+	cmd.Dir = opts.Workdir
 	cmd.Env = hostEnv
-	// New process group so we can kill the agent (and the docker client / its
-	// children) on cancel.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdout, err := cmd.StdoutPipe()
@@ -85,25 +98,19 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		return Result{}, fmt.Errorf("start claude: %w", err)
+		return Result{}, fmt.Errorf("start %s: %w", hostArgv[0], err)
 	}
 
-	// Kill the process group when runCtx is done (timeout or external cancel).
-	// Killing the host docker CLIENT process group alone leaves the container
-	// (a child of dockerd, not of our process group) orphaned, holding the egress
-	// net + /work mount. So we ALSO remove the container by id (M1) when a cidfile
-	// was requested — `--rm` only cleans up on a normal exit.
 	done := make(chan struct{})
 	defer close(done)
-	// activity is poked on every streamed line; the watchdog resets the idle timer
-	// on each poke. A healthy agent streams continuously (tool calls, text), so it
-	// never trips the idle timer; a hung/stalled one goes silent and gets killed in
-	// IdleTimeout instead of waiting out the whole absolute wall.
 	activity := make(chan struct{}, 1)
 	var stalled atomic.Bool
+	var absoluteTimedOut atomic.Bool
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
 	kill := func() {
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // negative pid = process group
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 		killContainer(opts.CIDFile)
 	}
@@ -115,9 +122,16 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 			idleC = idleTimer.C
 			defer idleTimer.Stop()
 		}
+		var absC <-chan time.Time
+		var absTimer *time.Timer
+		if opts.Timeout > 0 {
+			absTimer = time.NewTimer(opts.Timeout)
+			absC = absTimer.C
+			defer absTimer.Stop()
+		}
 		for {
 			select {
-			case <-runCtx.Done(): // absolute backstop OR external cancel
+			case <-ctx.Done():
 				kill()
 				return
 			case <-done:
@@ -132,10 +146,20 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 					}
 					idleTimer.Reset(opts.IdleTimeout)
 				}
-			case <-idleC: // no streamed output for IdleTimeout → stalled
+			case <-idleC:
 				stalled.Store(true)
 				kill()
 				return
+			case <-absC:
+				idleFor := time.Since(time.Unix(0, lastActivity.Load()))
+				if opts.IdleTimeout > 0 && idleFor < opts.IdleTimeout {
+					absTimer.Reset(opts.Timeout)
+					log.Printf("agent: absolute timeout elapsed but agent still active (idle %s < %s); extending", idleFor.Round(time.Second), opts.IdleTimeout)
+				} else {
+					absoluteTimedOut.Store(true)
+					kill()
+					return
+				}
 			}
 		}
 	}()
@@ -143,9 +167,9 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	var result Result
 	sawResult := false
 	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024) // large lines (tool payloads)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 	for scanner.Scan() {
-		// Heartbeat: every line of output keeps the agent alive (non-blocking poke).
+		lastActivity.Store(time.Now().UnixNano())
 		select {
 		case activity <- struct{}{}:
 		default:
@@ -156,7 +180,7 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 		}
 		var obj map[string]any
 		if err := json.Unmarshal([]byte(line), &obj); err != nil {
-			continue // tolerate non-JSON noise
+			continue
 		}
 		ev, res, isResult := parseStreamLine(obj)
 		if onEvent != nil {
@@ -172,36 +196,29 @@ func (c ClaudeBackend) Run(ctx context.Context, prompt string, opts Options, onE
 	scanErr := scanner.Err()
 	waitErr := cmd.Wait()
 
-	// A stalled kill (idle watchdog) takes precedence: it's the actionable failure
-	// ("the agent hung", not "the task is too long for the wall").
 	if stalled.Load() {
-		return result, fmt.Errorf("claude stalled: no streamed output for %s", opts.IdleTimeout)
+		return result, fmt.Errorf("agent stalled: no streamed output for %s", opts.IdleTimeout)
 	}
-	if err := runCtx.Err(); err == context.DeadlineExceeded {
-		return result, fmt.Errorf("claude hit the absolute timeout of %s", opts.Timeout)
-	} else if err == context.Canceled {
+	if absoluteTimedOut.Load() {
+		return result, fmt.Errorf("agent hit the absolute timeout of %s", opts.Timeout)
+	}
+	if ctx.Err() != nil {
 		return result, context.Canceled
 	}
-	// A scan error (e.g. bufio.ErrTooLong on a >16 MB tool payload) means the
-	// stream was truncated: any result we did or did not see is unreliable. Fail
-	// hard rather than silently truncating to SUCCESS or misreporting "no result".
 	if scanErr != nil {
-		return result, fmt.Errorf("claude stream scan failed: %w", scanErr)
+		return result, fmt.Errorf("agent stream scan failed: %w", scanErr)
 	}
 	if !sawResult {
 		if waitErr != nil {
-			return result, fmt.Errorf("claude exited without result: %w", waitErr)
+			return result, fmt.Errorf("agent exited without result: %w", waitErr)
 		}
-		return result, fmt.Errorf("claude produced no result line")
+		return result, fmt.Errorf("agent produced no result line")
 	}
 	return result, nil
 }
 
 // killContainer force-removes the docker container whose id was written to
-// cidFile (by `docker run --cidfile`). It is a no-op when cidFile is empty (no
-// docker sandbox) or unreadable. docker writes the id at container start, which
-// may lag our kill slightly, so we retry a few times before giving up. Best
-// effort: an already-gone container is fine, the goal is to never orphan one.
+// cidFile. No-op when cidFile is empty or unreadable.
 func killContainer(cidFile string) {
 	if cidFile == "" {
 		return
@@ -219,7 +236,9 @@ func killContainer(cidFile string) {
 	}
 }
 
-// parseStreamLine converts one NDJSON object into events + (maybe) the result.
+// parseStreamLine converts one NDJSON object (claude-code stream-json protocol)
+// into events + (maybe) the terminal result. Shared by all CLI backends that
+// use this protocol (claude, opencode, …).
 func parseStreamLine(obj map[string]any) (events []Event, result Result, isResult bool) {
 	typ, _ := obj["type"].(string)
 	switch typ {
@@ -236,6 +255,10 @@ func parseStreamLine(obj map[string]any) (events []Event, result Result, isResul
 			case "tool_use":
 				name, _ := b["name"].(string)
 				events = append(events, Event{Kind: KindToolUse, Tool: name, Raw: b})
+			case "thinking":
+				if t, _ := b["thinking"].(string); t != "" {
+					events = append(events, Event{Kind: KindThinking, Text: t, Raw: b})
+				}
 			}
 		}
 	case "system":
@@ -248,8 +271,6 @@ func parseStreamLine(obj map[string]any) (events []Event, result Result, isResul
 		if n, ok := obj["num_turns"].(float64); ok {
 			turns = int(n)
 		}
-		// Token usage is reported even on subscription billing (where cost may be 0),
-		// so it is the meaningful "spend" signal there. Input includes cache create/read.
 		var tin, tout int
 		if u, ok := obj["usage"].(map[string]any); ok {
 			tin = jsonInt(u["input_tokens"]) + jsonInt(u["cache_creation_input_tokens"]) + jsonInt(u["cache_read_input_tokens"])
@@ -262,7 +283,6 @@ func parseStreamLine(obj map[string]any) (events []Event, result Result, isResul
 	return events, result, isResult
 }
 
-// jsonInt coerces a decoded JSON number (always float64) to int; 0 if absent.
 func jsonInt(v any) int {
 	if f, ok := v.(float64); ok {
 		return int(f)
@@ -270,8 +290,7 @@ func jsonInt(v any) int {
 	return 0
 }
 
-// childEnv builds the environment for the agent process per the auth mode. The
-// sandbox (Wave 4) further restricts this; here we only set/clear the auth vars.
+// childEnv builds the environment for the agent process per the auth mode.
 func childEnv(auth Auth) []string {
 	env := os.Environ()
 	switch auth.Mode {
@@ -282,7 +301,7 @@ func childEnv(auth Auth) []string {
 		env = setEnv(env, "CLAUDE_CODE_OAUTH_TOKEN", auth.Token)
 		env = unsetEnv(env, "ANTHROPIC_API_KEY")
 	case AuthSubscription, "":
-		// Use the logged-in session; do not inject a key. Leave env as-is.
+		// Use the logged-in session; do not inject a key.
 	}
 	return env
 }

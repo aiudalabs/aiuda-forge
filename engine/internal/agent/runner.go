@@ -38,6 +38,12 @@ type StepRunner struct {
 	SandboxTemplate sandbox.Config // Network = egress (NOT none); Image must contain claude
 	Egress          EgressConfig
 
+	// Backends are named alternative backends selected per-agent via the manifest's
+	// `backend:` field (e.g. "openai", "cursor"). An empty manifest backend — or an
+	// unrecognized name — falls back to Backend (the default ClaudeBackend). nil map
+	// means only the default backend is available.
+	Backends map[string]Backend
+
 	// Emit, if set, receives streamed events for the live-log (step.event).
 	Emit func(ev Event)
 
@@ -53,6 +59,17 @@ func NewStepRunner(backend Backend, agents Loader) *StepRunner {
 	// Absolute backstop generous (2h) so a long-but-progressing task isn't guillotined;
 	// the idle watchdog (8m of no streamed output → stalled) is the real guard.
 	return &StepRunner{Backend: backend, Agents: agents, Timeout: 2 * time.Hour, IdleTimeout: 8 * time.Minute}
+}
+
+// backendFor picks the backend for a step: the manifest's named backend when it
+// is registered in r.Backends, else the default r.Backend (ClaudeBackend).
+func (r *StepRunner) backendFor(m *Manifest) Backend {
+	if m != nil && m.Backend != "" && r.Backends != nil {
+		if b, ok := r.Backends[m.Backend]; ok {
+			return b
+		}
+	}
+	return r.Backend
 }
 
 // Run implements workflow.Runner.
@@ -152,7 +169,21 @@ func (r *StepRunner) Run(ctx context.Context, step workflow.Step, inputs map[str
 		}
 	}
 
-	res, err := r.Backend.Run(ctx, prompt, opts, eventSink(ctx, r.Emit))
+	// Emit a synthetic system event before the run so the live-log can show a
+	// runtime chip ("ran with: claude | opencode"). Uses the manifest's backend id
+	// or "claude" when the default backend is active.
+	{
+		backendID := "claude"
+		if manifest != nil && manifest.Backend != "" {
+			backendID = manifest.Backend
+		}
+		sink := eventSink(ctx, r.Emit)
+		if sink != nil {
+			sink(Event{Kind: KindSystem, Raw: map[string]any{"subtype": "engine", "backend": backendID}})
+		}
+	}
+
+	res, err := r.backendFor(manifest).Run(ctx, prompt, opts, eventSink(ctx, r.Emit))
 	if err != nil {
 		// A provider session/rate limit is TRANSIENT — not a defect in the work.
 		// Signal Retry so the engine requeues the step with a backoff instead of
@@ -261,15 +292,15 @@ func asString(v any) string {
 // quota resets, the rate window passes). These must NOT fail the run; the engine
 // requeues and retries. Anything else (a real agent/tool error) fails normally.
 var transientMarkers = []string{
-	"session limit",      // "You've hit your session limit · resets ..."
-	"rate limit",         // generic rate limiting
-	"rate_limit",         // API error code form
-	"429",                // Too Many Requests
-	"overloaded",         // provider overloaded
-	"529",                // provider overloaded (Anthropic)
-	"usage limit",        // plan usage cap
-	"weekly limit",       // "You've hit your weekly limit · resets ..."
-	"hit your limit",     // generic plan-cap phrasing
+	"session limit",  // "You've hit your session limit · resets ..."
+	"rate limit",     // generic rate limiting
+	"rate_limit",     // API error code form
+	"429",            // Too Many Requests
+	"overloaded",     // provider overloaded
+	"529",            // provider overloaded (Anthropic)
+	"usage limit",    // plan usage cap
+	"weekly limit",   // "You've hit your weekly limit · resets ..."
+	"hit your limit", // generic plan-cap phrasing
 }
 
 // isTransientErr reports whether err looks like a provider limit/overload that

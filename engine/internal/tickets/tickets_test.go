@@ -175,7 +175,7 @@ func TestAddDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := st.AddDep("S1", []string{"D1"}); err != nil {
+	if err := st.AddDep("S1", tickets.DefaultProjectID, []string{"D1"}); err != nil {
 		t.Fatalf("add dep: %v", err)
 	}
 	got, _ := st.GetStory("S1")
@@ -184,7 +184,7 @@ func TestAddDep(t *testing.T) {
 	}
 
 	// Adding again must not fail or duplicate.
-	if err := st.AddDep("S1", []string{"D1"}); err != nil {
+	if err := st.AddDep("S1", tickets.DefaultProjectID, []string{"D1"}); err != nil {
 		t.Fatalf("add dup dep: %v", err)
 	}
 	got, _ = st.GetStory("S1")
@@ -460,10 +460,10 @@ func TestAddDepRejectsCycle(t *testing.T) {
 	if err := st.CreateStory(tickets.Story{ID: "B", Title: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AddDep("A", []string{"B"}); err != nil {
+	if err := st.AddDep("A", tickets.DefaultProjectID, []string{"B"}); err != nil {
 		t.Fatalf("A→B should be fine: %v", err)
 	}
-	if err := st.AddDep("B", []string{"A"}); !errors.Is(err, tickets.ErrDepCycle) {
+	if err := st.AddDep("B", tickets.DefaultProjectID, []string{"A"}); !errors.Is(err, tickets.ErrDepCycle) {
 		t.Errorf("B→A should close a cycle (ErrDepCycle), got %v", err)
 	}
 }
@@ -473,7 +473,7 @@ func TestAddDepRejectsMissingStory(t *testing.T) {
 	if err := st.CreateStory(tickets.Story{ID: "A", Title: "a"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AddDep("A", []string{"NOPE"}); !errors.Is(err, tickets.ErrDepNotFound) {
+	if err := st.AddDep("A", tickets.DefaultProjectID, []string{"NOPE"}); !errors.Is(err, tickets.ErrDepNotFound) {
 		t.Errorf("dep on a non-existent story must be ErrDepNotFound, got %v", err)
 	}
 }
@@ -488,7 +488,7 @@ func TestValidateDepsCatchesDanglingForwardRef(t *testing.T) {
 		t.Fatalf("forward ref should be allowed at insert: %v", err)
 	}
 	// FUTURE never created → whole-graph validation flags the dangling dep.
-	if err := st.ValidateDeps(); !errors.Is(err, tickets.ErrDepNotFound) {
+	if err := st.ValidateDeps(tickets.DefaultProjectID); !errors.Is(err, tickets.ErrDepNotFound) {
 		t.Errorf("dangling dep must be caught by ValidateDeps, got %v", err)
 	}
 }
@@ -812,7 +812,7 @@ func TestClaimSprintAtomicity(t *testing.T) {
 		tickets.Story{ID: "A", Title: "A"},
 	)
 
-	claimed, ok, err := st.ClaimSprint("SP1")
+	claimed, ok, err := st.ClaimSprint("SP1", "")
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -830,7 +830,7 @@ func TestClaimSprintAtomicity(t *testing.T) {
 	}
 
 	// Second claim: every story is now running → ok=false, nothing changes.
-	_, ok2, err := st.ClaimSprint("SP1")
+	_, ok2, err := st.ClaimSprint("SP1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -847,7 +847,7 @@ func TestClaimSprintPartialNotBacklog(t *testing.T) {
 		tickets.Story{ID: "A", Title: "A", Status: tickets.StatusRunning},
 		tickets.Story{ID: "B", Title: "B"},
 	)
-	_, ok, err := st.ClaimSprint("SP1")
+	_, ok, err := st.ClaimSprint("SP1", "")
 	if err != nil {
 		t.Fatal(err)
 	}

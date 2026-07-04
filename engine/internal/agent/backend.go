@@ -57,10 +57,11 @@ type Options struct {
 type EventKind string
 
 const (
-	KindText    EventKind = "text"     // assistant text chunk
-	KindToolUse EventKind = "tool_use" // a tool invocation
-	KindSystem  EventKind = "system"   // init / system notices
-	KindResult  EventKind = "result"   // terminal result line
+	KindText     EventKind = "text"     // assistant text chunk
+	KindToolUse  EventKind = "tool_use" // a tool invocation
+	KindSystem   EventKind = "system"   // init / system notices
+	KindResult   EventKind = "result"   // terminal result line
+	KindThinking EventKind = "thinking" // extended-thinking content block
 )
 
 // Event is one streamed item (the live-log unit). Raw keeps the source object.

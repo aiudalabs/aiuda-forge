@@ -41,19 +41,19 @@ func (o *fakeOps) Status() (bool, int64)                     { o.mu.Lock(); defe
 func (o *fakeOps) Pause()                                    { o.mu.Lock(); o.paused = true; o.mu.Unlock() }
 func (o *fakeOps) Resume()                                   { o.mu.Lock(); o.paused = false; o.mu.Unlock() }
 func (o *fakeOps) ListRuns(string) ([]map[string]any, error) { return nil, nil }
-func (o *fakeOps) GetRun(string) (map[string]any, error)      { return map[string]any{}, nil }
-func (o *fakeOps) CancelRun(string) error                     { return nil }
-func (o *fakeOps) RetryRun(string) error                      { return nil }
-func (o *fakeOps) RequeueRun(string) (int, error)             { return 0, nil }
+func (o *fakeOps) GetRun(string) (map[string]any, error)     { return map[string]any{}, nil }
+func (o *fakeOps) CancelRun(string) error                    { return nil }
+func (o *fakeOps) RetryRun(string) error                     { return nil }
+func (o *fakeOps) RequeueRun(string) (int, error)            { return 0, nil }
 func (o *fakeOps) StartRun(wf string, _ map[string]any) (string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.started = append(o.started, wf)
 	return "run-x", nil
 }
-func (o *fakeOps) ApproveStep(string, string) error         { return nil }
-func (o *fakeOps) RejectStep(string, string, string) error  { return nil }
-func (o *fakeOps) Metrics(string) (map[string]any, error)   { return map[string]any{}, nil }
+func (o *fakeOps) ApproveStep(string, string) error        { return nil }
+func (o *fakeOps) RejectStep(string, string, string) error { return nil }
+func (o *fakeOps) Metrics(string) (map[string]any, error)  { return map[string]any{}, nil }
 func (o *fakeOps) ActiveState(string) (map[string]any, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()

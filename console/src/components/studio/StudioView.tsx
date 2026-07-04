@@ -16,9 +16,11 @@ import {
   useCreateProject,
   useDesignRun,
   useDesignRuns,
+  useLiveEvents,
   useProjects,
   useReject,
 } from "@/lib/hooks";
+import { LiveLog } from "@/components/board/LiveLog";
 import { useActiveProject } from "@/lib/activeProject";
 import { ApiError } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -143,7 +145,7 @@ export function StudioView() {
           {/* Panel derecho: detalle del proyecto seleccionado */}
           <div className="studio-main">
             {effectiveSel ? (
-              <ProjectDetail runId={effectiveSel} />
+              <ProjectDetail runId={effectiveSel} onNewRun={(id) => setSelectedRunId(id)} />
             ) : (
               <div className="placeholder">{t("studio.view.selectProject")}</div>
             )}
@@ -237,10 +239,12 @@ function ProjectCard({
 // Detalle del proyecto: stepper + visor de artefacto + acciones
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProjectDetail({ runId }: { runId: string }) {
+function ProjectDetail({ runId, onNewRun }: { runId: string; onNewRun?: (id: string) => void }) {
   const t = useT();
   const { data: run, isLoading } = useDesignRun(runId);
   const [selectedPhaseIdx, setSelectedPhaseIdx] = useState<number | null>(null);
+  const createDesignRun = useCreateDesignRun();
+  const [relaunching, setRelaunching] = useState(false);
 
   // Al cambiar de run, o cuando los datos llegan, reseteamos al paso activo.
   const prevRunId = useRef<string | null>(null);
@@ -267,6 +271,22 @@ function ProjectDetail({ runId }: { runId: string }) {
   const viewIdx = selectedPhaseIdx ?? activeIdx;
   const viewPhase = phases[viewIdx];
   const viewState = viewPhase ? phaseState(viewPhase) : "pending";
+  const isTerminal = run.status === "DONE" || run.status === "FAILED" || run.status === "CANCELLED";
+
+  async function doRelaunch() {
+    if (!run) return;
+    setRelaunching(true);
+    try {
+      const next = await createDesignRun.mutateAsync({
+        project_id: run.project_id ?? "",
+        repo: run.repo ?? "",
+        instructions: run.idea ?? "",
+      });
+      onNewRun?.(next.id);
+    } finally {
+      setRelaunching(false);
+    }
+  }
 
   return (
     <div className="studio-detail">
@@ -288,6 +308,15 @@ function ProjectDetail({ runId }: { runId: string }) {
           );
         })}
       </div>
+
+      {/* Relanzar diseño cuando el run es terminal */}
+      {isTerminal && (
+        <div style={{ display: "flex", justifyContent: "flex-end", margin: "8px 0" }}>
+          <button className="btn ghost sm" onClick={doRelaunch} disabled={relaunching}>
+            {relaunching ? t("studio.view.relaunching") : t("studio.view.relaunchDesign")}
+          </button>
+        </div>
+      )}
 
       {/* Cuerpo: artefacto + acciones */}
       {viewPhase && (
@@ -317,6 +346,9 @@ function PhasePanel({
   const t = useT();
   const hasArtifact =
     ARTIFACT_STEPS.has(phase.stepId) && phase.designStatus === "DONE";
+  const isRunning = phase.designStatus === "RUNNING";
+  // Live-log de la fase en curso: mismo stream WS que el board, pero compacto.
+  const liveEvents = useLiveEvents(runId, isRunning);
 
   const {
     data: artifactText,
@@ -359,8 +391,11 @@ function PhasePanel({
       <div className="artifact-box">
         {!hasArtifact && (
           <div className="artifact-empty">
-            {phase.designStatus === "RUNNING" ? (
-              <span><span className="spin" style={{ width: 14, height: 14 }} /> {t("studio.view.generatingDoc")}</span>
+            {isRunning ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", textAlign: "left", alignItems: "stretch" }}>
+                <span style={{ alignSelf: "center" }}><span className="spin" style={{ width: 14, height: 14 }} /> {t("studio.view.generatingDoc")}</span>
+                <LiveLog events={liveEvents} style={{ marginTop: 0, maxHeight: 220 }} />
+              </div>
             ) : (
               <span style={{ color: "var(--ink4)" }}>{t("studio.view.docWillShow")}</span>
             )}
@@ -510,23 +545,23 @@ function MockupsArtifact({ html }: { html: string }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button className="btn ghost sm" onClick={openInNewTab}>
+          ⛶ {t("studio.view.openNewTab")}
+        </button>
+      </div>
       <iframe
         srcDoc={html}
-        sandbox="allow-same-origin"
+        sandbox="allow-scripts allow-same-origin allow-forms"
         title={t("studio.view.mockupPreviewTitle")}
         style={{
           width: "100%",
-          height: 480,
+          height: 700,
           border: "1px solid var(--stroke)",
           borderRadius: "var(--r)",
           background: "#fff",
         }}
       />
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button className="btn ghost sm" onClick={openInNewTab}>
-          {t("studio.view.openNewTab")}
-        </button>
-      </div>
     </div>
   );
 }

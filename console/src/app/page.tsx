@@ -1,7 +1,8 @@
-import { Overview } from "@/components/overview/Overview";
+import { Studio } from "@/components/studio/Studio";
 
-// The project home is the landing (U2/U6): specs + flow at a glance. The Board lives
-// at /board.
+// Studio es la landing: el punto de entrada es siempre "¿qué quieres construir?".
+// Cuando hay proyecto activo muestra las tabs Especificación / Diseño.
+// La Overview sigue disponible desde el nav para quien quiera el resumen.
 export default function HomePage() {
-  return <Overview />;
+  return <Studio />;
 }

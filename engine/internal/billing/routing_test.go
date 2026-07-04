@@ -4,10 +4,10 @@ import "testing"
 
 func TestDefaultPolicyRoutesByTaskType(t *testing.T) {
 	cases := []struct {
-		name              string
-		stepType, agent   string
-		quality           string
-		wantModel         string
+		name            string
+		stepType, agent string
+		quality         string
+		wantModel       string
 	}{
 		{"decomposition → cheap", "design", "scrum-master", "", modelCheap},
 		{"story detail → cheap", "agent", "story-detailer", "", modelCheap},

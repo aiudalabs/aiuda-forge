@@ -25,19 +25,25 @@ const DOC_META: Record<string, { titleKey: string | null; icon: string; order: n
   "PRD.md": { titleKey: "studio.docs.title.prd", icon: "▤", order: 2 },
   "ARCHITECTURE.md": { titleKey: "studio.docs.title.architecture", icon: "◫", order: 3 },
   "UI_SCREENS.md": { titleKey: "studio.docs.title.uiScreens", icon: "▢", order: 4 },
-  "backlog.yaml": { titleKey: "studio.docs.title.backlog", icon: "☰", order: 5 },
-  "mockups": { titleKey: "studio.docs.title.mockups", icon: "▨", order: 6 },
+  "DESIGN_SYSTEM.md": { titleKey: "studio.docs.title.designSystem", icon: "◈", order: 5 },
+  "backlog.yaml": { titleKey: "studio.docs.title.backlog", icon: "☰", order: 6 },
   "SESSION.md": { titleKey: "studio.docs.title.session", icon: "◷", order: 7 },
 };
 
-function meta(name: string) {
+function meta(name: string, path?: string) {
+  // HTML files are mockup surfaces — show them with the mockup icon regardless
+  // of their filename (index.html, passenger-app.html, driver-app.html, …).
+  if (path && isHtml(path)) return { titleKey: null, icon: "▨", order: 5.5 };
   return DOC_META[name] ?? { titleKey: null, icon: "·", order: 99 };
 }
 
-// Resolve a doc's display title: translated for known files, raw filename otherwise.
-function metaTitle(name: string, t: (k: string) => string): string {
-  const m = meta(name);
-  return m.titleKey ? t(m.titleKey) : name;
+// Resolve a doc's display title: translated for known files, clean filename otherwise.
+function metaTitle(name: string, path: string, t: (k: string) => string): string {
+  const m = meta(name, path);
+  if (m.titleKey) return t(m.titleKey);
+  // For HTML mockup files: strip extension for a cleaner label ("passenger-app").
+  if (isHtml(path)) return name.replace(/\.html?$/i, "");
+  return name;
 }
 
 function isMarkdown(path: string) {
@@ -83,14 +89,12 @@ export function StudioDocs() {
   const projectId = project?.id ?? null;
   const { data: docs, isLoading, isError } = useProjectDocs(projectId);
 
-  // Files only (dirs like mockups need their own viewer — handled as a note for now),
-  // sorted by the logical reading order.
+  // Subdirectory entries are expanded by the API (one level), so all entries are
+  // files. Sort by the logical reading order defined in DOC_META.
   const files = useMemo(() => {
     const list = (docs ?? []).filter((d) => d.type === "file");
-    return [...list].sort((a, b) => meta(a.name).order - meta(b.name).order);
+    return [...list].sort((a, b) => meta(a.name, a.path).order - meta(b.name, b.path).order);
   }, [docs]);
-
-  const dirs = useMemo(() => (docs ?? []).filter((d) => d.type === "dir"), [docs]);
 
   // Default selection: PRD if present, else the first file.
   const [selected, setSelected] = useState<string | null>(null);
@@ -150,25 +154,11 @@ export function StudioDocs() {
                   className={`docs-tree-item${active === d.path ? " on" : ""}`}
                   onClick={() => setSelected(d.path)}
                 >
-                  <span className="docs-tree-ic">{meta(d.name).icon}</span>
-                  <span className="docs-tree-label">{metaTitle(d.name, t)}</span>
+                  <span className="docs-tree-ic">{meta(d.name, d.path).icon}</span>
+                  <span className="docs-tree-label">{metaTitle(d.name, d.path, t)}</span>
+                  {isHtml(d.path) && <span className="docs-tree-badge">html</span>}
                 </button>
               ))}
-              {dirs.map((d) => {
-                // Mockups live as <dir>/index.html; clicking the folder opens it.
-                const target = `${d.path}/index.html`;
-                return (
-                  <button
-                    key={d.path}
-                    className={`docs-tree-item${active === target ? " on" : ""}`}
-                    onClick={() => setSelected(target)}
-                  >
-                    <span className="docs-tree-ic">{meta(d.name).icon}</span>
-                    <span className="docs-tree-label">{metaTitle(d.name, t)}</span>
-                    <span className="docs-tree-badge">html</span>
-                  </button>
-                );
-              })}
             </nav>
           )}
         </aside>

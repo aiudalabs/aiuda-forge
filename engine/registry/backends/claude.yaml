@@ -1,0 +1,9 @@
+id: claude
+argv:
+  - claude
+  - -p
+  - --output-format
+  - stream-json
+  - --verbose
+  - --permission-mode
+  - acceptEdits

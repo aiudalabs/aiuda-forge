@@ -27,7 +27,8 @@ type TicketProvider interface {
 	StoriesBySprint(ctx context.Context, sprintID string) ([]Story, error)
 	// ClaimSprint atomically claims all of a sprint's backlog stories at once.
 	// ok=false (no error) if a concurrent claimer already moved any of them.
-	ClaimSprint(ctx context.Context, sprintID string) (claimed []string, ok bool, err error)
+	// projectID scopes the claim to one project; empty = no filter (back-compat).
+	ClaimSprint(ctx context.Context, sprintID, projectID string) (claimed []string, ok bool, err error)
 	// MarkSprintDone / MarkSprintFailed advance all the sprint's running stories.
 	MarkSprintDone(ctx context.Context, sprintID string) error
 	MarkSprintFailed(ctx context.Context, sprintID string) error
@@ -90,8 +91,8 @@ func (p *NativeProvider) StoriesBySprint(_ context.Context, sprintID string) ([]
 	return p.store.StoriesBySprint(sprintID)
 }
 
-func (p *NativeProvider) ClaimSprint(_ context.Context, sprintID string) ([]string, bool, error) {
-	return p.store.ClaimSprint(sprintID)
+func (p *NativeProvider) ClaimSprint(_ context.Context, sprintID, projectID string) ([]string, bool, error) {
+	return p.store.ClaimSprint(sprintID, projectID)
 }
 
 func (p *NativeProvider) MarkSprintDone(_ context.Context, sprintID string) error {

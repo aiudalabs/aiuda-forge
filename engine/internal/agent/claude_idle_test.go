@@ -24,7 +24,7 @@ func fakeClaude(t *testing.T, body string) string {
 // timeout: it emits one line, then goes quiet for longer than IdleTimeout.
 func TestIdleTimeoutKillsStalledAgent(t *testing.T) {
 	bin := fakeClaude(t, `echo '{"type":"text","text":"hi"}'; sleep 3`)
-	be := ClaudeBackend{Bin: bin}
+	be := CliBackend{BaseArgv: []string{bin}}
 
 	start := time.Now()
 	_, err := be.Run(context.Background(), "p",
@@ -45,7 +45,7 @@ func TestIdleTimeoutKillsStalledAgent(t *testing.T) {
 // exceeds IdleTimeout, proving we kill on inactivity, not on elapsed time.
 func TestSteadyOutputSurvivesIdleTimeout(t *testing.T) {
 	bin := fakeClaude(t, `for i in $(seq 1 8); do echo '{"type":"text","text":"work"}'; sleep 0.15; done; echo '{"type":"result","result":"done","is_error":false}'`)
-	be := ClaudeBackend{Bin: bin}
+	be := CliBackend{BaseArgv: []string{bin}}
 
 	_, err := be.Run(context.Background(), "p",
 		Options{Workdir: t.TempDir(), IdleTimeout: 400 * time.Millisecond, Timeout: 30 * time.Second}, nil)

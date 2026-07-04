@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -106,8 +107,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		}
 		repoURL = created
 		if err := gh.EnsureDevBranch(r.Context(), repoURL); err != nil {
-			// Non-fatal: the repo is created; the caller can retry branch creation.
-			_ = err // do not block 201
+			// Non-fatal: repo is created; log so it's visible and can be diagnosed.
+			log.Printf("EnsureDevBranch %s: %v", repoURL, err)
 		}
 	}
 
@@ -254,13 +255,35 @@ func (s *Server) listProjectDocs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"docs": []github.DocEntry{}, "ref": ref})
 		return
 	}
-	entries, err := github.New().ListContents(r.Context(), p.Repo, "docs", ref)
+	gh := github.New()
+	entries, err := gh.ListContents(r.Context(), p.Repo, "docs", ref)
 	if err != nil {
 		// No docs/ on this ref yet (design not handed off, or wrong branch).
 		writeJSON(w, http.StatusOK, map[string]any{"docs": []github.DocEntry{}, "ref": ref, "note": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"docs": entries, "ref": ref})
+	// Expand subdirectories one level so the UI sees individual files
+	// (e.g. docs/mockups/passenger-app.html) instead of a dir entry that
+	// forces the frontend to guess filenames. The dir entry itself is dropped;
+	// its children replace it. A subdirectory with no readable contents is
+	// silently skipped (best effort — the list is already available).
+	var flat []github.DocEntry
+	for _, e := range entries {
+		if e.Type != "dir" {
+			flat = append(flat, e)
+			continue
+		}
+		sub, serr := gh.ListContents(r.Context(), p.Repo, e.Path, ref)
+		if serr != nil {
+			continue // subdir unreadable — skip
+		}
+		for _, s := range sub {
+			if s.Type == "file" {
+				flat = append(flat, s)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"docs": flat, "ref": ref})
 }
 
 // getProjectDoc returns the decoded content of one doc file (?path=docs/PRD.md).

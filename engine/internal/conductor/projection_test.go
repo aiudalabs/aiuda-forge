@@ -52,10 +52,10 @@ func TestSyncProjectDerivesStatuses(t *testing.T) {
 	seed(t, st)
 	gh := &fakeGH{
 		issues: []github.IssueState{
-			{Number: 1, State: "closed"},                                          // → done
-			{Number: 2, State: "open"},                                            // PR listo → in_review
-			{Number: 3, State: "open", Assignees: []string{"copilot-swe-agent"}},  // → running
-			{Number: 4, State: "open"},                                            // → backlog (queda)
+			{Number: 1, State: "closed"}, // → done
+			{Number: 2, State: "open"},   // PR listo → in_review
+			{Number: 3, State: "open", Assignees: []string{"copilot-swe-agent"}}, // → running
+			{Number: 4, State: "open"}, // → backlog (queda)
 		},
 		prs: []github.OpenPR{
 			{Number: 45, Body: "Implements auth.\n\nCloses #2", URL: "https://github.com/o/r/pull/45", Draft: false},

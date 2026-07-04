@@ -62,8 +62,17 @@ func EgressEnv(auth Auth, cfg EgressConfig) []string {
 
 	switch auth.Mode {
 	case AuthAPIKey:
-		env["ANTHROPIC_BASE_URL"] = cfg.anthropicBase()
-		env["ANTHROPIC_API_KEY"] = SandboxSentinelAPIKey // sentinel, not a secret
+		if cfg.AnthropicBase != "" {
+			// A reverse proxy at AnthropicBase injects the real key server-side;
+			// the container only ever sees the sentinel.
+			env["ANTHROPIC_BASE_URL"] = cfg.AnthropicBase
+			env["ANTHROPIC_API_KEY"] = SandboxSentinelAPIKey
+		} else {
+			// No reverse proxy configured: pass the real key directly.
+			// For HTTPS the tinyproxy uses CONNECT tunneling — the key only travels
+			// inside the TLS session, never in cleartext through the proxy.
+			env["ANTHROPIC_API_KEY"] = auth.Token
+		}
 	default: // subscription / oauth_token -> passthrough
 		if auth.Token != "" {
 			env["CLAUDE_CODE_OAUTH_TOKEN"] = auth.Token

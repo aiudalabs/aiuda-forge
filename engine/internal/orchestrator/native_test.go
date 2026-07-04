@@ -275,7 +275,7 @@ func (p *fakeStoryProvider) ReadySprints(_ context.Context) ([]NativeSprint, err
 
 // SprintStories returns the sprint's stories in insertion order (good enough for
 // the fake; the real store does topological ordering, tested in tickets_test.go).
-func (p *fakeStoryProvider) SprintStories(_ context.Context, sprintID string) ([]NativeStory, error) {
+func (p *fakeStoryProvider) SprintStories(_ context.Context, sprintID, _ string) ([]NativeStory, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var out []NativeStory
@@ -291,7 +291,7 @@ func (p *fakeStoryProvider) SprintStories(_ context.Context, sprintID string) ([
 
 // ClaimSprint atomically claims all the sprint's backlog stories. ok=false if any
 // story is not backlog (a concurrent claimer already moved one).
-func (p *fakeStoryProvider) ClaimSprint(_ context.Context, sprintID string) ([]string, bool, error) {
+func (p *fakeStoryProvider) ClaimSprint(_ context.Context, sprintID, _ string) ([]string, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var ids []string

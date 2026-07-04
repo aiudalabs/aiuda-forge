@@ -13,20 +13,42 @@ import (
 
 // TestEgressEnvSecretsAndCredential (the "3 that matter" #2): the agent container
 // env carries the LLM credential but NEVER a daemon secret.
+//
+// EgressEnv has two api_key sub-modes (egress.go):
+//   - With AnthropicBase (reverse proxy): inject the sentinel; proxy rewrites the key
+//     server-side so the real key never enters the container.
+//   - Without AnthropicBase (direct): inject the real token via TLS CONNECT tunnel.
 func TestEgressEnvSecretsAndCredential(t *testing.T) {
 	// Daemon secrets present in the environment must not influence EgressEnv.
 	t.Setenv("GH_TOKEN", "ghp_secret")
 	t.Setenv("DB_PASSWORD", "hunter2")
 
-	// api_key mode: sentinel key + base url + proxy; no real secret.
-	api := EgressEnv(Auth{Mode: AuthAPIKey}, EgressConfig{})
-	if !has(api, "ANTHROPIC_API_KEY="+SandboxSentinelAPIKey) {
-		t.Fatalf("api_key mode must inject the sentinel key, got %v", api)
+	// api_key + reverse proxy: sentinel key + base url + proxy; the real token
+	// never enters the container.
+	proxy := EgressEnv(Auth{Mode: AuthAPIKey, Token: "sk-real"}, EgressConfig{
+		AnthropicBase: "http://egress-proxy:8080/anthropic",
+	})
+	if !has(proxy, "ANTHROPIC_API_KEY="+SandboxSentinelAPIKey) {
+		t.Fatalf("api_key+proxy must inject the sentinel key, got %v", proxy)
 	}
-	if !hasKey(api, "ANTHROPIC_BASE_URL") || !hasKey(api, "HTTPS_PROXY") {
-		t.Fatalf("api_key mode must set base url + proxy, got %v", api)
+	if !hasKey(proxy, "ANTHROPIC_BASE_URL") || !hasKey(proxy, "HTTPS_PROXY") {
+		t.Fatalf("api_key+proxy must set base url + proxy, got %v", proxy)
 	}
-	assertNoDaemonSecret(t, api)
+	if has(proxy, "ANTHROPIC_API_KEY=sk-real") {
+		t.Fatalf("api_key+proxy must NOT expose the real key in the container env")
+	}
+	assertNoDaemonSecret(t, proxy)
+
+	// api_key without reverse proxy: real token is passed directly (TLS CONNECT
+	// ensures it never travels in cleartext through the forward proxy).
+	direct := EgressEnv(Auth{Mode: AuthAPIKey, Token: "sk-real"}, EgressConfig{})
+	if !has(direct, "ANTHROPIC_API_KEY=sk-real") {
+		t.Fatalf("api_key+direct must inject the real token, got %v", direct)
+	}
+	if hasKey(direct, "ANTHROPIC_BASE_URL") {
+		t.Fatalf("api_key+direct must NOT set a base URL override, got %v", direct)
+	}
+	assertNoDaemonSecret(t, direct)
 
 	// passthrough (subscription/oauth): the OAuth token crosses, no sentinel.
 	pass := EgressEnv(Auth{Mode: AuthSubscription, Token: "oauth-xyz"}, EgressConfig{})

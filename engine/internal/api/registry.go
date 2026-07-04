@@ -11,7 +11,6 @@ import (
 	"strings"
 )
 
-
 // ── Templates github-native (la especialización que el scaffold hornea) ────
 // Read-write sobre registry/templates/github-native/**: la fuente de verdad de
 // los .agent.md / instructions / workflows que viajan a cada repo. Editar aquí

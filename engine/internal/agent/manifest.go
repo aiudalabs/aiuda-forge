@@ -24,6 +24,7 @@ type Manifest struct {
 	Skills  []string `yaml:"skills"`
 	Tools   []string `yaml:"tools"` // logical tool allowlist: read|edit|write|bash
 	Role    string   `yaml:"role"`
+	Backend string   `yaml:"backend"` // "" = default (ClaudeBackend) | "openai" | "cursor"
 
 	Persona string `yaml:"-"` // loaded from <id>.md
 }

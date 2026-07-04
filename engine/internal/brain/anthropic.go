@@ -132,9 +132,9 @@ func (c *Client) Stream(ctx context.Context, system string, msgs []Message, tool
 
 // blockAccum accumulates a single content block as its deltas arrive.
 type blockAccum struct {
-	typ      string
-	id, name string
-	text     strings.Builder
+	typ       string
+	id, name  string
+	text      strings.Builder
 	inputJSON strings.Builder
 }
 
@@ -155,8 +155,8 @@ func parseSSE(r io.Reader, onText func(string)) (StreamResult, error) {
 			break
 		}
 		var ev struct {
-			Type  string `json:"type"`
-			Index int    `json:"index"`
+			Type         string `json:"type"`
+			Index        int    `json:"index"`
 			ContentBlock struct {
 				Type string `json:"type"`
 				ID   string `json:"id"`

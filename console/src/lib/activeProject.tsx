@@ -35,7 +35,10 @@ function readStored(): string | null {
 }
 
 export function ActiveProjectProvider({ children }: { children: React.ReactNode }) {
-  const { data: projects = [], isLoading, isError } = useProjects();
+  const { data: raw = [], isLoading, isError } = useProjects();
+  // El proyecto "default" es un artefacto de backfill pre-multi-tenant — no es un
+  // proyecto real del usuario. Lo filtramos para que Studio muestre StudioEntry.
+  const projects = raw.filter((p) => p.id !== "default");
   // Arranca desde localStorage (sin tocar window en SSR — null hasta el efecto).
   const [activeId, setActiveIdState] = useState<string | null>(null);
 

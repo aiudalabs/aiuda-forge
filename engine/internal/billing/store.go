@@ -17,8 +17,8 @@ type Workspace struct {
 	ID               string  `json:"id"`
 	OwnerUserID      string  `json:"owner_user_id"`
 	PlanID           string  `json:"plan_id"`
-	SpendCapUSD      float64 `json:"spend_cap_usd"`     // OUR hard cap on real token cost (step 4)
-	OverageCapUSD    float64 `json:"overage_cap_usd"`   // the CUSTOMER's cap on overage spend; 0 = unlimited
+	SpendCapUSD      float64 `json:"spend_cap_usd"`   // OUR hard cap on real token cost (step 4)
+	OverageCapUSD    float64 `json:"overage_cap_usd"` // the CUSTOMER's cap on overage spend; 0 = unlimited
 	LifetimeFeatures int     `json:"lifetime_features"`
 	Paused           bool    `json:"paused"`
 	PausedReason     string  `json:"paused_reason"`

@@ -66,7 +66,7 @@ function ProjectSwitcher() {
   // Sin proyectos: invitar a crear el primero (lo crea el modal del Studio).
   if (!isLoading && projects.length === 0) {
     return (
-      <div className="proj" onClick={() => router.push("/studio")} role="button" tabIndex={0}>
+      <div className="proj" onClick={() => router.push("/")} role="button" tabIndex={0}>
         <div className="eyebrow">{t("nav.project")}</div>
         <div className="nm">
           <span style={{ color: "var(--ink4)" }}>{t("nav.createFirst")}</span>

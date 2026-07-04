@@ -40,8 +40,8 @@ func (o EngineOps) Status() (bool, int64) {
 	}
 	return o.Engine.IsPaused(), o.Engine.PausedUntil()
 }
-func (o EngineOps) Pause()                { o.Engine.Pause() }
-func (o EngineOps) Resume()               { o.Engine.Resume() }
+func (o EngineOps) Pause()  { o.Engine.Pause() }
+func (o EngineOps) Resume() { o.Engine.Resume() }
 
 func (o EngineOps) ListRuns(projectID string) ([]map[string]any, error) {
 	runs, err := o.Store.ListRunsByProject("", projectID)

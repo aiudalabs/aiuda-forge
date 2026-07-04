@@ -60,6 +60,11 @@ export const board = {
     "board.run.reviewApprove": "Revisar diff y aprobar",
     // LiveLog
     "board.log.waiting": "esperando eventos del bus…",
+    "board.log.filter": "Filtrar eventos",
+    "board.log.filterAll": "todos",
+    "board.log.sortNewest": "más nuevos primero",
+    "board.log.sortOldest": "más viejos primero",
+    "board.drawer.engine": "motor",
     // RunDrawer
     "board.drawer.steps": "Pasos",
     "board.drawer.hideDetail": "ocultar detalle",
@@ -135,6 +140,11 @@ export const board = {
     "board.run.approving": "Approving…",
     "board.run.reviewApprove": "Review diff and approve",
     "board.log.waiting": "waiting for bus events…",
+    "board.log.filter": "Filter events",
+    "board.log.filterAll": "all",
+    "board.log.sortNewest": "newest first",
+    "board.log.sortOldest": "oldest first",
+    "board.drawer.engine": "engine",
     "board.drawer.steps": "Steps",
     "board.drawer.hideDetail": "hide detail",
     "board.drawer.showDetail": "show detail",

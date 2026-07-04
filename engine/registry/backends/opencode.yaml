@@ -1,0 +1,9 @@
+id: opencode
+argv:
+  - opencode
+  - -p
+  - --output-format
+  - stream-json
+  - --verbose
+  - --permission-mode
+  - acceptEdits

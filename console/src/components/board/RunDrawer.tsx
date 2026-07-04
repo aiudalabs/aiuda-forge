@@ -11,6 +11,7 @@ import type { RunStep, StepStatus } from "@/lib/types";
 import { stepSignal, isLongDetail } from "@/lib/stepSignals";
 import { StatusPill } from "./StatusPill";
 import { LiveLog } from "./LiveLog";
+import { TimelineBar } from "./TimelineBar";
 import { DiffBox } from "./DiffBox";
 import {
   useApprove,
@@ -109,6 +110,12 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
   const open = !!runId;
   const awaitingStep = run?.awaitingStep || run?.steps?.find((s) => s.status === "AWAITING")?.id || "human_gate";
 
+  // Runtime chip: extrae el backend del primer system event con subtype="engine".
+  // Emitido sinteticamente por el runner antes de llamar al LLM.
+  const engineBackend = events
+    .find((e) => e.type === "step.event" && e.data?.subtype === "engine")
+    ?.data?.backend as string | undefined;
+
   function doApprove() {
     if (!run) return;
     approve.mutate([run.id, awaitingStep], { onSuccess: onClose });
@@ -145,6 +152,11 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
                 <h3>{run.ticket.title}</h3>
                 <div className="tk">
                   {run.ticket.id} · {run.id} · {run.workflow}
+                  {engineBackend && (
+                    <span className="runtime-chip" title={t("board.drawer.engine")}>
+                      {engineBackend}
+                    </span>
+                  )}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -168,6 +180,7 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
               <div className="eyebrow acc" style={{ marginTop: 18 }}>
                 {t("board.drawer.eventStream")}
               </div>
+              <TimelineBar events={events} />
               <LiveLog events={events} style={{ marginTop: 8, maxHeight: "none" }} />
 
               {run.diff && (

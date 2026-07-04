@@ -71,11 +71,13 @@ type StoryProvider interface {
 	ReadySprints(ctx context.Context) ([]NativeSprint, error)
 	// SprintStories returns a sprint's full stories in intra-sprint topological
 	// order — the order the combined goal-mode ticket renders them.
-	SprintStories(ctx context.Context, sprintID string) ([]NativeStory, error)
+	// projectID scopes the query; empty = no filter.
+	SprintStories(ctx context.Context, sprintID, projectID string) ([]NativeStory, error)
 	// ClaimSprint atomically claims ALL of a sprint's backlog stories at once.
 	// Returns the claimed story IDs (topo order) and ok=true on success; ok=false
 	// (no error) if a concurrent claimer already moved any of them.
-	ClaimSprint(ctx context.Context, sprintID string) (claimed []string, ok bool, err error)
+	// projectID scopes the claim; empty = no filter.
+	ClaimSprint(ctx context.Context, sprintID, projectID string) (claimed []string, ok bool, err error)
 	// MarkSprintRunning records the firing run_id on all the sprint's stories.
 	MarkSprintRunning(ctx context.Context, sprintID, runID string) error
 	// ResetSprintClaim returns a sprint's just-claimed (running, no run_id) stories
@@ -318,8 +320,12 @@ func (p *NativeHTTPProvider) ReadySprints(ctx context.Context) ([]NativeSprint, 
 }
 
 // SprintStories GETs /sprints/{id}/stories (already topo-ordered server-side).
-func (p *NativeHTTPProvider) SprintStories(ctx context.Context, sprintID string) ([]NativeStory, error) {
-	req, err := p.newReq(ctx, http.MethodGet, p.baseURL+"/sprints/"+sprintID+"/stories", nil)
+func (p *NativeHTTPProvider) SprintStories(ctx context.Context, sprintID, projectID string) ([]NativeStory, error) {
+	url := p.baseURL + "/sprints/" + sprintID + "/stories"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
+	req, err := p.newReq(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -340,8 +346,12 @@ func (p *NativeHTTPProvider) SprintStories(ctx context.Context, sprintID string)
 
 // ClaimSprint POSTs /sprints/{id}/claim. Returns the claimed IDs and ok=true on
 // success; ok=false on 409 (a concurrent claimer already moved a story).
-func (p *NativeHTTPProvider) ClaimSprint(ctx context.Context, sprintID string) ([]string, bool, error) {
-	req, err := p.newReq(ctx, http.MethodPost, p.baseURL+"/sprints/"+sprintID+"/claim", nil)
+func (p *NativeHTTPProvider) ClaimSprint(ctx context.Context, sprintID, projectID string) ([]string, bool, error) {
+	url := p.baseURL + "/sprints/" + sprintID + "/claim"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
+	req, err := p.newReq(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return nil, false, fmt.Errorf("build request: %w", err)
 	}
@@ -1270,7 +1280,7 @@ func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool 
 	// guard only runs when the MergeChecker can inspect a branch (GitHub mode);
 	// in local mode (nil/plain gh) it is a no-op so behavior is unchanged.
 	if fc, ok := s.gh.(BranchFileChecker); ok {
-		if peek, perr := s.provider.SprintStories(ctx, sp.ID); perr == nil {
+		if peek, perr := s.provider.SprintStories(ctx, sp.ID, sp.ProjectID); perr == nil {
 			repo := ""
 			for _, st := range peek {
 				if st.Repo != "" {
@@ -1304,7 +1314,7 @@ func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool 
 	// ClaimSprint returns the claimed IDs in topo order, but we re-fetch the full
 	// stories (with body/accept/repo) below to build the ticket, so the IDs from
 	// the claim aren't needed here — only that the claim was won.
-	_, ok, err := s.provider.ClaimSprint(ctx, sp.ID)
+	_, ok, err := s.provider.ClaimSprint(ctx, sp.ID, sp.ProjectID)
 	if err != nil {
 		log.Printf("native-scheduler: claim sprint=%s: %v", sp.ID, err)
 		return false
@@ -1314,7 +1324,7 @@ func (s *NativeScheduler) fireSprint(ctx context.Context, sp NativeSprint) bool 
 		return false
 	}
 
-	stories, err := s.provider.SprintStories(ctx, sp.ID)
+	stories, err := s.provider.SprintStories(ctx, sp.ID, sp.ProjectID)
 	if err != nil || len(stories) == 0 {
 		log.Printf("native-scheduler: sprint %s stories unavailable (%v) — marking failed", sp.ID, err)
 		_ = s.provider.MarkSprintFailed(ctx, sp.ID)
