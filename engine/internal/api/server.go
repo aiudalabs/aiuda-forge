@@ -57,6 +57,9 @@ type Server struct {
 	// work to GitHub agents under the project's autonomy policy (F2).
 	Projector       *conductor.Projector
 	Dispatcher      *conductor.Dispatcher
+	// Resolver despacha resoluciones de conflicto de PR (claude_action). nil
+	// deshabilita el endpoint POST /projects/{id}/prs/{number}/resolve-conflicts.
+	Resolver        *conductor.ConflictResolver
 	GHWebhookSecret func() string
 	linkCodes       *linkCodeStore // short-lived codes binding a channel user to an account
 	mux             *http.ServeMux
@@ -198,6 +201,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /projects/{id}/scaffold/github", s.needProjects(s.scaffoldGitHub))
 	// Cola de PRs + aprobación segura de workflows (F3).
 	m.HandleFunc("GET /projects/{id}/prs", s.needProjects(s.listProjectPRs))
+	m.HandleFunc("POST /projects/{id}/prs/{number}/resolve-conflicts", s.needProjects(s.resolvePRConflicts))
 	m.HandleFunc("GET /projects/{id}/executors", s.needProjects(s.listExecutors))
 	m.HandleFunc("PUT /projects/{id}/secrets/claude", s.needProjects(s.setClaudeSecret))
 	// Spend desde GitHub (F4): gasto medido del repo (Copilot/Actions/LFS) del ciclo.

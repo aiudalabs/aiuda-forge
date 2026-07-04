@@ -299,6 +299,10 @@ func Build(cfg Config) (*App, error) {
 		// o installation token de la App); sin credenciales → auth del host.
 		srv.Projector.ClientFor = srv.GHForProject
 		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh, ClientFor: srv.GHForProject}
+		// Resolución de conflictos de PR (incidente #83): despacha al canal
+		// claude_action del tenant; mismo ClientFor multi-tenant que el resto.
+		srv.Resolver = conductor.NewConflictResolver(gh)
+		srv.Resolver.ClientFor = srv.GHForProject
 		if pubRunner != nil {
 			pubRunner.OnPublished = srv.OnBacklogPublished
 		}

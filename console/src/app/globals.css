@@ -3532,6 +3532,10 @@ details.log-row[open] > summary::before {
   border-radius: 6px;
   padding: 2px 7px;
 }
+.pr-resolve-msg {
+  font-size: 11px;
+  padding-top: 3px;
+}
 .pr-workflows {
   display: flex;
   align-items: center;

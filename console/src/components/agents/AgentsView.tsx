@@ -11,7 +11,7 @@
 // en globals.css.
 
 import { useMemo, useState } from "react";
-import { useApproveWorkflow, useProjectPRs, useTickets } from "@/lib/hooks";
+import { useApproveWorkflow, useProjectPRs, useResolveConflicts, useTickets } from "@/lib/hooks";
 import { useActiveProject, useActiveProjectId } from "@/lib/activeProject";
 import { LaneChip } from "@/components/tickets/LaneChip";
 import { useT } from "@/lib/i18n";
@@ -72,8 +72,11 @@ function SessionCard({ story }: { story: OrchestratorTicket }) {
 function PRRow({ pr, projectId }: { pr: ProjectPR; projectId: string }) {
   const t = useT();
   const approve = useApproveWorkflow(projectId);
+  const resolve = useResolveConflicts(projectId);
   // Resultado por runId: un 409 (bloqueado por política) deja el reason a la vista.
   const [results, setResults] = useState<Record<string, ApproveWorkflowResult>>({});
+  // Resultado de la resolución de conflicto (mensaje/estado bajo la fila).
+  const [resolveMsg, setResolveMsg] = useState<string | null>(null);
 
   function runApprove(runId: string) {
     approve.mutate(runId, {
@@ -86,8 +89,19 @@ function PRRow({ pr, projectId }: { pr: ProjectPR; projectId: string }) {
     });
   }
 
+  function runResolve() {
+    if (!window.confirm(t("agents.prs.resolveConfirm", { n: pr.number }))) return;
+    setResolveMsg(null);
+    resolve.mutate(pr.number, {
+      onSuccess: (res) =>
+        setResolveMsg(res.dispatched ? t("agents.prs.resolveDispatched") : res.reason || t("agents.prs.resolveInFlight")),
+      onError: () => setResolveMsg(t("agents.prs.resolveError")),
+    });
+  }
+
   const runs = pr.action_required_runs ?? [];
   const pending = runs.filter((r) => !results[r.id]?.approved);
+  const conflicting = pr.merge_state === "conflicting";
 
   return (
     <div className="pr-row">
@@ -105,12 +119,24 @@ function PRRow({ pr, projectId }: { pr: ProjectPR; projectId: string }) {
         <span className={`pill ${pr.draft ? "queued" : "ready"}`} style={{ fontSize: 10, padding: "2px 8px" }}>
           {pr.draft ? t("agents.prs.draft") : t("agents.prs.ready")}
         </span>
+        {conflicting && (
+          <span className="pill fail" style={{ fontSize: 10, padding: "2px 8px" }} title={t("agents.prs.conflictHint")}>
+            ⚠ {t("agents.prs.conflict")}
+          </span>
+        )}
         <span className="pr-author">@{pr.author}</span>
         <span className="sp" />
+        {conflicting && (
+          <button className="btn ghost sm" disabled={resolve.isPending} onClick={runResolve}>
+            {resolve.isPending ? t("agents.prs.resolving") : t("agents.prs.resolve")}
+          </button>
+        )}
         <a className="agent-link" href={pr.url} target="_blank" rel="noreferrer" title={t("agents.prs.openPR")}>
           {t("agents.sessions.pr")}
         </a>
       </div>
+
+      {resolveMsg && <div className="pr-resolve-msg c">{resolveMsg}</div>}
 
       {pr.stories.length > 0 && (
         <div className="pr-stories">

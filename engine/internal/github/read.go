@@ -100,39 +100,53 @@ func (c *Client) ListOpenPRs(ctx context.Context, repoURL string) ([]OpenPR, err
 	return prs, nil
 }
 
-// OpenPRDetailed añade el autor (para la cola de PRs de la consola).
+// OpenPRDetailed añade el autor y la mergeabilidad (para la cola de PRs de la
+// consola). Mergeable es el enum de GraphQL: "MERGEABLE" | "CONFLICTING" |
+// "UNKNOWN" — CONFLICTING = el PR choca con main y necesita resolución.
 type OpenPRDetailed struct {
 	OpenPR
-	Author string
+	Author    string
+	Mergeable string
 }
 
-// ListOpenPRsDetailed es ListOpenPRs con el login del autor.
+// ListOpenPRsDetailed es ListOpenPRs con el login del autor y la mergeabilidad.
+// Usa `gh pr list` (GraphQL) en vez del REST /pulls porque el campo `mergeable`
+// (CONFLICTING) NO lo expone el listado REST — solo el GET de un PR individual.
+// Una sola llamada trae los N PRs con su estado de conflicto; --limit 100 replica
+// el techo del --paginate del resto del paquete.
 func (c *Client) ListOpenPRsDetailed(ctx context.Context, repoURL string) ([]OpenPRDetailed, error) {
 	slug, err := slugFromURL(repoURL)
 	if err != nil {
 		return nil, err
 	}
-	out, err := c.runner(ctx, "", "gh", "api", "--paginate",
-		fmt.Sprintf("repos/%s/pulls?state=open&per_page=100", slug))
+	out, err := c.runner(ctx, "", "gh", "pr", "list", "-R", slug, "--state", "open",
+		"--limit", "100", "--json", "number,title,body,url,isDraft,author,mergeable")
 	if err != nil {
-		return nil, fmt.Errorf("gh api pulls %s: %w: %s", slug, err, strings.TrimSpace(out))
+		return nil, fmt.Errorf("gh pr list %s: %w: %s", slug, err, strings.TrimSpace(out))
 	}
 	type raw struct {
-		OpenPR
-		User struct {
+		Number  int    `json:"number"`
+		Title   string `json:"title"`
+		Body    string `json:"body"`
+		URL     string `json:"url"`
+		IsDraft bool   `json:"isDraft"`
+		Author  struct {
 			Login string `json:"login"`
-		} `json:"user"`
+		} `json:"author"`
+		Mergeable string `json:"mergeable"`
 	}
-	var prs []OpenPRDetailed
-	dec := json.NewDecoder(strings.NewReader(out))
-	for dec.More() {
-		var page []raw
-		if err := dec.Decode(&page); err != nil {
-			return nil, fmt.Errorf("decode pulls page: %w", err)
-		}
-		for _, r := range page {
-			prs = append(prs, OpenPRDetailed{OpenPR: r.OpenPR, Author: r.User.Login})
-		}
+	// gh pr list --json devuelve UN solo array JSON (no concatenación paginada).
+	var raws []raw
+	if err := json.Unmarshal([]byte(out), &raws); err != nil {
+		return nil, fmt.Errorf("decode pr list: %w", err)
+	}
+	prs := make([]OpenPRDetailed, 0, len(raws))
+	for _, r := range raws {
+		prs = append(prs, OpenPRDetailed{
+			OpenPR:    OpenPR{Number: r.Number, Title: r.Title, Body: r.Body, URL: r.URL, Draft: r.IsDraft},
+			Author:    r.Author.Login,
+			Mergeable: r.Mergeable,
+		})
 	}
 	return prs, nil
 }

@@ -563,6 +563,19 @@ export function useApproveWorkflow(projectId: string | null) {
   });
 }
 
+// Despacha una resolución de conflicto del PR contra main (incidente #83). Al
+// despachar, el agente pasa a running en GitHub y su PR se actualizará: refrescamos
+// la cola para reflejar el cambio de estado.
+export function useResolveConflicts(projectId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (prNumber: number) => api.resolvePRConflicts(projectId as string, prNumber),
+    onSuccess: (res) => {
+      if (res.dispatched) qc.invalidateQueries({ queryKey: ["projectPRs", projectId] });
+    },
+  });
+}
+
 /**
  * Stream de eventos de un run para el live-log. En modo real: replay (GET events) + push WS.
  * En modo mock: replay del mock y, si el run está corriendo, un "tick" simulado que va

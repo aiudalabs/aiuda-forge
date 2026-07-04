@@ -389,8 +389,16 @@ export interface ProjectPR {
   url: string;
   draft: boolean;
   author: string;                       // login del autor (bot o humano)
+  merge_state?: string;                 // "conflicting" | "clean" | "" (GitHub aún computa)
   stories: string[];                    // ids de stories ligadas a este PR
   action_required_runs: WorkflowRunRef[];
+}
+
+// Resultado de despachar una resolución de conflicto. dispatched=false + reason
+// cuando el guard anti-loop lo bloquea (ya hay una resolución en vuelo).
+export interface ResolveConflictsResult {
+  dispatched: boolean;
+  reason?: string;
 }
 
 // Resultado de aprobar un workflow run. safe=false + reason cuando la política

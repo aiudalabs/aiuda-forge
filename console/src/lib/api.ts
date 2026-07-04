@@ -64,6 +64,7 @@ import type {
   Role,
   ProjectPR,
   ApproveWorkflowResult,
+  ResolveConflictsResult,
   GitHubStatus,
 } from "./types";
 
@@ -1424,6 +1425,34 @@ export async function approveWorkflowRun(
     );
   }
   return (await res.json()) as ApproveWorkflowResult;
+}
+
+// POST /projects/{id}/prs/{number}/resolve-conflicts — despacha un agente que
+// resuelve el conflicto del PR contra main y pushea a la misma rama. 200 →
+// {dispatched:true}. 409 → el guard anti-loop lo bloqueó (ya hay una resolución
+// en vuelo): body {dispatched:false, reason} — NO es error de transporte, se
+// devuelve como resultado para mostrar el motivo en la UI.
+export async function resolvePRConflicts(
+  projectId: string,
+  number: number,
+): Promise<ResolveConflictsResult> {
+  if (await isMock()) return { dispatched: true };
+  const res = await rawFetch(`/projects/${projectId}/prs/${number}/resolve-conflicts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as Partial<ResolveConflictsResult>;
+    return { dispatched: false, reason: body.reason };
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(
+      res.status,
+      body || `POST /projects/${projectId}/prs/${number}/resolve-conflicts → ${res.status}`,
+    );
+  }
+  return (await res.json()) as ResolveConflictsResult;
 }
 
 /** Templates github-native: la especialización que el scaffold hornea en cada repo. */

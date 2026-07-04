@@ -216,6 +216,42 @@ func TestSlugFromURL(t *testing.T) {
 	}
 }
 
+// TestListOpenPRsDetailedMergeable verifica que la detección de conflicto lee el
+// enum `mergeable` de gh pr list y lo mapea a cada PR (incidente #83).
+func TestListOpenPRsDetailedMergeable(t *testing.T) {
+	var calls []call
+	reply := `[
+	  {"number":83,"title":"SP5","body":"Closes #12","url":"https://github.com/acme/widgets/pull/83","isDraft":false,"author":{"login":"copilot"},"mergeable":"CONFLICTING"},
+	  {"number":84,"title":"SP6","body":"","url":"https://github.com/acme/widgets/pull/84","isDraft":true,"author":{"login":"alice"},"mergeable":"MERGEABLE"},
+	  {"number":85,"title":"SP7","body":"","url":"https://github.com/acme/widgets/pull/85","isDraft":false,"author":{"login":"bob"},"mergeable":"UNKNOWN"}
+	]`
+	c := withRunner(fakeRunner(map[string]string{"gh pr list": reply}, &calls))
+
+	prs, err := c.ListOpenPRsDetailed(context.Background(), "https://github.com/acme/widgets.git")
+	if err != nil {
+		t.Fatalf("ListOpenPRsDetailed: %v", err)
+	}
+	if len(prs) != 3 {
+		t.Fatalf("prs = %d, want 3", len(prs))
+	}
+	if prs[0].Number != 83 || prs[0].Mergeable != "CONFLICTING" || prs[0].Author != "copilot" || prs[0].Draft {
+		t.Fatalf("pr[0] = %+v", prs[0])
+	}
+	if prs[1].Mergeable != "MERGEABLE" || !prs[1].Draft {
+		t.Fatalf("pr[1] = %+v", prs[1])
+	}
+	if prs[2].Mergeable != "UNKNOWN" {
+		t.Fatalf("pr[2] = %+v", prs[2])
+	}
+	// Debe consultar el campo mergeable con slug derivado (sufijo .git quitado).
+	args := calls[0].args
+	mustContain(t, args, "list")
+	mustContain(t, args, "acme/widgets")
+	if !containsPrefix(args, "number,title") {
+		t.Fatalf("args %v deben pedir --json con mergeable", args)
+	}
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 type errExitCode1 struct{}

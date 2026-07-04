@@ -25,8 +25,22 @@ type prView struct {
 	URL                string           `json:"url"`
 	Draft              bool             `json:"draft"`
 	Author             string           `json:"author"`
+	MergeState         string           `json:"merge_state"` // "conflicting" | "clean" | "" (desconocido)
 	Stories            []string         `json:"stories"`
 	ActionRequiredRuns []pendingRunView `json:"action_required_runs"`
+}
+
+// mergeState normaliza el enum `mergeable` de GitHub (MERGEABLE|CONFLICTING|
+// UNKNOWN) al vocabulario de la consola. UNKNOWN (GitHub aún computa) → "".
+func mergeState(mergeable string) string {
+	switch mergeable {
+	case "CONFLICTING":
+		return "conflicting"
+	case "MERGEABLE":
+		return "clean"
+	default:
+		return ""
+	}
 }
 
 type pendingRunView struct {
@@ -78,6 +92,7 @@ func (s *Server) listProjectPRs(w http.ResponseWriter, r *http.Request) {
 	for _, pr := range prs {
 		v := prView{
 			Number: pr.Number, Title: pr.Title, URL: pr.URL, Draft: pr.Draft, Author: pr.Author,
+			MergeState:         mergeState(pr.Mergeable),
 			Stories:            []string{},
 			ActionRequiredRuns: pendingByPR[pr.Number],
 		}
@@ -181,4 +196,50 @@ func (s *Server) approveWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"approved": true, "safe": true})
+}
+
+// POST /projects/{id}/prs/{number}/resolve-conflicts — despacha al canal
+// claude_action un agente que resuelve el conflicto del PR contra main y pushea
+// a la misma rama (incidente PR #83). El guard anti-loop del resolver responde
+// 409 (sin re-despachar) si ya hay una resolución en vuelo para ese PR.
+func (s *Server) resolvePRConflicts(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireRole(r.Context(), id, projects.RoleEditor) {
+		httpErr(w, http.StatusForbidden, "resolving conflicts requires editor or owner")
+		return
+	}
+	number, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil || number <= 0 {
+		httpErr(w, http.StatusBadRequest, "invalid PR number")
+		return
+	}
+	p, err := s.Projects.Get(id)
+	if err != nil {
+		if errors.Is(err, projects.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, "project not found: "+id)
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if p.Repo == "" {
+		httpErr(w, http.StatusBadRequest, "project has no repo")
+		return
+	}
+	if s.Resolver == nil {
+		httpErr(w, http.StatusServiceUnavailable, "conflict resolution is not configured")
+		return
+	}
+	if err := s.Resolver.Resolve(r.Context(), id, p.Repo, number); err != nil {
+		if errors.Is(err, conductor.ErrResolveInFlight) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"dispatched": false,
+				"reason":     "ya hay una resolución en curso para este PR — espera a que termine",
+			})
+			return
+		}
+		httpErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"dispatched": true})
 }
