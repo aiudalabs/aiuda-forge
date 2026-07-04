@@ -563,3 +563,24 @@ export function useExecutors(projectId: string | null) {
     staleTime: 60_000,
   });
 }
+
+/** Archivos de template github-native (especialización repo-baked). */
+export function useTemplates() {
+  return useQuery({ queryKey: ["templates"], queryFn: api.listTemplates, staleTime: 60_000 });
+}
+
+export function useTemplate(path: string | null) {
+  return useQuery({
+    queryKey: ["template", path],
+    queryFn: () => api.getTemplate(path as string),
+    enabled: !!path,
+  });
+}
+
+export function useSaveTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ path, content }: { path: string; content: string }) => api.putTemplate(path, content),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["template", v.path] }),
+  });
+}

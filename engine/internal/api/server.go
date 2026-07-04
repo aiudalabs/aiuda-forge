@@ -132,6 +132,10 @@ func (s *Server) routes() {
 	// registry CRUD (compose/edit/list/delete agents, skills, workflows — no-code).
 	// Generic by {kind}: workflows|agents|skills. PUT/POST validate against the
 	// SAME parser the kernel uses, so a saved manifest is always runnable.
+	// Templates github-native: la especialización repo-baked (ver registry.go).
+	m.HandleFunc("GET /registry/templates", s.listTemplates)
+	m.HandleFunc("GET /registry/templates/file", s.getTemplate)
+	m.HandleFunc("PUT /registry/templates/file", s.putTemplate)
 	m.HandleFunc("GET /registry/{kind}", s.listRegistry)
 	m.HandleFunc("GET /registry/{kind}/{id}", s.getRegistry)
 	m.HandleFunc("PUT /registry/{kind}/{id}", s.putRegistry)

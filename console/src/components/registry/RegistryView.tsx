@@ -15,6 +15,9 @@ import {
   useDeleteRegistryItem,
   useRegistryItem,
   useRegistryList,
+  useTemplates,
+  useTemplate,
+  useSaveTemplate,
   useSaveRegistryItem,
 } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
@@ -27,7 +30,7 @@ SyntaxHighlighter.registerLanguage("yaml", yaml);
 // Tipos locales
 // ─────────────────────────────────────────────────────────────────────────────
 
-type ActiveTab = Exclude<RegistryKind, "skills">;
+type ActiveTab = Exclude<RegistryKind, "skills"> | "templates";
 type ItemModal =
   | { kind: RegistryKind; id: string; isNew: false }
   | { kind: RegistryKind; id: string; isNew: true }
@@ -42,7 +45,8 @@ export function RegistryView() {
   const [tab, setTab] = useState<ActiveTab>("agents");
   const [modal, setModal] = useState<ItemModal>(null);
 
-  const { data: listData, isLoading, isError } = useRegistryList(tab);
+  const isTemplates = tab === "templates";
+  const { data: listData, isLoading, isError } = useRegistryList(isTemplates ? "agents" : tab);
   // Solo personas de DISEÑO: la ejecución vive en GitHub (.github/agents del
   // repo scaffoldeado) — editar aquí un dev/reviewer legacy no afecta nada.
   const DESIGN_AGENTS = new Set([
@@ -52,16 +56,19 @@ export function RegistryView() {
   const ids = tab === "agents" ? allIds.filter((id) => DESIGN_AGENTS.has(id)) : allIds;
 
   function openNew() {
+    if (tab === "templates") return;
     setModal({ kind: tab, id: "", isNew: true });
   }
 
   function openItem(id: string) {
+    if (tab === "templates") return;
     setModal({ kind: tab, id, isNew: false });
   }
 
   const TAB_LABELS: Record<ActiveTab, string> = {
     agents: t("registry.tab.agents"),
     workflows: t("registry.tab.workflows"),
+    templates: t("registry.tab.templates"),
   } as Record<ActiveTab, string>;
 
   return (
@@ -71,7 +78,7 @@ export function RegistryView() {
         <h2>{t("registry.title")}</h2>
         <span className="c">{t("registry.subtitle")}</span>
         <span className="sp" />
-        {(["agents", "workflows"] as ActiveTab[]).map((k) => (
+        {(["agents", "workflows", "templates"] as ActiveTab[]).map((k) => (
           <button
             key={k}
             className={`btn ghost sm${tab === k ? " on" : ""}`}
@@ -86,7 +93,9 @@ export function RegistryView() {
       </div>
 
       {/* Lista */}
-      {isLoading ? (
+      {isTemplates ? (
+        <TemplatesBrowser />
+      ) : isLoading ? (
         <div className="placeholder">
           <div className="ph-ic">
             <span className="spin" />
@@ -421,6 +430,93 @@ function ItemEditorModal({
           <p style={{ fontSize: 12, color: "var(--ink4)", marginTop: 12 }}>
             {t("registry.saveHint")}
           </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Templates github-native: la especialización que el scaffold hornea en cada
+// repo (.github/agents/*.agent.md, instructions, AGENTS.md, workflows CI).
+// Editar aquí afecta a los PRÓXIMOS scaffolds; los repos existentes se
+// actualizan re-scaffoldeando (idempotente).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TemplatesBrowser() {
+  const t = useT();
+  const { data: files, isLoading } = useTemplates();
+  const [sel, setSel] = useState<string | null>(null);
+  const { data: content } = useTemplate(sel);
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = useSaveTemplate();
+
+  useEffect(() => {
+    setDraft(null);
+  }, [sel]);
+
+  if (isLoading) {
+    return (
+      <div className="placeholder">
+        <div className="ph-ic"><span className="spin" /></div>
+        {t("registry.templates.loading")}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "start" }}>
+      <div style={{ maxHeight: "70vh", overflowY: "auto", border: "1px solid var(--line)", borderRadius: 8 }}>
+        {(files ?? []).map((f) => (
+          <button
+            key={f}
+            onClick={() => setSel(f)}
+            style={{
+              display: "block", width: "100%", textAlign: "left", padding: "7px 10px",
+              fontSize: 12, fontFamily: "var(--mono, monospace)", border: "none", cursor: "pointer",
+              background: sel === f ? "var(--ink, #1a1a1a)" : "transparent",
+              color: sel === f ? "#fff" : "inherit",
+              borderBottom: "1px solid var(--line)",
+            }}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+      <div>
+        {!sel ? (
+          <div className="placeholder">
+            <div className="ph-ic">❏</div>
+            {t("registry.templates.pick")}
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <code style={{ fontSize: 12 }}>{sel}</code>
+              <span className="sp" style={{ flex: 1 }} />
+              {draft !== null && (
+                <button
+                  className="btn primary sm"
+                  disabled={save.isPending}
+                  onClick={() => save.mutate({ path: sel, content: draft }, { onSuccess: () => setDraft(null) })}
+                >
+                  {save.isPending ? t("registry.templates.saving") : t("registry.templates.save")}
+                </button>
+              )}
+            </div>
+            <textarea
+              value={draft ?? content ?? ""}
+              onChange={(e) => setDraft(e.target.value)}
+              spellCheck={false}
+              style={{
+                width: "100%", minHeight: "62vh", fontFamily: "var(--mono, monospace)", fontSize: 12,
+                lineHeight: 1.5, padding: 12, border: "1px solid var(--line)", borderRadius: 8,
+                background: "var(--panel, #fff)", resize: "vertical",
+              }}
+            />
+            <p className="c" style={{ fontSize: 11, marginTop: 6 }}>{t("registry.templates.note")}</p>
+          </>
         )}
       </div>
     </div>

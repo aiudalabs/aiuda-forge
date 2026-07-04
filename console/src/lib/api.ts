@@ -1255,3 +1255,24 @@ export async function approveWorkflowRun(
   }
   return (await res.json()) as ApproveWorkflowResult;
 }
+
+/** Templates github-native: la especialización que el scaffold hornea en cada repo. */
+export async function listTemplates(): Promise<string[]> {
+  if (await isMock()) return ["_common/AGENTS.md.tmpl", "python-fastapi-react/.github/agents/python-dev.agent.md.tmpl"];
+  const r = await http<{ files: string[] }>(`/registry/templates`);
+  return r.files;
+}
+
+export async function getTemplate(path: string): Promise<string> {
+  if (await isMock()) return "# mock template";
+  const r = await http<{ content: string }>(`/registry/templates/file?path=${encodeURIComponent(path)}`);
+  return r.content;
+}
+
+export async function putTemplate(path: string, content: string): Promise<void> {
+  if (await isMock()) return;
+  await http(`/registry/templates/file?path=${encodeURIComponent(path)}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
