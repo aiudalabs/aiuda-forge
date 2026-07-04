@@ -990,12 +990,21 @@ function mapDesignRun(r: KernelRunWithSteps): DesignRun {
     gateStatus: gateId ? statusOf(gateId) : "QUEUED",
   }));
 
+  // El kernel emite created_at en MILISEGUNDOS; multiplicar por 1000 a ciegas
+  // mandaba las fechas al año ~58000. Normaliza por magnitud (epoch en segundos
+  // queda por debajo de 1e12 hasta el año 33658).
+  const createdAt = !r.created_at
+    ? Date.now()
+    : r.created_at < 1e12
+      ? r.created_at * 1000
+      : r.created_at;
+
   return {
     id: r.id,
     workflow_id: r.workflow_id ?? "design",
     status: r.status,
     idea,
-    created_at: r.created_at ? r.created_at * 1000 : Date.now(),
+    created_at: createdAt,
     phases,
     project_id,
     repo,
