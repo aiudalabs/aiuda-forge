@@ -1010,6 +1010,14 @@ details.log-row[open] > summary::before {
   color: var(--ink3);
   font-style: italic;
 }
+/* Etiqueta de ciclo en la card: distingue varios design runs del mismo proyecto. */
+.proj-cycle {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink4);
+  white-space: nowrap;
+}
 
 /* Detalle de proyecto */
 .studio-detail {

@@ -450,6 +450,18 @@ export function useDesignRun(id: string | null) {
   });
 }
 
+// Variante de sondeo lento para las CARDS de proyecto: GET /runs no incluye
+// steps, así que el progreso de fases solo existe en el detalle del run.
+// Misma queryKey que useDesignRun → comparte cache con el panel de detalle
+// (el run seleccionado se sigue refrescando a 3s por su propio observer).
+export function useDesignRunSummary(id: string) {
+  return useQuery({
+    queryKey: ["designRun", id],
+    queryFn: () => api.getDesignRun(id),
+    refetchInterval: 15000,
+  });
+}
+
 export function useCreateDesignRun() {
   const qc = useQueryClient();
   return useMutation({

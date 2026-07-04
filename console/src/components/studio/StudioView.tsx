@@ -15,6 +15,7 @@ import {
   useCreateDesignRun,
   useCreateProject,
   useDesignRun,
+  useDesignRunSummary,
   useDesignRuns,
   useLiveEvents,
   useProjects,
@@ -34,6 +35,14 @@ import type { DesignPhase, DesignRun, DesignStepStatus, Project } from "@/lib/ty
 type PhaseState = "pending" | "running" | "awaiting" | "approved" | "failed";
 
 function phaseState(p: DesignPhase): PhaseState {
+  // Fase sin gate (handoff): el estado del step ES el estado de la fase; si no,
+  // un run 100% terminado quedaría clavado en "6/7 · running" para siempre.
+  if (!p.gateId) {
+    if (p.designStatus === "DONE") return "approved";
+    if (p.designStatus === "FAILED") return "failed";
+    if (p.designStatus === "RUNNING") return "running";
+    return "pending";
+  }
   if (p.gateStatus === "DONE") return "approved";
   if (p.gateStatus === "FAILED") return "failed";
   if (p.gateStatus === "AWAITING") return "awaiting";
@@ -93,6 +102,26 @@ export function StudioView() {
     (projects ?? []).map((p) => [p.id, p])
   );
 
+  // Ciclo de diseño por run: un proyecto puede tener varios design runs
+  // (relanzamientos / iteraciones). Se numeran por antigüedad dentro del
+  // proyecto para que dos cards del mismo proyecto sean distinguibles.
+  const cycleOf = new Map<string, { n: number; of: number }>();
+  {
+    const byProject = new Map<string, DesignRun[]>();
+    for (const r of list) {
+      const key = r.project_id ?? `run:${r.id}`;
+      const arr = byProject.get(key) ?? [];
+      arr.push(r);
+      byProject.set(key, arr);
+    }
+    for (const arr of byProject.values()) {
+      arr
+        .slice()
+        .sort((a, b) => a.created_at - b.created_at)
+        .forEach((r, i) => cycleOf.set(r.id, { n: i + 1, of: arr.length }));
+    }
+  }
+
   return (
     <div className="wrap">
       <div className="sectitle">
@@ -136,6 +165,7 @@ export function StudioView() {
                 key={run.id}
                 run={run}
                 project={run.project_id ? projectById.get(run.project_id) : undefined}
+                cycle={cycleOf.get(run.id)}
                 active={run.id === effectiveSel}
                 onSelect={() => setSelectedRunId(run.id)}
               />
@@ -178,19 +208,26 @@ export function StudioView() {
 function ProjectCard({
   run,
   project,
+  cycle,
   active,
   onSelect,
 }: {
   run: DesignRun;
   project?: Project;
+  cycle?: { n: number; of: number };
   active: boolean;
   onSelect: () => void;
 }) {
   const t = useT();
-  const done = approvedCount(run.phases);
-  const total = run.phases.length;
-  const activeIdx = activePhaseIndex(run.phases);
-  const curPhase = run.phases[activeIdx];
+  // GET /runs no trae steps → run.phases de la lista viene todo QUEUED ("0/7"
+  // eterno). El progreso real vive en el detalle del run; sondeo lento con
+  // cache compartida y run.phases como fallback mientras carga.
+  const { data: detailed } = useDesignRunSummary(run.id);
+  const phases = detailed?.phases ?? run.phases;
+  const done = approvedCount(phases);
+  const total = phases.length;
+  const activeIdx = activePhaseIndex(phases);
+  const curPhase = phases[activeIdx];
   const state = curPhase ? phaseState(curPhase) : "approved";
 
   // Nombre del proyecto: del Project si está vinculado, si no la primera palabra del idea.
@@ -210,7 +247,20 @@ function ProjectCard({
       onClick={onSelect}
       aria-pressed={active}
     >
-      <div className="proj-name">{displayName}</div>
+      <div className="proj-name">
+        {displayName}
+        {cycle && cycle.of > 1 && (
+          <span className="proj-cycle">
+            {" · "}
+            {t("studio.view.cycle", { n: cycle.n })}
+            {" · "}
+            {new Date(run.created_at).toLocaleDateString(undefined, {
+              day: "numeric",
+              month: "short",
+            })}
+          </span>
+        )}
+      </div>
       {repoLabel && (
         <a
           className="proj-repo"
