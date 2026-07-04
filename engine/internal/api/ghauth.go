@@ -171,8 +171,21 @@ func (s *Server) githubAuthCallback(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusServiceUnavailable, "auth store not configured")
 		return
 	}
-	if !consumeOAuthState(r.URL.Query().Get("state")) {
-		httpErr(w, http.StatusForbidden, "invalid or expired OAuth state")
+	// Dos caminos legítimos llegan aquí:
+	//  a) Login iniciado por nosotros (/auth/github/start) → trae NUESTRO state.
+	//  b) Autorización durante la INSTALACIÓN de la App
+	//     (request_oauth_on_install): GitHub redirige con code +
+	//     setup_action=install|update y SIN state nuestro. El code igual se
+	//     canjea server-side con el client_secret, así que es seguro aceptarlo.
+	state := r.URL.Query().Get("state")
+	setupAction := r.URL.Query().Get("setup_action")
+	if state != "" {
+		if !consumeOAuthState(state) {
+			httpErr(w, http.StatusForbidden, "sesión de login caducada — vuelve a la consola y pulsa 'Continuar con GitHub' de nuevo")
+			return
+		}
+	} else if setupAction == "" {
+		httpErr(w, http.StatusForbidden, "invalid OAuth callback (no state, no setup_action)")
 		return
 	}
 	creds, err := ghapp.LoadCredentials(s.ghAppCredsPath())
