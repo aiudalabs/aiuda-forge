@@ -117,14 +117,32 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new ApiError(res.status, `${init?.method || "GET"} ${path} → ${res.status} ${body}`);
+    throw new ApiError(res.status, `${init?.method || "GET"} ${path} → ${res.status} ${body}`, errorDetail(body));
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
+// errorDetail extracts the human-readable reason the API sends as {"error": "..."}
+// so a call site can surface it (e.g. the 409 reason a blocked requeue returns)
+// without parsing the raw message string.
+function errorDetail(body: string): string | undefined {
+  try {
+    const j = JSON.parse(body);
+    if (j && typeof j.error === "string") return j.error;
+  } catch {
+    // not JSON — leave detail undefined, the message still carries the raw body
+  }
+  return undefined;
+}
+
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+    /** The API's {"error": "..."} reason, when present — safe to show to the user. */
+    public detail?: string,
+  ) {
     super(message);
     this.name = "ApiError";
   }
@@ -510,8 +528,27 @@ export async function getProjectDoc(projectId: string, path: string, ref = "dev"
 // orchestrator re-fires them. In sprint mode this requeues the WHOLE sprint.
 // Requeue de UNA story (pivote F2): espejada → backlog + limpia su sesión de
 // agente; legacy → transición guardada failed→backlog del kernel.
-export async function requeueStory(id: string): Promise<void> {
-  await http(`/stories/${encodeURIComponent(id)}/requeue`, { method: "POST" });
+// Requeue de UNA story: {requeued:true} tras failed→backlog; {requeued:false,reason}
+// cuando ya estaba en backlog (idempotente). Un 409 (running/in_review/done, o run
+// vivo) llega como ApiError con .detail para que el call site muestre la razón.
+export interface RequeueStoryResult {
+  requeued: boolean;
+  reason?: string;
+}
+
+export async function requeueStory(id: string): Promise<RequeueStoryResult> {
+  return http<RequeueStoryResult>(`/stories/${encodeURIComponent(id)}/requeue`, { method: "POST" });
+}
+
+// Requeue del SPRINT completo: reencola solo sus stories `failed`, devuelve las ids
+// reencoladas y las saltadas con su razón (running/in_review/done o run vivo).
+export interface RequeueSprintResult {
+  requeued: string[];
+  skipped: { id: string; reason: string }[];
+}
+
+export async function requeueSprint(id: string): Promise<RequeueSprintResult> {
+  return http<RequeueSprintResult>(`/sprints/${encodeURIComponent(id)}/requeue`, { method: "POST" });
 }
 
 export async function requeueRun(id: string): Promise<number> {

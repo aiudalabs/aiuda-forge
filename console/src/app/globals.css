@@ -3118,6 +3118,21 @@ details.log-row[open] > summary::before {
   color: var(--accent);
   margin-bottom: 10px;
 }
+.sprint-requeue {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+.sprint-requeue-msg {
+  font-size: 12px;
+  color: var(--ink3);
+  line-height: 1.5;
+}
+.sprint-requeue-msg.err {
+  color: var(--danger);
+}
 .sprint-stories {
   display: flex;
   flex-direction: column;

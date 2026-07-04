@@ -1075,6 +1075,29 @@ func (s *Store) RequeueSprint(sprintID string) (int, error) {
 	return int(n), nil
 }
 
+// RequeueStory resurrects ONE terminal (failed) story back to backlog, clearing
+// run_id/pr_url so the next dispatch fires clean. Like RequeueSprint it crosses the
+// failed→backlog edge the automatic state machine forbids, but scoped to a single id
+// (and project when non-empty). It is guarded on status='failed', so it is a safe
+// no-op (changed=false) if the story already moved out of failed between the caller's
+// read and this write — never blindly overwriting a running/in_review/done story.
+// For GitHub-mirrored stories the handler uses SyncExternalStatus instead (it also
+// clears the agent session); this path serves legacy, non-mirrored stories.
+func (s *Store) RequeueStory(projectID, id string) (changed bool, err error) {
+	q := `UPDATE stories SET status='backlog', run_id='', pr_url='' WHERE id=? AND status='failed'`
+	args := []any{id}
+	if projectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // RequeueByRun requeues the failed stories belonging to a run. Because a goal-mode
 // sprint's stories all share the run_id, it resolves each story's sprint and
 // requeues the WHOLE sprint (the user's "requeue the whole sprint in sprint mode");

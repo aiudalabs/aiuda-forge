@@ -77,6 +77,23 @@ export function TicketDetail({
     );
   }
 
+  function doRequeueStory() {
+    if (!ticket) return;
+    if (!window.confirm(t("tickets.detail.requeueConfirm"))) return;
+    setActionError(null);
+    requeueStory.mutate(ticket.id, {
+      onSuccess: (r) => {
+        // requeued:false = ya estaba en backlog (idempotente): no cerramos, avisamos.
+        if (r.requeued === false) setActionError(r.reason ?? t("tickets.detail.requeueNoop"));
+        else onClose();
+      },
+      onError: (e) => {
+        if (e instanceof ApiError && e.detail) setActionError(e.detail);
+        else setActionError(e instanceof Error ? e.message : String(e));
+      },
+    });
+  }
+
   function doDelete() {
     if (!ticket) return;
     if (!window.confirm(t("tickets.detail.deleteConfirm"))) return;
@@ -253,24 +270,22 @@ export function TicketDetail({
                 ) : !ticket.session_url ? (
                   <div className="td-empty">{t("tickets.detail.notRun")}</div>
                 ) : null}
-                {/* Reencolar: story espejada en GitHub → requeue nativo (vuelve a
-                    backlog + limpia la sesión de agente); legacy failed → requeue
-                    del run del kernel (R2). */}
-                {ticket.external_ref &&
-                  (ticket.status === "running" || ticket.status === "in_review" || ticket.status === "failed") && (
-                    <button
-                      className="btn ghost"
-                      style={{ width: "100%", color: "var(--danger)" }}
-                      onClick={() => {
-                        if (!window.confirm(t("tickets.detail.requeueTitle"))) return;
-                        requeueStory.mutate(ticket.id, { onSuccess: onClose });
-                      }}
-                      disabled={requeueStory.isPending}
-                      title={t("tickets.detail.requeueTitle")}
-                    >
-                      {requeueStory.isPending ? t("tickets.detail.requeueing") : t("tickets.detail.requeue")}
-                    </button>
-                  )}
+                {/* Reencolar: solo una story `failed` es reencolable (running/
+                    in_review están vivas, done ya mergeó). Espejada en GitHub →
+                    requeue nativo (vuelve a backlog + limpia la sesión de agente).
+                    El backend valida: un run vivo devuelve 409 con su razón, que
+                    mostramos inline. */}
+                {ticket.external_ref && ticket.status === "failed" && (
+                  <button
+                    className="btn ghost"
+                    style={{ width: "100%", color: "var(--danger)" }}
+                    onClick={doRequeueStory}
+                    disabled={requeueStory.isPending}
+                    title={t("tickets.detail.requeueTitle")}
+                  >
+                    {requeueStory.isPending ? t("tickets.detail.requeueing") : t("tickets.detail.requeue")}
+                  </button>
+                )}
                 {!ticket.external_ref && ticket.status === "failed" && ticket.run_id && (
                   <button
                     className="btn ghost"

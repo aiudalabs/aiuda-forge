@@ -311,6 +311,20 @@ export function useRequeueStory() {
   });
 }
 
+// Reencola TODAS las stories `failed` de un sprint de una (R2 en bloque). Devuelve
+// {requeued, skipped} para que la vista muestre cuántas volvieron y cuáles se
+// saltaron con su razón. Invalida tickets/candidatos como el requeue individual.
+export function useRequeueSprint() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (sprintId: string) => api.requeueSprint(sprintId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tickets"] });
+      qc.invalidateQueries({ queryKey: ["dispatchCandidates"] });
+    },
+  });
+}
+
 // Borra UNA story (local, no toca GitHub). Invalida los tickets del proyecto para
 // que desaparezca de tabla/kanban/DAG. El 409 (dependientes) y el 404 (cross-tenant)
 // llegan como ApiError para que el call site los muestre.

@@ -8,7 +8,8 @@
 
 import { useMemo, useState } from "react";
 import type { OrchestratorTicket, Sprint, TicketStatus } from "@/lib/types";
-import { useSprints } from "@/lib/hooks";
+import { useRequeueSprint, useSprints } from "@/lib/hooks";
+import { ApiError, type RequeueSprintResult } from "@/lib/api";
 import { LaneChip } from "@/components/tickets/LaneChip";
 import { statusToken } from "@/lib/statusToken";
 import { useT } from "@/lib/i18n";
@@ -45,6 +46,30 @@ export function SprintsView({
 }) {
   const t = useT();
   const { data: sprintMeta } = useSprints();
+  const requeueSprint = useRequeueSprint();
+  // Per-sprint requeue feedback: the result to report, or an error message. Keyed
+  // by sprint id so each card shows only its own outcome. pendingId disables just
+  // the sprint being requeued (not every card).
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Record<string, RequeueSprintResult | { error: string }>>({});
+
+  function doRequeueSprint(id: string, failedCount: number) {
+    if (!window.confirm(t("tickets.sprints.requeueConfirm", { n: failedCount }))) return;
+    setPendingId(id);
+    setFeedback((f) => {
+      const next = { ...f };
+      delete next[id];
+      return next;
+    });
+    requeueSprint.mutate(id, {
+      onSuccess: (r) => setFeedback((f) => ({ ...f, [id]: r })),
+      onError: (e) => {
+        const msg = e instanceof ApiError && e.detail ? e.detail : e instanceof Error ? e.message : String(e);
+        setFeedback((f) => ({ ...f, [id]: { error: msg } }));
+      },
+      onSettled: () => setPendingId(null),
+    });
+  }
 
   const groups = useMemo<SprintGroup[]>(() => {
     const metaById = new Map((sprintMeta ?? []).map((s: Sprint) => [s.id, s]));
@@ -119,6 +144,36 @@ export function SprintsView({
                 {g.waitingOn.length > 0 && g.state !== "done" && (
                   <p className="sprint-waiting">{t("tickets.sprints.waitingOn", { list: g.waitingOn.join(", ") })}</p>
                 )}
+                {(() => {
+                  const failedCount = g.stories.filter((s) => s.status === "failed").length;
+                  if (failedCount === 0) return null;
+                  const fb = feedback[g.id];
+                  return (
+                    <div className="sprint-requeue">
+                      <button
+                        className="btn ghost"
+                        style={{ color: "var(--danger)" }}
+                        onClick={() => doRequeueSprint(g.id, failedCount)}
+                        disabled={pendingId === g.id}
+                        title={t("tickets.sprints.requeueTitle")}
+                      >
+                        {pendingId === g.id
+                          ? t("tickets.detail.requeueing")
+                          : t("tickets.sprints.requeueFailed", { n: failedCount })}
+                      </button>
+                      {fb && "error" in fb && <span className="sprint-requeue-msg err">{fb.error}</span>}
+                      {fb && !("error" in fb) && (
+                        <span className="sprint-requeue-msg">
+                          {t("tickets.sprints.requeueDone", { n: fb.requeued.length })}
+                          {fb.skipped.length > 0 &&
+                            ` · ${t("tickets.sprints.requeueSkipped", { n: fb.skipped.length })}: ${fb.skipped
+                              .map((s) => `${s.id} (${s.reason})`)
+                              .join("; ")}`}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="sprint-stories">
                   {g.stories.map((story) => {
                     // Un "Listo" dentro de un sprint que espera a otros es engañoso

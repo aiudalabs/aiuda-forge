@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -443,7 +444,89 @@ func (s *Server) requeueRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"requeued": n})
 }
 
-// requeueSprint (R2) resurrects all of a sprint's failed stories back to backlog.
+// requeueVerdict is the outcome of attempting to requeue ONE story. It lets the
+// single-story and sprint handlers share the same validation while shaping their
+// own response (a blocked story is a 409 for the single endpoint but a reported
+// "skipped" entry for the sprint sweep).
+type requeueVerdict int
+
+const (
+	reqDone    requeueVerdict = iota // failed → backlog applied
+	reqNoop                          // already in backlog: idempotent no-op
+	reqBlocked                       // not requeueable (wrong state, or live execution)
+)
+
+// requeueStoryUnit validates and, when legal, requeues a single story failed→backlog.
+// It is the shared unit behind POST /stories/{id}/requeue and requeueSprint. Only a
+// `failed` story is requeueable; `backlog` is an idempotent no-op (pressing the
+// button twice must not error or double-fire); any other state (running/in_review/
+// done) or a still-live execution is blocked with a human-readable reason. Callers
+// have already authorized the mutation on st.ProjectID.
+func (s *Server) requeueStoryUnit(st tickets.Story) (requeueVerdict, string, error) {
+	switch st.Status {
+	case tickets.StatusBacklog:
+		return reqNoop, "la story ya está en el backlog", nil
+	case tickets.StatusFailed:
+		// requeueable — fall through to the live-execution guard.
+	default:
+		return reqBlocked, fmt.Sprintf("la story está en %s; solo se pueden reencolar stories en failed", st.Status), nil
+	}
+	if reason := s.liveExecutionReason(st); reason != "" {
+		return reqBlocked, reason, nil
+	}
+	// Mirrored stories go through SyncExternalStatus (it also clears the agent
+	// session so the projection won't re-anchor the story to running); legacy,
+	// non-mirrored stories use the guarded single-story requeue.
+	if st.ExternalRef != "" {
+		if _, err := s.Tickets.SyncExternalStatus(st.ID, tickets.StatusBacklog, ""); err != nil {
+			return reqBlocked, "", err
+		}
+		return reqDone, "", nil
+	}
+	changed, err := s.Tickets.RequeueStory(st.ProjectID, st.ID)
+	if err != nil {
+		return reqBlocked, "", err
+	}
+	if !changed {
+		// Lost a race: the story left `failed` between our read and this write.
+		return reqBlocked, "la story cambió de estado; recarga e inténtalo de nuevo", nil
+	}
+	return reqDone, "", nil
+}
+
+// liveExecutionReason returns a human-readable reason when the story looks like it is
+// still executing, or "" when it is safe to requeue. It uses only CHEAP LOCAL signals
+// — it never calls GitHub on the request path.
+//
+// Reliable local signal: a legacy factory story whose run_id points to a store run
+// still QUEUED/RUNNING (the R3 desync — a story got marked failed while the kernel run
+// driving it actually revived). Requeueing then would race a live run and orphan its PR.
+//
+// LIMIT: a GitHub-native story (external_ref, empty run_id) dispatched to a
+// claude_action workflow has NO cheap local liveness signal — its story_sessions URL is
+// an Actions run page whose state needs a GitHub call, and it lingers after the session
+// dies. The claude_action dead-session sweep is still pending (CLAUDE.md "Pila
+// pendiente" #4); the Copilot-task sweep already returns dead-session stories to backlog
+// on its own. Until claude_action is swept, a `failed` GH-native story is requeued on
+// the operator's judgement (requeue clears its session, so no re-anchor to running).
+func (s *Server) liveExecutionReason(st tickets.Story) string {
+	if st.RunID == "" || s.Store == nil {
+		return ""
+	}
+	run, err := s.Store.GetRun(st.RunID)
+	if err != nil || run == nil {
+		return "" // unknown/legacy run record — don't block on a missing row
+	}
+	if run.Status == store.StatusRunning || run.Status == store.StatusQueued {
+		return fmt.Sprintf("su run %s sigue activo (%s); espera a que termine o cancélalo antes de reencolar", st.RunID, run.Status)
+	}
+	return ""
+}
+
+// requeueSprint (R2) reencola TODAS las stories `failed` de un sprint, aplicando la
+// misma validación por story que el endpoint individual. Devuelve las ids reencoladas
+// y las saltadas con su razón (una story running/in_review/done o con run vivo NO se
+// toca) — el sprint mixto es lo normal, así que las saltadas se reportan, no fallan.
 func (s *Server) requeueSprint(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// C1: requeueing mutates the sprint's stories — a user session must be
@@ -451,44 +534,61 @@ func (s *Server) requeueSprint(w http.ResponseWriter, r *http.Request) {
 	if s.sprintDenied(w, r.Context(), id, projects.RoleEditor) {
 		return
 	}
-	n, err := s.Tickets.RequeueSprint(id)
+	// sprintDenied verified editor on every project holding this sprint id, so the
+	// unscoped enumeration (across those projects) reveals nothing unauthorized.
+	stories, err := s.Tickets.StoriesBySprint(id)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requeued": n})
-}
-
-// requeueStory (R2 + pivote F2) devuelve UNA story al backlog para que el
-// dispatch la re-sirva. Para stories espejadas en GitHub va por
-// SyncExternalStatus (que además limpia la sesión de agente ligada); para las
-// legacy usa la transición guardada failed→backlog del kernel. Reemplaza los
-// resets manuales contra la DB que hoy exige una sesión muerta.
-func (s *Server) requeueStory(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	st, err := s.Tickets.GetStory(id)
-	if err != nil {
-		httpErr(w, http.StatusNotFound, "story not found: "+id)
-		return
-	}
-	if s.Projects != nil && !s.requireRole(r.Context(), st.ProjectID, projects.RoleEditor) {
-		httpErr(w, http.StatusForbidden, "requeueing requires editor or owner")
-		return
-	}
-	if st.ExternalRef != "" {
-		changed, err := s.Tickets.SyncExternalStatus(id, tickets.StatusBacklog, "")
+	requeued := []string{}
+	skipped := []map[string]string{}
+	for _, st := range stories {
+		verdict, reason, err := s.requeueStoryUnit(st)
 		if err != nil {
 			httpErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"requeued": changed})
+		switch verdict {
+		case reqDone:
+			requeued = append(requeued, st.ID)
+		case reqBlocked:
+			skipped = append(skipped, map[string]string{"id": st.ID, "reason": reason})
+		}
+		// reqNoop (already backlog) is neither requeued nor a problem — omit silently.
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requeued": requeued, "skipped": skipped})
+}
+
+// requeueStory (R2 + pivote F2) devuelve UNA story al backlog para que el dispatch la
+// re-sirva. Valida el estado: solo una story `failed` se reencola; `backlog` es un
+// no-op idempotente (200, requeued:false); cualquier otro estado o una ejecución viva
+// da 409 con la razón. Para stories espejadas en GitHub va por SyncExternalStatus (que
+// además limpia la sesión de agente ligada); las legacy usan RequeueStory.
+func (s *Server) requeueStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	// C1: requeueing mutates the story — editor on its project or 404 (no leak).
+	st, err := s.storyForRoute(r, id)
+	if err != nil {
+		ticketNotFound(w, err)
 		return
 	}
-	if err := s.Tickets.MarkBacklog(id); err != nil {
-		httpErr(w, http.StatusConflict, err.Error())
+	if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleEditor) {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requeued": true})
+	verdict, reason, err := s.requeueStoryUnit(st)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	switch verdict {
+	case reqNoop:
+		writeJSON(w, http.StatusOK, map[string]any{"requeued": false, "reason": reason})
+	case reqBlocked:
+		httpErr(w, http.StatusConflict, reason)
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"requeued": true})
+	}
 }
 
 func (s *Server) controlStatus(w http.ResponseWriter, r *http.Request) {
