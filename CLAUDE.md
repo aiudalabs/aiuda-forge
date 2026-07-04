@@ -211,3 +211,36 @@ Primera tajada de v1.1 (ver `docs/ROADMAP-v1.1-v1.4.md`). Los 4 bugs HIGH que bl
 - ✅ **#18** artifacts/status toman la instancia MÁS RECIENTE del step (prefiere DONE) — `api/server.go` + `console api.ts statusOf`.
 - ✅ **#19** el orquestador difiere disparar un sprint hasta que `.vibeforge-gate` esté en `dev` — `github.FileOnBranch` + `BranchFileChecker` en `native.go` (solo github.com; local intacto).
 - ✅ **R3** `reconcileRevivedRuns` re-sincroniza una story `failed` cuyo run revive a RUNNING — `native.go` + nuevo `StoryProvider.Failed()`.
+
+## FORJA — estado del pivote GitHub-native (cierre 2026-07-04)
+El producto se llama **Forja** (forja.aiudalabs.com; forja.io libre como defensa). Plan F0–F4 COMPLETO.
+Informes clave: docs/ADR-2026-07-03-studio-first-github-native.md, docs/PLAN-2026-07-03-pivot-github-native.md,
+docs/GTM-2026-07-03-onboarding-monetizacion.md, docs/UI-AUDIT-2026-07-03.md. Docs de usuario reescritos (console/public/docs, 5 nuevos).
+
+### Hecho y validado E2E (marketpty = 24/44 stories mergeadas + SP5/7/10/11 en PRs)
+- Conductor completo: proyección (GitHub=verdad, tick 25s, autocorrección), dispatch (sprint-goal-mode, deps, picker
+  de canal con probe real, override por despacho), auto-merge, workflow_approval auto_if_safe (nunca si toca
+  .github/workflows/**), max_concurrency, executor/model por lane, failover de canal, requeue UI, barrido de
+  sesiones muertas (Copilot), cierre de issues de PRs mergeados, Rescue checkpoint en claude.yml.
+- Multi-tenant auth CERRADO: GitHub App "forja-by-aiudalabs" (manifest flow, public); OAuth login (token
+  user-to-server + refresh persistido en auth.github_tokens); installation tokens (JWT RS256 propio, ghapp/tokens.go);
+  resolución por proyecto (tenant.go: usuario→installation→host) en API y conductor loop. Validado: marketpty opera
+  con credenciales del tenant.
+- Costura: publicar backlog → export issues+deps + scaffold automáticos (api/costura.go, hook OnPublished).
+- Secret Claude: probe real (workflow+secret) + siembra desde Settings→Canal Claude (no se almacena en Forja).
+- UI: vista Agentes (sesiones+cola PRs+aprobar workflows), Settings completo, Registry con tab Templates GitHub
+  (cards humanas, editor renderizado, Aplicar al proyecto), Board legacy eliminado, rebranding Forja.
+- design.yaml: docs_pr → base main (trunk-based; dev era del factory legacy). Factory legacy OFF por default.
+
+### Pila pendiente (próximas sesiones, en orden)
+1. **Permiso Copilot en la App**: la Agent tasks API devuelve 403 'does not have read access' con el token
+   user-to-server → falta permiso Copilot en el manifest/App (editar permisos + re-aprobación del usuario).
+   Mientras: degradación al host en dev (github/dispatch.go CreateAgentTask + probe).
+2. **Wizard UI de onboarding** (5 pantallas del GTM): Continue with GitHub → instalar App → semáforos de
+   capacidades (Copilot/Claude-secret) → org+preset autonomía → primer proyecto. Todo el backend ya existe.
+3. **Despliegue público** forja.aiudalabs.com: webhooks activos (receptor F1 listo; la App ya apunta ahí con
+   active:false), TLS, y el manifest deja de omitir hooks.
+4. Menores acumulados: barrido de sesiones muertas para claude_action (mirar conclusión del run);
+   gatear/avisar dispatch si docs/ no está en main; quitar EnsureDevBranch (rama dev vestigial);
+   live-log del design run (#13); editor per-proyecto de .github/ del repo; conversational gates (#3);
+   hardening tenantToken (verificar usabilidad del token antes de devolverlo).
