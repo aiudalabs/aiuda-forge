@@ -46,11 +46,14 @@ func (c *Client) CreateIssue(ctx context.Context, repoURL, title, body string, l
 	if err != nil {
 		return CreatedIssue{}, err
 	}
-	payload, err := json.Marshal(map[string]any{
-		"title":  title,
-		"body":   body,
-		"labels": labels,
-	})
+	// Un slice nil se serializa como JSON null y GitHub lo rechaza con 422
+	// ("For 'properties/labels', nil is not an array") — pasa con stories
+	// manuales sin sprint/lane/epic. Sin labels, omitimos el campo.
+	fields := map[string]any{"title": title, "body": body}
+	if len(labels) > 0 {
+		fields["labels"] = labels
+	}
+	payload, err := json.Marshal(fields)
 	if err != nil {
 		return CreatedIssue{}, err
 	}
