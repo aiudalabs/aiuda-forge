@@ -19,7 +19,19 @@ const agentTasksAPIVersion = "2026-03-10"
 
 // CreateAgentTask starts a Copilot cloud-agent task on repoURL. model "" lets
 // GitHub pick (auto). Returns the task's html_url when the API exposes it.
+// CreateAgentTask con degradación: si el token del tenant recibe el 403 de la
+// Agent tasks API ("does not have read access" — permiso Copilot pendiente en
+// la App), se reintenta con la auth del host (dev). En cloud sin host auth el
+// error original se propaga.
 func (c *Client) CreateAgentTask(ctx context.Context, repoURL, prompt, model string) (string, error) {
+	url, err := c.createAgentTask(ctx, repoURL, prompt, model)
+	if err != nil && c.token != "" && strings.Contains(err.Error(), "does not have read access") {
+		return New().createAgentTask(ctx, repoURL, prompt, model)
+	}
+	return url, err
+}
+
+func (c *Client) createAgentTask(ctx context.Context, repoURL, prompt, model string) (string, error) {
 	slug, err := slugFromURL(repoURL)
 	if err != nil {
 		return "", err

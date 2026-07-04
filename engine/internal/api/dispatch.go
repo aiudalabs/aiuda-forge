@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"forge/internal/conductor"
+	"forge/internal/github"
 	"forge/internal/projects"
 )
 
@@ -165,6 +166,14 @@ func (s *Server) listExecutors(w http.ResponseWriter, r *http.Request) {
 	gh := s.ghFor(r.Context(), id)
 	out := make([]executorView, 0, 2)
 	okCop, why := gh.AgentTasksAvailable(r.Context(), p.Repo)
+	if !okCop && strings.Contains(why, "does not have read access") {
+		// La Agent tasks API no acepta (aún) el token user-to-server de la App
+		// (permiso Copilot pendiente en el manifest). Degradación: en dev el
+		// host puede; en cloud queda la razón honesta.
+		if ok2, _ := github.New().AgentTasksAvailable(r.Context(), p.Repo); ok2 {
+			okCop, why = true, ""
+		}
+	}
 	out = append(out, executorView{ID: projects.ExecutorCopilot, Available: okCop, Reason: why, Default: set.Executor == projects.ExecutorCopilot})
 	okCl, clErr := gh.FileOnBranch(r.Context(), p.Repo, "main", ".github/workflows/claude.yml")
 	clWhy := ""
