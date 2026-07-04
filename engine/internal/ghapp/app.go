@@ -87,12 +87,14 @@ func manifestBase(name, baseURL, consoleURL string) map[string]any {
 		"name":        name,
 		"url":         consoleURL,
 		"description": "Forja by aiudalabs — del diseño gateado al software entregado, en tu GitHub.",
-		"public":      false,
+		// public: los TENANTS instalan la App en SUS cuentas/orgs — private solo
+		// permite instalarla en la cuenta dueña (cazado en vivo con el 1er usuario).
+		"public":       true,
 		"redirect_url": baseURL + "/setup/github-app/callback",
 		"callback_urls": []string{
 			baseURL + "/auth/github/callback",
 		},
-		"setup_url": consoleURL + "/onboarding",
+		"setup_url":       consoleURL + "/onboarding",
 		"hook_attributes": map[string]any{"url": baseURL + "/webhooks/github", "active": true},
 		// Pedir autorización OAuth del usuario durante la instalación: un solo
 		// viaje deja App instalada + token user-to-server emitido.
