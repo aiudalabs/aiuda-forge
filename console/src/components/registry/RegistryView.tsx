@@ -560,40 +560,64 @@ function TemplateEditorModal({ path, onClose }: { path: string; onClose: () => v
   const t = useT();
   const { data: content, isLoading } = useTemplate(path);
   const [draft, setDraft] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
   const save = useSaveTemplate();
   const meta = templateMeta(path, t);
+  const isMarkdown = /\.md(\.tmpl)?$/.test(path);
+  const body = draft ?? content ?? "";
 
   return (
-    <div className="modal on" role="dialog" aria-modal="true">
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
-        <h3 style={{ margin: 0 }}>{meta.title}</h3>
-        <span className="c" style={{ fontSize: 12 }}>{meta.desc}</span>
+    <div className="modal on" role="dialog" aria-label={meta.title}>
+      <div className="mh">
+        <h3>{meta.title}</h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button className={`btn ghost sm${editMode ? " on" : ""}`} onClick={() => setEditMode((v) => !v)}>
+            {editMode ? t("registry.view") : t("registry.edit")}
+          </button>
+          <button className="x" onClick={onClose} aria-label={t("registry.close")}>
+            ✕
+          </button>
+        </div>
       </div>
-      <div className="role mono" style={{ fontSize: 10.5, opacity: 0.55, marginBottom: 10 }}>{path}</div>
-      {isLoading ? (
-        <div className="placeholder"><div className="ph-ic"><span className="spin" /></div></div>
-      ) : (
-        <textarea
-          value={draft ?? content ?? ""}
-          onChange={(e) => setDraft(e.target.value)}
-          spellCheck={false}
-          style={{
-            width: "100%", minHeight: "56vh", fontFamily: "var(--mono, monospace)", fontSize: 12,
-            lineHeight: 1.55, padding: 12, border: "1px solid var(--line)", borderRadius: 8,
-            background: "var(--bg, #faf8f4)", resize: "vertical",
-          }}
-        />
-      )}
-      <p className="c" style={{ fontSize: 11.5, margin: "8px 0 12px" }}>{t("registry.templates.editNote")}</p>
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        <button className="btn ghost sm" onClick={onClose}>{t("registry.templates.close")}</button>
-        <button
-          className="btn primary sm"
-          disabled={draft === null || save.isPending}
-          onClick={() => save.mutate({ path, content: draft ?? "" }, { onSuccess: onClose })}
-        >
-          {save.isPending ? t("registry.templates.saving") : t("registry.templates.save")}
-        </button>
+      <div className="mb">
+        <p className="c" style={{ margin: "0 0 4px", fontSize: 12.5 }}>{meta.desc}</p>
+        <div className="role mono" style={{ fontSize: 10.5, opacity: 0.55, marginBottom: 12 }}>{path}</div>
+        {isLoading ? (
+          <div style={{ padding: 12, color: "var(--ink4)" }}>{t("registry.bodyLoading")}</div>
+        ) : editMode ? (
+          <textarea
+            className="inp mono"
+            style={{ minHeight: 380, resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+            value={body}
+            onChange={(e) => setDraft(e.target.value)}
+            spellCheck={false}
+          />
+        ) : isMarkdown ? (
+          <div className="artifact-md" style={{ maxHeight: 460, overflowY: "auto" }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+          </div>
+        ) : (
+          <div className="reg-code-block" style={{ maxHeight: 460, overflowY: "auto" }}>
+            <SyntaxHighlighter
+              language="yaml"
+              style={githubGist}
+              customStyle={{ background: "var(--bg2)", fontSize: 12, margin: 0, padding: 14 }}
+            >
+              {body}
+            </SyntaxHighlighter>
+          </div>
+        )}
+        <p className="c" style={{ fontSize: 11.5, margin: "10px 0 12px" }}>{t("registry.templates.editNote")}</p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button className="btn ghost sm" onClick={onClose}>{t("registry.templates.close")}</button>
+          <button
+            className="btn primary sm"
+            disabled={draft === null || save.isPending}
+            onClick={() => save.mutate({ path, content: draft ?? "" }, { onSuccess: onClose })}
+          >
+            {save.isPending ? t("registry.templates.saving") : t("registry.templates.save")}
+          </button>
+        </div>
       </div>
     </div>
   );
