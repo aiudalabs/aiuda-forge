@@ -287,7 +287,10 @@ func Build(cfg Config) (*App, error) {
 		srv.Projector = conductor.NewProjector(tix, gh)
 		srv.Projector.TaskState = gh // barrido de sesiones muertas (F3)
 		srv.Projector.Closer = gh    // cierre de loop de PRs mergeados sin auto-close
-		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh}
+		// Multi-tenant: cada proyecto opera con SU credencial (token del dueño
+		// o installation token de la App); sin credenciales → auth del host.
+		srv.Projector.ClientFor = srv.GHForProject
+		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh, ClientFor: srv.GHForProject}
 		appApprover = &conductor.Approver{GH: gh}
 		srv.GHWebhookSecret = func() string {
 			if v := os.Getenv("VIBEFORGE_GITHUB_WEBHOOK_SECRET"); v != "" {
@@ -427,7 +430,7 @@ func (a *App) autoMerge(ctx context.Context, projectID, repoURL string) {
 	if err != nil {
 		return
 	}
-	gh := github.New()
+	gh := a.Server.GHForProject(ctx, projectID)
 	seen := map[string]bool{}
 	for _, st := range stories {
 		if st.Status != tickets.StatusInReview || st.PRURL == "" || seen[st.PRURL] || st.ExternalRef == "" {
@@ -505,7 +508,8 @@ func (a *App) conductorLoop(ctx context.Context, interval time.Duration) {
 			// action_required de PRs que NO tocan .github/workflows/** se
 			// aprueban solos; los que sí, quedan para el humano.
 			if set.WorkflowApproval == projects.WorkflowApprovalAutoSafe && a.approver != nil {
-				if res, err := a.approver.SweepSafeApprovals(ctx, p.Repo); err == nil && len(res.Approved) > 0 {
+				approver := &conductor.Approver{GH: a.Server.GHForProject(ctx, p.ID)}
+				if res, err := approver.SweepSafeApprovals(ctx, p.Repo); err == nil && len(res.Approved) > 0 {
 					log.Printf("conductor: %s — %d workflows aprobados (safe), %d bloqueados", p.ID, len(res.Approved), len(res.Blocked))
 				}
 			}

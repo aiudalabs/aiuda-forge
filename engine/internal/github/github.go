@@ -17,22 +17,43 @@ import (
 
 // Client wraps GitHub operations implemented via the gh/git CLIs.
 // runner is injectable for tests; nil uses exec.CommandContext.
+// token, si está presente, viaja como GH_TOKEN al gh CLI — así el MISMO código
+// opera con la credencial del TENANT (token de usuario OAuth o installation
+// token de la App) en vez de la auth del host. Vacío = auth del host (dev).
 type Client struct {
 	runner func(ctx context.Context, workdir string, name string, args ...string) (string, error)
+	token  string
 }
 
-// New returns a Client that shells out to the real gh/git CLIs.
-func New() *Client { return &Client{runner: defaultRunner} }
+// New returns a Client that shells out to the real gh/git CLIs (host auth).
+func New() *Client {
+	c := &Client{}
+	c.runner = c.execRunner
+	return c
+}
+
+// NewWithToken devuelve un Client que autentica cada llamada gh con el token
+// dado (multi-tenant: el token del dueño del proyecto o de la App).
+func NewWithToken(token string) *Client {
+	c := &Client{token: token}
+	c.runner = c.execRunner
+	return c
+}
 
 // withRunner builds a Client with a fake runner (for tests).
 func withRunner(r func(ctx context.Context, workdir string, name string, args ...string) (string, error)) *Client {
 	return &Client{runner: r}
 }
 
-func defaultRunner(ctx context.Context, workdir string, name string, args ...string) (string, error) {
+func (c *Client) execRunner(ctx context.Context, workdir string, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if workdir != "" {
 		cmd.Dir = workdir
+	}
+	if c.token != "" {
+		// GH_TOKEN manda sobre la auth persistida del host para gh; para git
+		// (clones/pushes https) no aplica — esas rutas siguen siendo host-only.
+		cmd.Env = append(os.Environ(), "GH_TOKEN="+c.token, "GITHUB_TOKEN="+c.token)
 	}
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf

@@ -69,6 +69,10 @@ type Projector struct {
 	TaskState TaskStater
 	// Closer, when set, closes issues whose story PR merged without auto-close.
 	Closer IssueCloser
+	// ClientFor, si está presente, resuelve el cliente GitHub POR PROYECTO
+	// (multi-tenant: token del dueño / installation token); nil = usar los
+	// campos fijos GH/TaskState/Closer (auth del host).
+	ClientFor func(ctx context.Context, projectID string) *github.Client
 
 	// serializes syncs per repo so a webhook burst doesn't stampede gh.
 	mu    sync.Mutex
@@ -149,6 +153,18 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 		p.mu.Unlock()
 	}()
 
+	// Cliente por tenant cuando hay factory; si no, los fijos del host.
+	ghR := p.GH
+	taskState := p.TaskState
+	closer := p.Closer
+	if p.ClientFor != nil {
+		if c := p.ClientFor(ctx, projectID); c != nil {
+			ghR = c
+			taskState = c
+			closer = c
+		}
+	}
+
 	slug, err := github.Slug(repoURL)
 	if err != nil {
 		return res, err
@@ -175,11 +191,11 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 		return res, nil // nothing exported to this repo yet
 	}
 
-	issues, err := p.GH.ListIssueStates(ctx, repoURL)
+	issues, err := ghR.ListIssueStates(ctx, repoURL)
 	if err != nil {
 		return res, err
 	}
-	prs, err := p.GH.ListOpenPRs(ctx, repoURL)
+	prs, err := ghR.ListOpenPRs(ctx, repoURL)
 	if err != nil {
 		return res, err
 	}
@@ -224,7 +240,7 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 	// murió — la story vuelve a backlog (y su sesión se limpia) para que el
 	// dispatch la re-sirva. Hoy esto era un reset manual contra la DB.
 	deadSession := map[string]bool{}
-	if p.TaskState != nil {
+	if taskState != nil {
 		checked := map[string]string{} // task id → state (varias stories comparten task)
 		for id, url := range sessions {
 			m := taskIDRe.FindStringSubmatch(url)
@@ -234,7 +250,7 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 			state, ok := checked[m[1]]
 			if !ok {
 				var err error
-				state, err = p.TaskState.AgentTaskState(ctx, repoURL, m[1])
+				state, err = taskState.AgentTaskState(ctx, repoURL, m[1])
 				if err != nil {
 					log.Printf("conductor: task state %s: %v", m[1], err)
 					state = "" // best-effort: sin veredicto no tocamos nada
@@ -251,7 +267,7 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 	// no auto-cierran): una story con PR que YA no está abierto pero SÍ mergeó,
 	// cierra su issue aquí — GitHub vuelve a ser la verdad y la derivación de
 	// abajo la marca done en este mismo pase.
-	if p.Closer != nil {
+	if closer != nil {
 		mergedPR := map[int]bool{} // pr number → merged (cache por pase)
 		for i := range issues {
 			iss := &issues[i]
@@ -269,7 +285,7 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 			merged, ok := mergedPR[n]
 			if !ok {
 				var err error
-				merged, err = p.Closer.PRMerged(ctx, repoURL, n)
+				merged, err = closer.PRMerged(ctx, repoURL, n)
 				if err != nil {
 					continue // best-effort
 				}
@@ -278,7 +294,7 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 			if !merged {
 				continue
 			}
-			if err := p.Closer.CloseIssue(ctx, repoURL, iss.Number,
+			if err := closer.CloseIssue(ctx, repoURL, iss.Number,
 				fmt.Sprintf("Cerrado por el conductor: el PR %s mergeó pero sus closing keywords no auto-cerraron este issue.", st.PRURL)); err != nil {
 				log.Printf("conductor: close issue #%d: %v", iss.Number, err)
 				continue

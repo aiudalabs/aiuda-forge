@@ -13,7 +13,6 @@ import (
 	"net/http"
 
 	"forge/internal/export"
-	"forge/internal/github"
 	"forge/internal/projects"
 )
 
@@ -48,7 +47,7 @@ func (s *Server) exportGitHub(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "project has no repo; pass {\"repo\": \"https://github.com/owner/name\"}")
 		return
 	}
-	res, err := export.GitHubBacklog(r.Context(), s.Tickets, github.New(), id, repo)
+	res, err := export.GitHubBacklog(r.Context(), s.Tickets, s.ghFor(r.Context(), id), id, repo)
 	if err != nil {
 		// Partial counts travel with the error so the console can say how far it got.
 		writeJSON(w, http.StatusBadGateway, map[string]any{

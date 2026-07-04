@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"forge/internal/github"
 	"forge/internal/tickets"
 )
 
@@ -79,6 +80,18 @@ type GitHubDispatcher interface {
 type Dispatcher struct {
 	Tickets *tickets.Store
 	GH      GitHubDispatcher
+	// ClientFor, si está presente, resuelve el cliente por PROYECTO (tenant).
+	ClientFor func(ctx context.Context, projectID string) *github.Client
+}
+
+// ghFor resuelve el dispatcher de GitHub para un proyecto.
+func (d *Dispatcher) ghFor(ctx context.Context, projectID string) GitHubDispatcher {
+	if d.ClientFor != nil {
+		if c := d.ClientFor(ctx, projectID); c != nil {
+			return c
+		}
+	}
+	return d.GH
 }
 
 // claudeWorkflowFile is the conductor-dispatch workflow the scaffold bakes into
@@ -216,7 +229,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 	}
 
 	res := DispatchResult{Dispatched: storyIDs, Channel: cand.Executor, Model: cand.Model}
-	fire := func(executor string) (string, error) { return d.fireChannel(ctx, repoURL, executor, prompt, cand.Model) }
+	ghd := d.ghFor(ctx, projectID)
+	fire := func(executor string) (string, error) {
+		return d.fireChannel(ctx, ghd, repoURL, executor, prompt, cand.Model)
+	}
 	url, err := fire(cand.Executor)
 	if err != nil {
 		// Fallback automático de canal (F4 — la lección del outage de Copilot):
@@ -249,7 +265,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 
 // fireChannel dispara el prompt por un canal concreto y devuelve la URL de la
 // sesión. Es la unidad que el fallback automático reintenta por el canal alterno.
-func (d *Dispatcher) fireChannel(ctx context.Context, repoURL, executor, prompt, model string) (string, error) {
+func (d *Dispatcher) fireChannel(ctx context.Context, gh GitHubDispatcher, repoURL, executor, prompt, model string) (string, error) {
 	switch executor {
 	case "claude_action":
 		// Disciplina de checkpoint para el runner efímero (R1 GitHub-edition +
@@ -261,14 +277,14 @@ func (d *Dispatcher) fireChannel(ctx context.Context, repoURL, executor, prompt,
 			"draft with a checklist of what remains. NEVER spawn background workers and end your turn waiting " +
 			"for them — when your turn ends the session ENDS and unpushed work is lost. Open the PR BEFORE any " +
 			"optional self-review pass.\n\n" + prompt
-		if err := d.GH.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", map[string]string{"prompt": prompt}); err != nil {
+		if err := gh.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", map[string]string{"prompt": prompt}); err != nil {
 			return "", err
 		}
 		// El run concreto tarda en materializarse; el link estable es la página
 		// de runs del workflow.
 		return fmt.Sprintf("https://github.com/%s/actions/workflows/%s", repoSlug(repoURL), claudeWorkflowFile), nil
 	default: // copilot
-		url, err := d.GH.CreateAgentTask(ctx, repoURL, prompt, model)
+		url, err := gh.CreateAgentTask(ctx, repoURL, prompt, model)
 		if err != nil {
 			return "", err
 		}

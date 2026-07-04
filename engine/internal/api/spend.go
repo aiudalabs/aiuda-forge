@@ -51,7 +51,7 @@ func (s *Server) githubSpend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	items, err := github.New().BillingUsage(r.Context(), p.Repo, now.Year(), int(now.Month()))
+	items, err := s.ghFor(r.Context(), id).BillingUsage(r.Context(), p.Repo, now.Year(), int(now.Month()))
 	if err != nil {
 		if errors.Is(err, github.ErrBillingUnavailable) {
 			writeJSON(w, http.StatusOK, map[string]any{

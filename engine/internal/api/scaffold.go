@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strings"
 
-	"forge/internal/github"
 	"forge/internal/projects"
 	"forge/internal/scaffold"
 )
@@ -91,7 +90,7 @@ func (s *Server) scaffoldGitHub(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "render: "+err.Error())
 		return
 	}
-	written, skipped, err := scaffold.Apply(r.Context(), github.New(), p.Repo, "main", files, "chore(scaffold)")
+	written, skipped, err := scaffold.Apply(r.Context(), s.ghFor(r.Context(), id), p.Repo, "main", files, "chore(scaffold)")
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error":   "scaffold apply failed: " + err.Error(),

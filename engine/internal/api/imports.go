@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 
-	"forge/internal/github"
 	"forge/internal/imports"
 	"forge/internal/projects"
 )
@@ -48,7 +47,7 @@ func (s *Server) importGitHub(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "project has no repo; pass {\"repo\": \"https://github.com/owner/name\"}")
 		return
 	}
-	res, err := imports.GitHub(r.Context(), s.Tickets, github.New(), id, repo)
+	res, err := imports.GitHub(r.Context(), s.Tickets, s.ghFor(r.Context(), id), id, repo)
 	if err != nil {
 		httpErr(w, http.StatusBadGateway, "github import failed: "+err.Error())
 		return

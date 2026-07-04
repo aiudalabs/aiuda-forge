@@ -10,7 +10,6 @@ import (
 	"net/http"
 
 	"forge/internal/conductor"
-	"forge/internal/github"
 	"forge/internal/projects"
 )
 
@@ -162,7 +161,7 @@ func (s *Server) listExecutors(w http.ResponseWriter, r *http.Request) {
 		Reason    string `json:"reason,omitempty"`
 		Default   bool   `json:"default"`
 	}
-	gh := github.New()
+	gh := s.ghFor(r.Context(), id)
 	out := make([]executorView, 0, 2)
 	okCop, why := gh.AgentTasksAvailable(r.Context(), p.Repo)
 	out = append(out, executorView{ID: projects.ExecutorCopilot, Available: okCop, Reason: why, Default: set.Executor == projects.ExecutorCopilot})

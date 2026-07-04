@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"forge/internal/conductor"
-	"forge/internal/github"
 	"forge/internal/projects"
 )
 
@@ -55,7 +54,7 @@ func (s *Server) listProjectPRs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"prs": []prView{}})
 		return
 	}
-	gh := github.New()
+	gh := s.ghFor(r.Context(), id)
 	prs, err := gh.ListOpenPRsDetailed(r.Context(), p.Repo)
 	if err != nil {
 		httpErr(w, http.StatusBadGateway, "github: "+err.Error())
@@ -168,7 +167,7 @@ func (s *Server) approveWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "project has no repo")
 		return
 	}
-	approver := &conductor.Approver{GH: github.New()}
+	approver := &conductor.Approver{GH: s.ghFor(r.Context(), id)}
 	ok, err := approver.ApproveOne(r.Context(), p.Repo, runID)
 	if err != nil {
 		httpErr(w, http.StatusBadGateway, err.Error())
