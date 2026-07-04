@@ -65,6 +65,72 @@ func (s *Server) runAccessible(ctx context.Context, runID string) bool {
 	return s.canAccessProject(ctx, run.ProjectID)
 }
 
+// memberProjects returns the set of project ids the ctx caller is a member of,
+// and whether tenant filtering applies at all. It reports scoped=false for the
+// service token (uid == "") and when no projects store is configured —
+// enforcement off, exactly like roleForProject. A failed membership lookup
+// filters everything out (fail-closed) rather than leaking cross-tenant data.
+func (s *Server) memberProjects(ctx context.Context) (map[string]bool, bool) {
+	uid := httpx.UserIDFromContext(ctx)
+	if uid == "" || s.Projects == nil {
+		return nil, false
+	}
+	projs, err := s.Projects.ListForMember(uid)
+	if err != nil {
+		return map[string]bool{}, true
+	}
+	allowed := make(map[string]bool, len(projs))
+	for _, p := range projs {
+		allowed[p.ID] = true
+	}
+	return allowed, true
+}
+
+// anyAllowed reports whether any of pids is in the allowed set.
+func anyAllowed(pids []string, allowed map[string]bool) bool {
+	for _, pid := range pids {
+		if allowed[pid] {
+			return true
+		}
+	}
+	return false
+}
+
+// ticketDenied gates a per-id ticket route (story/epic) on its project: it
+// writes a 404 — not 403, so a non-member learns nothing about ids it does not
+// own (same no-existence-leak contract as the runs routes) — when the caller
+// lacks the min role on projectID, and reports whether it denied. The service
+// token is never denied (requireRole treats it as the system).
+func (s *Server) ticketDenied(w http.ResponseWriter, ctx context.Context, projectID, min string) bool {
+	if s.requireRole(ctx, projectID, min) {
+		return false
+	}
+	httpErr(w, http.StatusNotFound, "not found")
+	return true
+}
+
+// sprintDenied gates a per-id sprint mutation (C1). Sprints are keyed
+// (id, project_id) and the sprint mutators update by id ACROSS projects, so a
+// user session must hold the min role on every project containing that sprint
+// id. 404 (not 403) — no existence leak. The service token is never denied.
+func (s *Server) sprintDenied(w http.ResponseWriter, ctx context.Context, sprintID, min string) bool {
+	if httpx.UserIDFromContext(ctx) == "" || s.Projects == nil {
+		return false // service token / enforcement off
+	}
+	pids, err := s.Tickets.SprintProjects(sprintID)
+	if err != nil || len(pids) == 0 {
+		httpErr(w, http.StatusNotFound, "sprint not found: "+sprintID)
+		return true
+	}
+	for _, pid := range pids {
+		if !s.requireRole(ctx, pid, min) {
+			httpErr(w, http.StatusNotFound, "sprint not found: "+sprintID)
+			return true
+		}
+	}
+	return false
+}
+
 // crossTenantDenied guards a project-scoped LIST reader (tickets, metrics, sprints).
 // For a user session asking for a project it does not own (or no project at all) it
 // writes `empty` as a 200 and returns true — no cross-tenant data, no existence

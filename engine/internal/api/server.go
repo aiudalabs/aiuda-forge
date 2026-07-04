@@ -440,6 +440,11 @@ func (s *Server) requeueRun(w http.ResponseWriter, r *http.Request) {
 // requeueSprint (R2) resurrects all of a sprint's failed stories back to backlog.
 func (s *Server) requeueSprint(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// C1: requeueing mutates the sprint's stories — a user session must be
+	// editor on the sprint's project(s); 404 for outsiders (no existence leak).
+	if s.sprintDenied(w, r.Context(), id, projects.RoleEditor) {
+		return
+	}
 	n, err := s.Tickets.RequeueSprint(id)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())

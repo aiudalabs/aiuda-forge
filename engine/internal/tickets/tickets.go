@@ -443,6 +443,27 @@ func (s *Store) ListEpics() ([]Epic, error) {
 	return out, rows.Err()
 }
 
+// EpicProjects maps each story-referenced epic id to the projects of those
+// stories. Epics predate multi-tenancy (no project_id column), so their tenant
+// is DERIVED from the stories that reference them — the API uses this to scope
+// epic reads per user (C1). An epic no story references maps to nothing.
+func (s *Store) EpicProjects() (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT epic_id, project_id FROM stories WHERE epic_id != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var epicID, projectID string
+		if err := rows.Scan(&epicID, &projectID); err != nil {
+			return nil, err
+		}
+		out[epicID] = append(out[epicID], projectID)
+	}
+	return out, rows.Err()
+}
+
 // ---- Sprints ----------------------------------------------------------------
 
 // CreateSprint inserts a Sprint.
@@ -461,6 +482,33 @@ func (s *Store) CreateSprint(sp Sprint) error {
 // ListSprints returns all sprints ordered by id.
 func (s *Store) ListSprints() ([]Sprint, error) {
 	return s.listSprints("")
+}
+
+// ListSprintsByProject returns the sprints of one project (empty = all
+// projects, for the service token / back-compat), ordered by id.
+func (s *Store) ListSprintsByProject(projectID string) ([]Sprint, error) {
+	return s.listSprints(projectID)
+}
+
+// SprintProjects returns the ids of every project containing a sprint with
+// this id. Sprints are keyed (id, project_id) and the per-id mutators act
+// across projects, so the API authorizes a sprint mutation against EVERY
+// project returned here (C1).
+func (s *Store) SprintProjects(id string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT project_id FROM sprints WHERE id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var pid string
+		if err := rows.Scan(&pid); err != nil {
+			return nil, err
+		}
+		out = append(out, pid)
+	}
+	return out, rows.Err()
 }
 
 // listSprints returns sprints, optionally scoped to projectID (empty = all
