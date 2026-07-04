@@ -223,6 +223,9 @@ func (s *Server) createStory(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Costura: la story manual también viaja a GitHub Issues (best-effort, en
+	// goroutine — la misma vía idempotente que el publish del diseño).
+	go s.OnStoryCreated(got)
 	writeJSON(w, http.StatusCreated, got)
 }
 

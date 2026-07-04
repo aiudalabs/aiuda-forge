@@ -365,7 +365,11 @@ export function TicketsView() {
       {/* Modal: nueva story */}
       <div className={`overlay ${showNewStory ? "on" : ""}`} onClick={() => setShowNewStory(false)} />
       {showNewStory && (
-        <NewStoryModal existingIds={list.map((tk) => tk.id)} onClose={() => setShowNewStory(false)} />
+        <NewStoryModal
+          projectId={projectId}
+          existingIds={list.map((tk) => tk.id)}
+          onClose={() => setShowNewStory(false)}
+        />
       )}
 
       {pickerFor && (
@@ -689,9 +693,11 @@ function ExportModal({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function NewStoryModal({
+  projectId,
   existingIds,
   onClose,
 }: {
+  projectId: string | null;
   existingIds: string[];
   onClose: () => void;
 }) {
@@ -701,6 +707,7 @@ function NewStoryModal({
 
   const [id, setId] = useState("");
   const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
   const [selectedDeps, setSelectedDeps] = useState<string[]>([]);
   const [epicId, setEpicId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -735,13 +742,21 @@ function NewStoryModal({
       setFormError(t("tickets.modal.errTitle"));
       return;
     }
+    // Sin proyecto activo la story caería al proyecto "default" del backend y
+    // jamás aparecería en este board scopeado.
+    if (!projectId) {
+      setFormError(t("tickets.modal.errProject"));
+      return;
+    }
 
     try {
       await createStory.mutateAsync({
         id: trimmedId,
         title: trimmedTitle,
+        body: body.trim() || undefined,
         deps: selectedDeps,
         epic_id: epicId || undefined,
+        project_id: projectId,
       });
       onClose();
     } catch (err: unknown) {
@@ -791,6 +806,20 @@ function NewStoryModal({
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t("tickets.modal.titlePlaceholder")}
             required
+          />
+        </div>
+
+        {/* Descripción — el campo `body` (user story) que ya pintan la card y el drawer */}
+        <div className="field">
+          <label htmlFor="ns-body">{t("tickets.modal.bodyLabel")}</label>
+          <textarea
+            id="ns-body"
+            className="inp"
+            rows={3}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder={t("tickets.modal.bodyPlaceholder")}
+            style={{ resize: "vertical" }}
           />
         </div>
 

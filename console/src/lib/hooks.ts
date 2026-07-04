@@ -360,10 +360,11 @@ export function useCreateStory() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateStoryInput) => api.createStory(input),
-    onSuccess: () => {
-      // Invalida tickets (todas las variantes scopeadas) para que la nueva story
-      // aparezca en tabla y DAG.
-      qc.invalidateQueries({ queryKey: ["tickets"] });
+    onSuccess: (_data, input) => {
+      // Invalida los tickets del proyecto de la story (y la variante sin scope)
+      // para que aparezca en tabla, kanban y DAG del proyecto correcto.
+      qc.invalidateQueries({ queryKey: qk.tickets(input.project_id) });
+      qc.invalidateQueries({ queryKey: qk.tickets(null) });
     },
   });
 }

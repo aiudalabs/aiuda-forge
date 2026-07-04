@@ -867,9 +867,14 @@ export async function listEpics(): Promise<Epic[]> {
 export interface CreateStoryInput {
   id: string;
   title: string;
+  /** Descripción tipo user-story — el campo `body` que ya pintan la card y el drawer. */
+  body?: string;
   deps?: string[];
   epic_id?: string;
   sprint_id?: string;
+  /** Proyecto dueño. Sin él, el backend manda la story al proyecto "default" y
+   *  nunca aparece en el board scopeado. */
+  project_id: string;
 }
 
 export async function createStory(input: CreateStoryInput): Promise<OrchestratorTicket> {
@@ -880,6 +885,7 @@ export async function createStory(input: CreateStoryInput): Promise<Orchestrator
     const story: OrchestratorTicket = {
       id: input.id,
       title: input.title,
+      body: input.body,
       status: "backlog",
       deps: input.deps ?? [],
     };
