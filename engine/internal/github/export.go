@@ -140,3 +140,33 @@ func (c *Client) CloseIssue(ctx context.Context, repoURL string, number int, com
 	}
 	return nil
 }
+
+// RepoSecretExists verifica si un Actions secret existe en el repo.
+func (c *Client) RepoSecretExists(ctx context.Context, repoURL, name string) (bool, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return false, err
+	}
+	out, err := c.runner(ctx, "", "gh", "api", fmt.Sprintf("repos/%s/actions/secrets/%s", slug, name))
+	if err != nil {
+		if strings.Contains(out, "Not Found") || strings.Contains(out, "404") {
+			return false, nil
+		}
+		return false, fmt.Errorf("gh api secret %s: %w: %s", name, err, strings.TrimSpace(out))
+	}
+	return true, nil
+}
+
+// SetRepoSecret crea/actualiza un Actions secret (gh cifra con la public key
+// del repo por nosotros).
+func (c *Client) SetRepoSecret(ctx context.Context, repoURL, name, value string) error {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return err
+	}
+	out, err := c.runner(ctx, "", "gh", "secret", "set", name, "-R", slug, "--body", value)
+	if err != nil {
+		return fmt.Errorf("gh secret set %s: %w: %s", name, err, strings.TrimSpace(out))
+	}
+	return nil
+}

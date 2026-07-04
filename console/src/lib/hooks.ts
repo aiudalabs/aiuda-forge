@@ -590,3 +590,11 @@ export function useScaffoldProject(projectId: string | null) {
     mutationFn: (stack: string) => api.scaffoldProject(projectId as string, stack),
   });
 }
+
+export function useSetClaudeSecret(projectId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (token: string) => api.setClaudeSecret(projectId as string, token),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["executors", projectId] }),
+  });
+}

@@ -19,6 +19,8 @@ import {
   useSaveSettings,
   useProjectSettings,
   useSaveProjectSettings,
+  useExecutors,
+  useSetClaudeSecret,
 } from "@/lib/hooks";
 import { useActiveProject } from "@/lib/activeProject";
 import { useT } from "@/lib/i18n";
@@ -289,6 +291,7 @@ function ProjectSettingsSection() {
             map={form.model_by_lane}
             onChange={(model_by_lane) => setForm((f) => (f ? { ...f, model_by_lane } : f))}
           />
+          <ClaudeSecretSection projectId={projectId} />
         </div>
       )}
     </div>
@@ -702,6 +705,61 @@ function SandboxSection({
           onChange={(e) => onChange({ ...sandbox, image: e.target.value })}
         />
       </div>
+    </div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Canal Claude: siembra del secret CLAUDE_CODE_OAUTH_TOKEN en el repo del
+// proyecto. El token viaja directo a GitHub (cifrado con la public key del
+// repo) — Forja no lo guarda. El probe de canales lo verifica en vivo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ClaudeSecretSection({ projectId }: { projectId: string | null }) {
+  const t = useT();
+  const [token, setTokenValue] = useState("");
+  const [done, setDone] = useState(false);
+  const { data: executors } = useExecutors(projectId);
+  const save = useSetClaudeSecret(projectId);
+  const claude = executors?.find((e) => e.id === "claude_action");
+
+  return (
+    <div className="card">
+      <h3>{t("settings.claude.title")}</h3>
+      <div className="role">{t("settings.claude.role")}</div>
+      {claude && (
+        <div style={{ fontSize: 12, margin: "8px 0" }}>
+          {claude.available ? (
+            <span style={{ color: "var(--ok, #1a7a3a)" }}>🟢 {t("settings.claude.ready")}</span>
+          ) : (
+            <span style={{ color: "var(--muted)" }}>⛔ {claude.reason}</span>
+          )}
+        </div>
+      )}
+      <div className="field" style={{ marginTop: 8 }}>
+        <label>{t("settings.claude.tokenLabel")}</label>
+        <input
+          className="inp mono"
+          type="password"
+          value={token}
+          onChange={(e) => { setTokenValue(e.target.value); setDone(false); }}
+          placeholder={t("settings.claude.tokenPlaceholder")}
+        />
+      </div>
+      <p className="c" style={{ fontSize: 11.5, margin: "6px 0 10px" }}>{t("settings.claude.hint")}</p>
+      <button
+        className="btn primary sm"
+        disabled={!token.trim() || save.isPending || !projectId}
+        onClick={() =>
+          save.mutate(token.trim(), {
+            onSuccess: () => { setTokenValue(""); setDone(true); },
+            onError: (e) => window.alert(t("settings.claude.error") + "\n" + (e instanceof Error ? e.message : String(e))),
+          })
+        }
+      >
+        {save.isPending ? t("settings.claude.saving") : done ? t("settings.claude.saved") : t("settings.claude.save")}
+      </button>
     </div>
   );
 }

@@ -203,6 +203,9 @@ func Build(cfg Config) (*App, error) {
 	// the HTTP ticket routes become active. When empty, the runner is not
 	// registered and the API routes return 503 (needTickets guard).
 	var tix *tickets.Store
+	// La costura del journey: el hook OnPublished (export+scaffold tras el
+	// diseño) se cablea cuando srv exista; el runner se guarda aquí.
+	var pubRunner *tickets.PublishRunner
 	if cfg.TicketsDB != "" {
 		var tixErr error
 		tix, tixErr = tickets.Open(cfg.TicketsDB)
@@ -210,7 +213,8 @@ func Build(cfg Config) (*App, error) {
 			_ = st.Close()
 			return nil, fmt.Errorf("open tickets db: %w", tixErr)
 		}
-		eng.Register("ticket_publish", &tickets.PublishRunner{Store: tix})
+		pubRunner = &tickets.PublishRunner{Store: tix}
+		eng.Register("ticket_publish", pubRunner)
 	}
 
 	// Project store — optional. When ProjectsDB is set, open the store and pass
@@ -291,6 +295,9 @@ func Build(cfg Config) (*App, error) {
 		// o installation token de la App); sin credenciales → auth del host.
 		srv.Projector.ClientFor = srv.GHForProject
 		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh, ClientFor: srv.GHForProject}
+		if pubRunner != nil {
+			pubRunner.OnPublished = srv.OnBacklogPublished
+		}
 		appApprover = &conductor.Approver{GH: gh}
 		srv.GHWebhookSecret = func() string {
 			if v := os.Getenv("VIBEFORGE_GITHUB_WEBHOOK_SECRET"); v != "" {

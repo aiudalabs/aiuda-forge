@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"forge/internal/conductor"
 	"forge/internal/projects"
@@ -171,7 +172,42 @@ func (s *Server) listExecutors(w http.ResponseWriter, r *http.Request) {
 		clWhy = clErr.Error()
 	} else if !okCl {
 		clWhy = "el repo no tiene .github/workflows/claude.yml en main (scaffold pendiente)"
+	} else {
+		// El workflow existe pero sin el secret la sesión muere en el arranque:
+		// el probe debe decir la verdad completa (hallazgo de la simulación).
+		if hasSecret, serr := gh.RepoSecretExists(r.Context(), p.Repo, "CLAUDE_CODE_OAUTH_TOKEN"); serr == nil && !hasSecret {
+			okCl = false
+			clWhy = "falta el secret CLAUDE_CODE_OAUTH_TOKEN en el repo — añádelo en Settings → Canal Claude"
+		}
 	}
 	out = append(out, executorView{ID: projects.ExecutorClaudeAction, Available: okCl, Reason: clWhy, Default: set.Executor == projects.ExecutorClaudeAction})
 	writeJSON(w, http.StatusOK, map[string]any{"executors": out})
+}
+
+// PUT /projects/{id}/secrets/claude {token} — siembra el secret que el canal
+// claude_action necesita en el repo del proyecto (gh lo cifra con la public
+// key del repo). El token NUNCA se persiste en Forja: pasa directo a GitHub.
+func (s *Server) setClaudeSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireRole(r.Context(), id, projects.RoleEditor) {
+		httpErr(w, http.StatusForbidden, "setting secrets requires editor or owner")
+		return
+	}
+	p, err := s.Projects.Get(id)
+	if err != nil || p.Repo == "" {
+		httpErr(w, http.StatusNotFound, "project or repo not found")
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
+		httpErr(w, http.StatusBadRequest, "token is required")
+		return
+	}
+	if err := s.ghFor(r.Context(), id).SetRepoSecret(r.Context(), p.Repo, "CLAUDE_CODE_OAUTH_TOKEN", strings.TrimSpace(req.Token)); err != nil {
+		httpErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"saved": true})
 }

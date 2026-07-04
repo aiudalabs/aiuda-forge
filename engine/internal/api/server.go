@@ -195,6 +195,7 @@ func (s *Server) routes() {
 	// Cola de PRs + aprobación segura de workflows (F3).
 	m.HandleFunc("GET /projects/{id}/prs", s.needProjects(s.listProjectPRs))
 	m.HandleFunc("GET /projects/{id}/executors", s.needProjects(s.listExecutors))
+	m.HandleFunc("PUT /projects/{id}/secrets/claude", s.needProjects(s.setClaudeSecret))
 	// Spend desde GitHub (F4): gasto medido del repo (Copilot/Actions/LFS) del ciclo.
 	m.HandleFunc("GET /projects/{id}/spend/github", s.needProjects(s.githubSpend))
 	m.HandleFunc("POST /projects/{id}/workflows/{runId}/approve", s.needProjects(s.approveWorkflowRun))
@@ -686,7 +687,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 
 // stepUsage is the per-step agent usage read from a stored Result.
 type stepUsage struct {
-	cost              float64
+	cost                       float64
 	tokensIn, tokensOut, turns int
 }
 

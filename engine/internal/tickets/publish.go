@@ -60,6 +60,11 @@ func (s backlogStory) deps() []string {
 // ticket store — closing the loop from design workflow → executable backlog.
 type PublishRunner struct {
 	Store *Store
+	// OnPublished, si está presente, se dispara tras publicar el backlog de un
+	// proyecto con repo — la COSTURA del journey: exportar issues + scaffold
+	// automáticamente en vez de dos botones manuales. Corre en goroutine; los
+	// errores son del hook (el publish ya quedó consumado).
+	OnPublished func(projectID, repoURL string)
 }
 
 // Run implements workflow.Runner. It reads the backlog artifact, creates the
@@ -186,11 +191,15 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 	// both deadlock readiness silently and forever. Surfaced as a failed step (not
 	// an error) so the run reports the malformed backlog instead of silently
 	// publishing a wedged dep graph.
-	if err := r.Store.ValidateDeps(); err != nil {
+	if err := r.Store.ValidateDeps(projectID); err != nil {
 		return workflow.StepResult{
 			Success: false,
 			Detail:  fmt.Sprintf("ticket_publish: invalid dependency graph: %v", err),
 		}, nil
+	}
+
+	if r.OnPublished != nil && projectID != "" && repo != "" {
+		go r.OnPublished(projectID, repo)
 	}
 
 	return workflow.StepResult{
