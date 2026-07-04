@@ -365,7 +365,7 @@ export function TicketsView() {
       {/* Modal: nueva story */}
       <div className={`overlay ${showNewStory ? "on" : ""}`} onClick={() => setShowNewStory(false)} />
       {showNewStory && (
-        <NewStoryModal existingIds={list.map((tk) => tk.id)} onClose={() => setShowNewStory(false)} />
+        <NewStoryModal existingIds={list.map((tk) => tk.id)} projectId={projectId ?? ""} onClose={() => setShowNewStory(false)} />
       )}
 
       {pickerFor && (
@@ -690,9 +690,11 @@ function ExportModal({
 
 function NewStoryModal({
   existingIds,
+  projectId,
   onClose,
 }: {
   existingIds: string[];
+  projectId: string;
   onClose: () => void;
 }) {
   const t = useT();
@@ -742,6 +744,7 @@ function NewStoryModal({
         title: trimmedTitle,
         deps: selectedDeps,
         epic_id: epicId || undefined,
+        project_id: projectId || undefined,
       });
       onClose();
     } catch (err: unknown) {

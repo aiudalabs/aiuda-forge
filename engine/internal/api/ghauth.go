@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -175,17 +176,28 @@ func (s *Server) githubAuthCallback(w http.ResponseWriter, r *http.Request) {
 	//  a) Login iniciado por nosotros (/auth/github/start) → trae NUESTRO state.
 	//  b) Autorización durante la INSTALACIÓN de la App
 	//     (request_oauth_on_install): GitHub redirige con code +
-	//     setup_action=install|update y SIN state nuestro. El code igual se
-	//     canjea server-side con el client_secret, así que es seguro aceptarlo.
+	//     setup_action=install|update y SIN state nuestro.
+	// Solo (a) puede emitir sesión. Sin state no hay prueba anti-CSRF de que ESTE
+	// browser inició el login: canjear el code y emitir sesión aquí sería login-
+	// CSRF (A1) — un atacante manda a la víctima su propio callback code+
+	// setup_action y el browser de la víctima queda con una sesión ligada a la
+	// cuenta GitHub del atacante (y viceversa, enlaza tokens ajenos). El camino
+	// (b) se trata como instalación-OK SIN autenticar: redirigimos a la consola
+	// con un flag y el usuario entra por «Continue with GitHub» (con state).
 	state := r.URL.Query().Get("state")
 	setupAction := r.URL.Query().Get("setup_action")
-	if state != "" {
-		if !consumeOAuthState(state) {
-			httpErr(w, http.StatusForbidden, "sesión de login caducada — vuelve a la consola y pulsa 'Continuar con GitHub' de nuevo")
-			return
-		}
-	} else if setupAction == "" {
+	if state == "" && setupAction == "" {
 		httpErr(w, http.StatusForbidden, "invalid OAuth callback (no state, no setup_action)")
+		return
+	}
+	if state == "" {
+		http.Redirect(w, r,
+			fmt.Sprintf("%s/login?gh_setup=%s", s.consoleURL(), url.QueryEscape(setupAction)),
+			http.StatusFound)
+		return
+	}
+	if !consumeOAuthState(state) {
+		httpErr(w, http.StatusForbidden, "sesión de login caducada — vuelve a la consola y pulsa 'Continuar con GitHub' de nuevo")
 		return
 	}
 	creds, err := ghapp.LoadCredentials(s.ghAppCredsPath())

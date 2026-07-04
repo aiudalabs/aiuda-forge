@@ -870,6 +870,9 @@ export interface CreateStoryInput {
   deps?: string[];
   epic_id?: string;
   sprint_id?: string;
+  // C1: el backend exige project_id en sesiones de usuario (400 si falta) para
+  // que una story nunca caiga en silencio al proyecto "default" de otro tenant.
+  project_id?: string;
 }
 
 export async function createStory(input: CreateStoryInput): Promise<OrchestratorTicket> {

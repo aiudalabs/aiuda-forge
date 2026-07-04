@@ -5,8 +5,31 @@ import (
 	"net/http"
 
 	"forge/internal/httpx"
+	"forge/internal/projects"
 	"forge/internal/tickets"
 )
+
+// filterStories keeps only the stories of allowed projects (C1 tenant scoping).
+func filterStories(stories []tickets.Story, allowed map[string]bool) []tickets.Story {
+	out := make([]tickets.Story, 0, len(stories))
+	for _, st := range stories {
+		if allowed[st.ProjectID] {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// filterSprints keeps only the sprints of allowed projects (C1 tenant scoping).
+func filterSprints(sprints []tickets.Sprint, allowed map[string]bool) []tickets.Sprint {
+	out := make([]tickets.Sprint, 0, len(sprints))
+	for _, sp := range sprints {
+		if allowed[sp.ProjectID] {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
 
 // depError maps tickets dep-graph validation errors (self-dep, cycle, missing
 // dep) to a 400 and reports whether it handled the error (H6/H7).
@@ -47,6 +70,24 @@ func (s *Server) listEpics(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// C1: epics carry no project_id (pre-multi-tenant table), so their tenant is
+	// the projects of the stories referencing them. A user session only sees
+	// epics referenced from its own projects; an unreferenced epic stays
+	// system-only (fail-closed). The service token sees everything.
+	if allowed, scoped := s.memberProjects(r.Context()); scoped {
+		byEpic, err := s.Tickets.EpicProjects()
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		kept := make([]tickets.Epic, 0, len(epics))
+		for _, e := range epics {
+			if anyAllowed(byEpic[e.ID], allowed) {
+				kept = append(kept, e)
+			}
+		}
+		epics = kept
+	}
 	if epics == nil {
 		epics = []tickets.Epic{}
 	}
@@ -59,6 +100,19 @@ func (s *Server) getEpic(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		ticketNotFound(w, err)
 		return
+	}
+	// C1: a user session may only read an epic referenced by a story in one of
+	// its projects (epics have no project of their own). 404 — no existence leak.
+	if allowed, scoped := s.memberProjects(r.Context()); scoped {
+		byEpic, err := s.Tickets.EpicProjects()
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !anyAllowed(byEpic[id], allowed) {
+			httpErr(w, http.StatusNotFound, "not found")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, e)
 }
@@ -74,6 +128,18 @@ func (s *Server) createSprint(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "id is required")
 		return
 	}
+	// C1: a user session must name its project (no silent fall-through to the
+	// "default" project) and hold editor on it. The service token (system /
+	// publish path) keeps today's contract: empty project → default.
+	if httpx.UserIDFromContext(r.Context()) != "" {
+		if sp.ProjectID == "" {
+			httpErr(w, http.StatusBadRequest, "project_id is required")
+			return
+		}
+		if s.ticketDenied(w, r.Context(), sp.ProjectID, projects.RoleEditor) {
+			return
+		}
+	}
 	if err := s.Tickets.CreateSprint(sp); err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -82,10 +148,20 @@ func (s *Server) createSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
-	sprints, err := s.Tickets.ListSprints()
+	// ?project=<id> scopes the list; a user session without it gets the sprints
+	// of ALL its projects — never other tenants' (C1, mirrors listRuns). The
+	// service token is unrestricted.
+	project := r.URL.Query().Get("project")
+	if project != "" && s.crossTenantDenied(w, r.Context(), project, map[string]any{"sprints": []tickets.Sprint{}}) {
+		return
+	}
+	sprints, err := s.Tickets.ListSprintsByProject(project)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if allowed, scoped := s.memberProjects(r.Context()); scoped && project == "" {
+		sprints = filterSprints(sprints, allowed)
 	}
 	if sprints == nil {
 		sprints = []tickets.Sprint{}
@@ -99,10 +175,18 @@ func (s *Server) readySprints(w http.ResponseWriter, r *http.Request) {
 	// ?project=<id> scopes ready sprints to one project (audit A1/A2) so the
 	// scheduler evaluates each project's sprints under its own settings.
 	project := r.URL.Query().Get("project")
+	// C1: a user session asking for a project it is not a member of gets an
+	// empty list; without ?project= it gets its own projects' ready sprints only.
+	if project != "" && s.crossTenantDenied(w, r.Context(), project, map[string]any{"sprints": []tickets.Sprint{}}) {
+		return
+	}
 	sprints, err := s.Tickets.ReadySprintsByProject(project)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if allowed, scoped := s.memberProjects(r.Context()); scoped && project == "" {
+		sprints = filterSprints(sprints, allowed)
 	}
 	if sprints == nil {
 		sprints = []tickets.Sprint{}
@@ -120,6 +204,11 @@ func (s *Server) sprintStories(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// C1: a user session only sees the sprint's stories in projects it belongs
+	// to (the ?project_id= param is caller-supplied, never trusted for authz).
+	if allowed, scoped := s.memberProjects(r.Context()); scoped {
+		stories = filterStories(stories, allowed)
+	}
 	if stories == nil {
 		stories = []tickets.Story{}
 	}
@@ -133,6 +222,11 @@ func (s *Server) sprintStories(w http.ResponseWriter, r *http.Request) {
 func (s *Server) claimSprint(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	projectID := r.URL.Query().Get("project_id")
+	// C1: a user session must be editor on every project containing this sprint
+	// id (the claim UPDATE is keyed by sprint id). 404 — no existence leak.
+	if s.sprintDenied(w, r.Context(), id, projects.RoleEditor) {
+		return
+	}
 	claimed, ok, err := s.Tickets.ClaimSprint(id, projectID)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
@@ -150,6 +244,10 @@ func (s *Server) claimSprint(w http.ResponseWriter, r *http.Request) {
 // supplied, records it on all the sprint's stories so the UI can link them.
 func (s *Server) updateSprintStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// C1: mutating a sprint requires editor on its project(s); 404 for outsiders.
+	if s.sprintDenied(w, r.Context(), id, projects.RoleEditor) {
+		return
+	}
 	var req updateStatusReq
 	if !readJSON(w, r, &req) {
 		return
@@ -202,6 +300,19 @@ func (s *Server) createStory(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "id is required")
 		return
 	}
+	// C1: a user session must name its project — no silent fall-through to the
+	// "default" project (that is a cross-tenant write sink) — and hold editor on
+	// it (404 for a project it does not own: no existence leak). The service
+	// token (system/orchestrator/publish) keeps today's contract: empty → default.
+	if httpx.UserIDFromContext(r.Context()) != "" {
+		if st.ProjectID == "" {
+			httpErr(w, http.StatusBadRequest, "project_id is required")
+			return
+		}
+		if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleEditor) {
+			return
+		}
+	}
 	// Validate the repo URL at the API boundary (audit C5): a story's repo flows
 	// into `gh pr merge` under auto-merge, so an unvalidated repo is RCE-adjacent.
 	// Empty repo is allowed (local/echo flows); a non-empty one must pass.
@@ -227,10 +338,20 @@ func (s *Server) createStory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listStoriesHandler(w http.ResponseWriter, r *http.Request) {
-	stories, err := s.Tickets.ListStories()
+	// ?project=<id> scopes the list; a user session without it gets the stories
+	// of ALL its projects — never other tenants' (C1, mirrors listRuns). The
+	// service token is unrestricted.
+	project := r.URL.Query().Get("project")
+	if project != "" && s.crossTenantDenied(w, r.Context(), project, map[string]any{"stories": []tickets.Story{}}) {
+		return
+	}
+	stories, err := s.Tickets.ListStoriesByProject(project)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if allowed, scoped := s.memberProjects(r.Context()); scoped && project == "" {
+		stories = filterStories(stories, allowed)
 	}
 	if stories == nil {
 		stories = []tickets.Story{}
@@ -243,6 +364,10 @@ func (s *Server) getStory(w http.ResponseWriter, r *http.Request) {
 	st, err := s.Tickets.GetStory(id)
 	if err != nil {
 		ticketNotFound(w, err)
+		return
+	}
+	// C1: reading a story requires membership of its project; 404 for outsiders.
+	if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleViewer) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
@@ -261,6 +386,15 @@ type updateStatusReq struct {
 
 func (s *Server) updateStoryStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// C1: mutating a story requires editor on its project; 404 for outsiders.
+	existing, err := s.Tickets.GetStory(id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	if s.ticketDenied(w, r.Context(), existing.ProjectID, projects.RoleEditor) {
+		return
+	}
 	var req updateStatusReq
 	if !readJSON(w, r, &req) {
 		return
@@ -306,6 +440,10 @@ func (s *Server) addStoryDeps(w http.ResponseWriter, r *http.Request) {
 		ticketNotFound(w, err)
 		return
 	}
+	// C1: adding deps mutates the story — editor on its project or 404.
+	if s.ticketDenied(w, r.Context(), existing.ProjectID, projects.RoleEditor) {
+		return
+	}
 	var req addDepsReq
 	if !readJSON(w, r, &req) {
 		return
@@ -330,6 +468,16 @@ func (s *Server) addStoryDeps(w http.ResponseWriter, r *http.Request) {
 // the claim, or 409 {claimed:false} if it was already taken.
 func (s *Server) claimStory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// C1: claiming mutates the story (backlog→running) — editor on its project
+	// or 404 (a missing story also 404s, same as before, via GetStory).
+	existing, err := s.Tickets.GetStory(id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	if s.ticketDenied(w, r.Context(), existing.ProjectID, projects.RoleEditor) {
+		return
+	}
 	claimed, err := s.Tickets.ClaimStory(id)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
