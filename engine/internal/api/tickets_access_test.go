@@ -196,3 +196,71 @@ func TestCreateStoryUserSessionRequiresOwnProject(t *testing.T) {
 		t.Fatalf("POST /stories into pa = %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// DELETE /stories/{id}: cross-tenant is 404 (no leak); a story with dependents is
+// 409 + the blocking ids; the happy path removes the story of the CORRECT project
+// (with duplicate ids) and reports its surviving external_ref.
+func TestDeleteStoryEndpoint(t *testing.T) {
+	s, aCtx, _ := ticketsAccessServer(t)
+
+	del := func(target, id string, ctx context.Context) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("DELETE", target, nil)
+		req.SetPathValue("id", id)
+		s.deleteStory(rec, req.WithContext(ctx))
+		return rec
+	}
+
+	// Cross-tenant: A cannot delete B's story — 404, and it survives.
+	if rec := del("/stories/sb1", "sb1", aCtx); rec.Code != 404 {
+		t.Fatalf("A DELETE /stories/sb1 = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := s.Tickets.GetStory("sb1"); err != nil {
+		t.Fatalf("sb1 wrongly deleted: %v", err)
+	}
+
+	// A's backlog: sa-dep is a dependency of sa-main (in pa); plus a same-id "sb1"
+	// orphan in pa carrying an external_ref, to prove scoping + the ref echo.
+	if err := s.Tickets.CreateStory(tickets.Story{ID: "sa-dep", ProjectID: "pa"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tickets.CreateStory(tickets.Story{ID: "sa-main", ProjectID: "pa", Deps: []string{"sa-dep"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tickets.CreateStory(tickets.Story{ID: "sb1", ProjectID: "pa"}); err != nil {
+		t.Fatal(err) // same id as B's story, different project
+	}
+	if err := s.Tickets.SetStoryExternalRef("pa", "sb1", "github:o/pa#5"); err != nil {
+		t.Fatal(err)
+	}
+
+	// sa-dep has a dependent (sa-main) → 409 with the blocking id.
+	rec := del("/stories/sa-dep", "sa-dep", aCtx)
+	if rec.Code != 409 {
+		t.Fatalf("DELETE sa-dep with dependent = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	var conflict map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &conflict)
+	deps, _ := conflict["dependents"].([]any)
+	if len(deps) != 1 || deps[0] != "sa-main" {
+		t.Fatalf("409 dependents = %v, want [sa-main]", conflict["dependents"])
+	}
+
+	// Happy path: delete A's own sb1 (scoped to pa) — B's sb1 must survive, and the
+	// response echoes the external_ref so the UI can warn the GitHub issue remains.
+	rec2 := del("/stories/sb1?project=pa", "sb1", aCtx)
+	if rec2.Code != 200 {
+		t.Fatalf("DELETE /stories/sb1?project=pa = %d, want 200; body=%s", rec2.Code, rec2.Body.String())
+	}
+	var ok map[string]any
+	_ = json.Unmarshal(rec2.Body.Bytes(), &ok)
+	if ok["deleted"] != true || ok["external_ref"] != "github:o/pa#5" {
+		t.Fatalf("delete response = %v, want deleted:true + external_ref", ok)
+	}
+	if _, err := s.Tickets.GetStoryInProject("pa", "sb1"); err == nil {
+		t.Fatal("pa/sb1 was not deleted")
+	}
+	if _, err := s.Tickets.GetStoryInProject("pb", "sb1"); err != nil {
+		t.Fatalf("pb/sb1 (B's) was wrongly deleted: %v", err)
+	}
+}

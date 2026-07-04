@@ -420,6 +420,7 @@ export function TicketsView() {
           aquí se baja a la ejecución si la story tiene run. */}
       <TicketDetail
         ticket={openTicket}
+        projectId={projectId}
         candidate={openTicket ? candidateOf.get(openTicket.id) : undefined}
         onDispatch={handleDispatch}
         onClose={() => setOpenTicketId(null)}

@@ -118,7 +118,7 @@ func GitHubBacklog(ctx context.Context, store *tickets.Store, gh GitHubWriter, p
 		// Record the mirror BEFORE moving on: if this write fails we stop, because
 		// continuing without the ref would duplicate the issue on retry.
 		extRef := fmt.Sprintf("github:%s#%d", slug, created.Number)
-		if err := store.SetStoryExternalRef(st.ID, extRef); err != nil {
+		if err := store.SetStoryExternalRef(projectID, st.ID, extRef); err != nil {
 			return res, fmt.Errorf("issue %s created as #%d but recording external_ref failed: %w", st.ID, created.Number, err)
 		}
 		byStory[st.ID] = &ref{number: created.Number, id: created.ID}

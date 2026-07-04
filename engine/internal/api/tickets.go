@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"forge/internal/httpx"
 	"forge/internal/projects"
@@ -329,7 +331,10 @@ func (s *Server) createStory(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	got, err := s.Tickets.GetStory(st.ID)
+	// Fetch back the row we just inserted SCOPED to its project (S11-01 incident):
+	// a bare GetStory(id) can return a same-id orphan from another project (e.g. the
+	// legacy "default"), whose empty repo then silently skips the GitHub export hook.
+	got, err := s.Tickets.GetStoryInProject(st.ProjectID, st.ID)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -362,9 +367,21 @@ func (s *Server) listStoriesHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"stories": stories})
 }
 
+// storyForRoute resolves a per-id story route. When ?project= is present the lookup
+// is scoped to that project (disambiguating same-id stories across tenants — the
+// S11-01 incident); absent, it falls back to the legacy unscoped lookup used by the
+// orchestrator/service token. The caller then authorizes against the resolved row's
+// project and scopes any mutation to it.
+func (s *Server) storyForRoute(r *http.Request, id string) (tickets.Story, error) {
+	if project := r.URL.Query().Get("project"); project != "" {
+		return s.Tickets.GetStoryInProject(project, id)
+	}
+	return s.Tickets.GetStory(id)
+}
+
 func (s *Server) getStory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	st, err := s.Tickets.GetStory(id)
+	st, err := s.storyForRoute(r, id)
 	if err != nil {
 		ticketNotFound(w, err)
 		return
@@ -390,7 +407,7 @@ type updateStatusReq struct {
 func (s *Server) updateStoryStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// C1: mutating a story requires editor on its project; 404 for outsiders.
-	existing, err := s.Tickets.GetStory(id)
+	existing, err := s.storyForRoute(r, id)
 	if err != nil {
 		ticketNotFound(w, err)
 		return
@@ -406,24 +423,27 @@ func (s *Server) updateStoryStatus(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "status is required")
 		return
 	}
+	// Scope every mutation to the project we just authorized: a bare `WHERE id=?`
+	// UPDATE would hit a same-id story in EVERY project sharing that id.
+	pid := existing.ProjectID
 	// in_review records the PR URL alongside the status so the merge-reconcile
 	// loop can find the PR; other statuses use the plain status update.
 	if req.Status == tickets.StatusInReview {
-		if err := s.Tickets.MarkInReview(id, req.PRURL); err != nil {
+		if err := s.Tickets.MarkInReviewInProject(pid, id, req.PRURL); err != nil {
 			ticketNotFound(w, err)
 			return
 		}
-	} else if err := s.Tickets.UpdateStoryStatus(id, req.Status); err != nil {
+	} else if err := s.Tickets.UpdateStoryStatusInProject(pid, id, req.Status); err != nil {
 		ticketNotFound(w, err)
 		return
 	}
 	if req.RunID != "" {
-		if err := s.Tickets.SetStoryRun(id, req.RunID); err != nil {
+		if err := s.Tickets.SetStoryRunInProject(pid, id, req.RunID); err != nil {
 			httpErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
-	st, err := s.Tickets.GetStory(id)
+	st, err := s.Tickets.GetStoryInProject(pid, id)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -438,7 +458,7 @@ type addDepsReq struct {
 func (s *Server) addStoryDeps(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// Get story first to know its project scope
-	existing, err := s.Tickets.GetStory(id)
+	existing, err := s.storyForRoute(r, id)
 	if err != nil {
 		ticketNotFound(w, err)
 		return
@@ -458,7 +478,7 @@ func (s *Server) addStoryDeps(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	st, err := s.Tickets.GetStory(id)
+	st, err := s.Tickets.GetStoryInProject(existing.ProjectID, id)
 	if err != nil {
 		ticketNotFound(w, err)
 		return
@@ -473,7 +493,7 @@ func (s *Server) claimStory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// C1: claiming mutates the story (backlog→running) — editor on its project
 	// or 404 (a missing story also 404s, same as before, via GetStory).
-	existing, err := s.Tickets.GetStory(id)
+	existing, err := s.storyForRoute(r, id)
 	if err != nil {
 		ticketNotFound(w, err)
 		return
@@ -481,7 +501,7 @@ func (s *Server) claimStory(w http.ResponseWriter, r *http.Request) {
 	if s.ticketDenied(w, r.Context(), existing.ProjectID, projects.RoleEditor) {
 		return
 	}
-	claimed, err := s.Tickets.ClaimStory(id)
+	claimed, err := s.Tickets.ClaimStoryInProject(existing.ProjectID, id)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -491,6 +511,79 @@ func (s *Server) claimStory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"claimed": true})
+}
+
+// deleteStory handles DELETE /stories/{id}. It removes a story (and its dep edges
+// + file links) LOCALLY only — a story mirrored as a GitHub issue keeps the issue,
+// which the response reports back so the UI can warn. Blocked with 409 (+ the
+// blocking ids) when other stories still depend on it. Editor+ on the story's
+// project; 404 for a story in a project the caller does not own (no existence leak).
+func (s *Server) deleteStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := s.storyForRoute(r, id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleEditor) {
+		return
+	}
+	dependents, err := s.Tickets.StoryDependents(st.ProjectID, id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(dependents) > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":      "other stories depend on this one; remove those dependencies first",
+			"dependents": dependents,
+		})
+		return
+	}
+	if err := s.Tickets.DeleteStory(st.ProjectID, id); err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	// external_ref (if any) travels back so the UI can say the GitHub issue survives.
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "external_ref": st.ExternalRef})
+}
+
+// exportStory handles POST /stories/{id}/export — the per-story "Enviar a GitHub":
+// synchronously runs the same idempotent export as the OnStoryCreated hook and
+// returns the REAL outcome (200 with the new external_ref, or 4xx/5xx with the
+// reason). Once exported, the existing dispatch (▶) can execute it. Editor+ only.
+func (s *Server) exportStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := s.storyForRoute(r, id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleEditor) {
+		return
+	}
+	repo := s.exportRepoFor(st)
+	if repo == "" {
+		httpErr(w, http.StatusBadRequest, "the project has no GitHub repo to export to")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	res, err := s.exportStoryBacklog(ctx, s.ghFor(ctx, st.ProjectID), st, repo)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":   "github export failed: " + err.Error(),
+			"partial": res,
+		})
+		return
+	}
+	// Re-read to surface the external_ref the export just recorded.
+	updated, err := s.Tickets.GetStoryInProject(st.ProjectID, id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"external_ref": updated.ExternalRef, "result": res})
 }
 
 // ---- GET /tickets (compat) --------------------------------------------------

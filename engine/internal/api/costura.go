@@ -73,14 +73,17 @@ func (s *Server) OnStoryCreated(st tickets.Story) {
 
 // exportStoryBacklog es el cuerpo testeable de OnStoryCreated: reusa
 // export.GitHubBacklog, idempotente por external_ref — las stories ya
-// exportadas se saltan, así que solo viajan la nueva y sus deps.
-func (s *Server) exportStoryBacklog(ctx context.Context, gh export.GitHubWriter, st tickets.Story, repo string) {
+// exportadas se saltan, así que solo viajan la nueva y sus deps. Devuelve el
+// resultado real para que el endpoint síncrono POST /stories/{id}/export lo
+// exponga; OnStoryCreated (best-effort) descarta el retorno.
+func (s *Server) exportStoryBacklog(ctx context.Context, gh export.GitHubWriter, st tickets.Story, repo string) (export.Result, error) {
 	res, err := export.GitHubBacklog(ctx, s.Tickets, gh, st.ProjectID, repo)
 	if err != nil {
 		log.Printf("costura(%s): export de la story %s a GitHub falló (queda el botón manual): %v", st.ProjectID, st.ID, err)
-		return
+		return res, err
 	}
 	log.Printf("costura(%s): story %s exportada — %d issues nuevos, %d deps", st.ProjectID, st.ID, res.IssuesCreated, res.DepsCreated)
+	return res, nil
 }
 
 // exportRepoFor resuelve el repo GitHub destino de una story creada a mano: el

@@ -878,6 +878,45 @@ export interface CreateStoryInput {
   project_id: string;
 }
 
+export interface DeleteStoryResult {
+  deleted: boolean;
+  /** Espejo GitHub que SOBREVIVE al borrado local (el issue sigue existiendo). */
+  external_ref?: string;
+}
+
+/**
+ * DELETE /stories/{id} — borra la story LOCALMENTE (no toca GitHub). El backend
+ * responde 409 si otras stories dependen de ella (ApiError con la lista de ids en
+ * el cuerpo). `project` scopea el borrado a la story del proyecto correcto cuando
+ * hay ids duplicados entre tenants.
+ */
+export async function deleteStory(id: string, project?: string): Promise<DeleteStoryResult> {
+  if (await isMock()) {
+    const i = mockOrchestratorTickets.findIndex((tk) => tk.id === id);
+    if (i >= 0) mockOrchestratorTickets.splice(i, 1);
+    return { deleted: true };
+  }
+  const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+  return http<DeleteStoryResult>(`/stories/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
+}
+
+export interface ExportStoryResult {
+  /** Ref del issue creado (github:owner/repo#N) — se muestra como link. */
+  external_ref?: string;
+  result?: ExportResult;
+}
+
+/**
+ * POST /stories/{id}/export — "Enviar a GitHub" por story: crea el issue (+ deps
+ * nativas) SÍNCRONO y devuelve el resultado real. 4xx/5xx (ApiError) si el proyecto
+ * no tiene repo o GitHub falla. `project` scopea a la story del proyecto correcto.
+ */
+export async function exportStory(id: string, project?: string): Promise<ExportStoryResult> {
+  if (await isMock()) return { external_ref: "github:mock/repo#1" };
+  const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+  return http<ExportStoryResult>(`/stories/${encodeURIComponent(id)}/export${qs}`, { method: "POST" });
+}
+
 export async function createStory(input: CreateStoryInput): Promise<OrchestratorTicket> {
   if (await isMock()) {
     // Verificar id duplicado en el mock

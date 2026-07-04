@@ -99,6 +99,9 @@ function useRunAction<Args extends unknown[]>(fn: (...args: Args) => Promise<unk
       qc.invalidateQueries({ queryKey: ["runs"] });
       qc.invalidateQueries({ queryKey: ["stats"] });
       qc.invalidateQueries({ queryKey: ["notifications"] });
+      // Studio lista los design/iterate runs por separado (["designRuns"]); un
+      // delete/cancel/retry de run debe refrescar esa lista también.
+      qc.invalidateQueries({ queryKey: ["designRuns"] });
     },
     onError: (err: unknown) => {
       // Surfaceamos el error en consola; el objeto de error queda en mutation.error
@@ -303,6 +306,35 @@ export function useRequeueStory() {
     mutationFn: (storyId: string) => api.requeueStory(storyId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tickets"] });
+      qc.invalidateQueries({ queryKey: ["dispatchCandidates"] });
+    },
+  });
+}
+
+// Borra UNA story (local, no toca GitHub). Invalida los tickets del proyecto para
+// que desaparezca de tabla/kanban/DAG. El 409 (dependientes) y el 404 (cross-tenant)
+// llegan como ApiError para que el call site los muestre.
+export function useDeleteStory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, project }: { id: string; project?: string }) => api.deleteStory(id, project),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: qk.tickets(project ?? null) });
+      qc.invalidateQueries({ queryKey: qk.tickets(null) });
+      qc.invalidateQueries({ queryKey: ["dispatchCandidates"] });
+    },
+  });
+}
+
+// "Enviar a GitHub" por story: export síncrono. Invalida los tickets al terminar
+// (el backend anota external_ref). El error real (sin repo / GitHub) viaja como ApiError.
+export function useExportStory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, project }: { id: string; project?: string }) => api.exportStory(id, project),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: qk.tickets(project ?? null) });
+      qc.invalidateQueries({ queryKey: qk.tickets(null) });
       qc.invalidateQueries({ queryKey: ["dispatchCandidates"] });
     },
   });

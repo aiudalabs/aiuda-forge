@@ -237,9 +237,12 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /stories", s.needTickets(s.createStory))
 	m.HandleFunc("GET /stories", s.needTickets(s.listStoriesHandler))
 	m.HandleFunc("GET /stories/{id}", s.needTickets(s.getStory))
+	m.HandleFunc("DELETE /stories/{id}", s.needTickets(s.deleteStory))
 	m.HandleFunc("PUT /stories/{id}/status", s.needTickets(s.updateStoryStatus))
 	m.HandleFunc("POST /stories/{id}/claim", s.needTickets(s.claimStory))
 	m.HandleFunc("POST /stories/{id}/deps", s.needTickets(s.addStoryDeps))
+	// Enviar a GitHub por-story (F2): export idempotente síncrono con resultado real.
+	m.HandleFunc("POST /stories/{id}/export", s.needTickets(s.exportStory))
 	// GET /tickets — compat endpoint matching the orchestrator's shape so the
 	// existing UI can read the native store unchanged.
 	m.HandleFunc("GET /tickets", s.needTickets(s.ticketsCompat))

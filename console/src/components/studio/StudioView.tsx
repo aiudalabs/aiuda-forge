@@ -15,6 +15,7 @@ import {
   useCreateDesignRun,
   useCreateIterationRun,
   useCreateProject,
+  useDeleteRun,
   useDesignRun,
   useDesignRunSummary,
   useDesignRuns,
@@ -181,7 +182,15 @@ export function StudioView() {
           {/* Panel derecho: detalle del proyecto seleccionado */}
           <div className="studio-main">
             {effectiveSel ? (
-              <ProjectDetail runId={effectiveSel} onNewRun={(id) => setSelectedRunId(id)} />
+              <ProjectDetail
+                runId={effectiveSel}
+                onNewRun={(id) => setSelectedRunId(id)}
+                onDeleted={() => {
+                  // Tras borrar, salta al siguiente run de la lista (o a ninguno).
+                  const next = list.find((r) => r.id !== effectiveSel);
+                  setSelectedRunId(next ? next.id : null);
+                }}
+              />
             ) : (
               <div className="placeholder">{t("studio.view.selectProject")}</div>
             )}
@@ -297,13 +306,27 @@ function ProjectCard({
 // Detalle del proyecto: stepper + visor de artefacto + acciones
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProjectDetail({ runId, onNewRun }: { runId: string; onNewRun?: (id: string) => void }) {
+function ProjectDetail({
+  runId,
+  onNewRun,
+  onDeleted,
+}: {
+  runId: string;
+  onNewRun?: (id: string) => void;
+  onDeleted?: () => void;
+}) {
   const t = useT();
   const { data: run, isLoading } = useDesignRun(runId);
   const [selectedPhaseIdx, setSelectedPhaseIdx] = useState<number | null>(null);
   const createDesignRun = useCreateDesignRun();
+  const deleteRun = useDeleteRun();
   const [relaunching, setRelaunching] = useState(false);
   const [showIteration, setShowIteration] = useState(false);
+
+  function doDelete() {
+    if (!window.confirm(t("studio.view.deleteRunConfirm"))) return;
+    deleteRun.mutate([runId], { onSuccess: () => onDeleted?.() });
+  }
 
   // Al cambiar de run, o cuando los datos llegan, reseteamos al paso activo.
   const prevRunId = useRef<string | null>(null);
@@ -358,6 +381,20 @@ function ProjectDetail({ runId, onNewRun }: { runId: string; onNewRun?: (id: str
 
   return (
     <div className="studio-detail">
+      {/* Barra de acciones del run: eliminar este run de diseño/iteración (no borra
+          el proyecto ni el repo). Visible para cualquier run. */}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+        <button
+          className="btn ghost sm"
+          style={{ color: "var(--danger)" }}
+          onClick={doDelete}
+          disabled={deleteRun.isPending}
+          title={t("studio.view.deleteRunTitle")}
+        >
+          {deleteRun.isPending ? t("studio.view.deletingRun") : t("studio.view.deleteRun")}
+        </button>
+      </div>
+
       {/* Stepper horizontal de fases */}
       <div className="phase-stepper">
         {phases.map((p, i) => {

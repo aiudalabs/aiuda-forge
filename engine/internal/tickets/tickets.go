@@ -229,11 +229,14 @@ type Store struct {
 }
 
 // fireStoryDone notifies the OnStoryDone hook for a story that just reached done.
-func (s *Store) fireStoryDone(id string) {
+// projectID scopes the billing fetch to the exact story that transitioned; empty
+// falls back to the legacy unscoped lookup (which can pick a same-id story from
+// the wrong project when ids collide across tenants).
+func (s *Store) fireStoryDone(projectID, id string) {
 	if s.OnStoryDone == nil {
 		return
 	}
-	if st, err := s.GetStory(id); err == nil {
+	if st, err := s.getStory(projectID, id); err == nil {
 		s.OnStoryDone(st.ProjectID, st.ID, st.RunID)
 	}
 }
@@ -621,10 +624,17 @@ func (s *Store) StoryIDByExternalRef(externalRef string) (string, bool, error) {
 // "github:owner/repo#N" after the backlog export), making re-exports idempotent —
 // the exporter skips stories that already carry a ref. The write is guarded so a
 // story never silently flips from one external issue to another.
-func (s *Store) SetStoryExternalRef(id, externalRef string) error {
-	res, err := s.db.Exec(
-		`UPDATE stories SET external_ref=? WHERE id=? AND (external_ref IS NULL OR external_ref='' OR external_ref=?)`,
-		externalRef, id, externalRef)
+func (s *Store) SetStoryExternalRef(projectID, id, externalRef string) error {
+	q := `UPDATE stories SET external_ref=? WHERE id=? AND (external_ref IS NULL OR external_ref='' OR external_ref=?)`
+	args := []any{externalRef, id, externalRef}
+	if projectID != "" {
+		// Scope to the project: external_ref is UNIQUE globally, so a bare `WHERE id=?`
+		// would try to stamp BOTH a same-id story in another project AND this one with
+		// the same ref, tripping the unique constraint (the S11-01 export failure).
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
+	res, err := s.db.Exec(q, args...)
 	if err != nil {
 		return err
 	}
@@ -636,6 +646,61 @@ func (s *Store) SetStoryExternalRef(id, externalRef string) error {
 		return fmt.Errorf("story %s: not found or already linked to a different external ref", id)
 	}
 	return nil
+}
+
+// StoryDependents returns the ids of stories in projectID that declare id as a
+// dependency (a story_deps row with dep_id = id). A non-empty result means deleting
+// id would orphan those dependents' edges — the API blocks the delete (409) and
+// lists them so the user removes the edges first.
+func (s *Store) StoryDependents(projectID, id string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT story_id FROM story_deps WHERE dep_id=? AND project_id=? ORDER BY story_id ASC`, id, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		out = append(out, sid)
+	}
+	return out, rows.Err()
+}
+
+// DeleteStory removes a story and its side rows within projectID: its dep edges in
+// BOTH directions (as story_id and as dep_id) and its file links. It does NOT touch
+// GitHub — a story mirrored as an issue (external_ref) is deleted locally only; the
+// caller surfaces the surviving issue to the user. Callers MUST check StoryDependents
+// first (the API returns 409 when non-empty). Scoped by the composite key so a
+// same-id story in another tenant is never deleted. Returns ErrNotFound if absent.
+func (s *Store) DeleteStory(projectID, id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`DELETE FROM stories WHERE id=? AND project_id=?`, id, projectID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(`DELETE FROM story_deps WHERE (story_id=? OR dep_id=?) AND project_id=?`, id, id, projectID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM story_files WHERE story_id=? AND project_id=?`, id, projectID); err != nil {
+		return err
+	}
+	// story_sessions is keyed by story_id alone (no project column); drop the link so
+	// the deleted story leaves no dangling agent-session pointer.
+	if _, err := tx.Exec(`DELETE FROM story_sessions WHERE story_id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetStorySession records the GitHub agent session executing a dispatched story
@@ -711,16 +776,41 @@ func (s *Store) SyncExternalStatus(id string, status Status, prURL string) (chan
 		_, _ = s.db.Exec(`DELETE FROM story_sessions WHERE story_id=?`, id)
 	}
 	if statusChanged && status == StatusDone {
-		s.fireStoryDone(id)
+		s.fireStoryDone("", id)
 	}
 	return true, nil
 }
 
-// GetStory loads a Story by id, including its deps.
+// GetStory loads a Story by id, including its deps. LEGACY (unscoped): with a
+// composite (id, project_id) key, a bare id can match a same-id story in the WRONG
+// project (the S11-01 cross-tenant incident). Kept for the orchestrator/services
+// that call by id without a project; API handlers that know the project MUST use
+// GetStoryInProject so they resolve — and authorize/mutate — the right row.
 func (s *Store) GetStory(id string) (Story, error) {
+	return s.getStory("", id)
+}
+
+// GetStoryInProject loads a Story by its composite key (project_id, id). This is
+// the correct lookup whenever the caller knows the project: it can never resolve a
+// same-id story from another tenant. An empty projectID falls back to the legacy
+// unscoped lookup (GetStory).
+func (s *Store) GetStoryInProject(projectID, id string) (Story, error) {
+	return s.getStory(projectID, id)
+}
+
+// getStory is the shared loader: scoped to projectID when non-empty, unscoped
+// otherwise. It loads the story plus its deps.
+func (s *Store) getStory(projectID, id string) (Story, error) {
+	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
+		FROM stories WHERE id=?`
+	args := []any{id}
+	if projectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
+	q += ` LIMIT 1`
 	var st Story
-	err := s.db.QueryRow(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
-		FROM stories WHERE id=? LIMIT 1`, id).
+	err := s.db.QueryRow(q, args...).
 		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Story{}, ErrNotFound
@@ -788,6 +878,14 @@ func (s *Store) ListStoriesByProject(projectID string) ([]Story, error) {
 // with the status flip. Distinguishing "missing" from "illegal" requires a probe
 // read, done only when the guarded UPDATE affects 0 rows.
 func (s *Store) transition(id string, target Status, extraSet string, extraArgs ...any) error {
+	return s.transitionScoped("", id, target, extraSet, extraArgs...)
+}
+
+// transitionScoped is transition scoped to projectID (empty = legacy unscoped). The
+// scope is threaded onto the guarded UPDATE's WHERE so a same-id story in another
+// project is never touched — critical because a bare `WHERE id=?` UPDATE would hit
+// EVERY project's row sharing that id.
+func (s *Store) transitionScoped(projectID, id string, target Status, extraSet string, extraArgs ...any) error {
 	sources, ok := legalSources[target]
 	if !ok {
 		return fmt.Errorf("%w: no legal sources for target %q", ErrIllegalTransition, target)
@@ -799,7 +897,12 @@ func (s *Store) transition(id string, target Status, extraSet string, extraArgs 
 		args = append(args, extraArgs...)
 	}
 	args = append(args, id)
-	q := fmt.Sprintf(`UPDATE stories SET %s WHERE id=? AND %s`, set, inClause(sources))
+	where := "id=?"
+	if projectID != "" {
+		where += " AND project_id=?"
+		args = append(args, projectID)
+	}
+	q := fmt.Sprintf(`UPDATE stories SET %s WHERE %s AND %s`, set, where, inClause(sources))
 	res, err := s.db.Exec(q, args...)
 	if err != nil {
 		return err
@@ -811,14 +914,13 @@ func (s *Store) transition(id string, target Status, extraSet string, extraArgs 
 		// endpoint's UpdateStoryStatus(done) (the real factory path). Sprint-mode's
 		// bulk update bypasses transition() and fires the hook itself.
 		if target == StatusDone {
-			s.fireStoryDone(id)
+			s.fireStoryDone(projectID, id)
 		}
 		return nil
 	}
 	// 0 rows: either the id is missing or its current state is an illegal source.
-	var cur Status
-	err = s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, id).Scan(&cur)
-	if errors.Is(err, sql.ErrNoRows) {
+	cur, err := s.statusOfScoped(projectID, id)
+	if errors.Is(err, ErrNotFound) {
 		return ErrNotFound
 	}
 	if err != nil {
@@ -841,7 +943,14 @@ func (s *Store) transition(id string, target Status, extraSet string, extraArgs 
 //     a claimed-but-unfired story (running, empty run_id) is reset; everything else
 //     is a no-op illegal transition.
 func (s *Store) UpdateStoryStatus(id string, status Status) error {
-	cur, err := s.statusOf(id)
+	return s.UpdateStoryStatusInProject("", id, status)
+}
+
+// UpdateStoryStatusInProject is UpdateStoryStatus scoped to projectID (empty =
+// legacy unscoped). API handlers pass the authorized story's project so the flip
+// only ever touches that tenant's row.
+func (s *Store) UpdateStoryStatusInProject(projectID, id string, status Status) error {
+	cur, err := s.statusOfScoped(projectID, id)
 	if err != nil {
 		return err
 	}
@@ -849,15 +958,22 @@ func (s *Store) UpdateStoryStatus(id string, status Status) error {
 		return nil // idempotent: already in the requested state
 	}
 	if status == StatusBacklog {
-		return s.MarkBacklog(id)
+		return s.markBacklog(projectID, id)
 	}
-	return s.transition(id, status, "")
+	return s.transitionScoped(projectID, id, status, "")
 }
 
-// statusOf returns a story's current stored status, or ErrNotFound.
-func (s *Store) statusOf(id string) (Status, error) {
+// statusOfScoped returns a story's current stored status, scoped to projectID when
+// non-empty, or ErrNotFound.
+func (s *Store) statusOfScoped(projectID, id string) (Status, error) {
+	q := `SELECT status FROM stories WHERE id=?`
+	args := []any{id}
+	if projectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
 	var cur Status
-	err := s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, id).Scan(&cur)
+	err := s.db.QueryRow(q, args...).Scan(&cur)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -870,7 +986,19 @@ func (s *Store) statusOf(id string) (Status, error) {
 // ClaimStory atomically transitions a story from backlog → running.
 // Returns true if this caller claimed it, false if it was already taken.
 func (s *Store) ClaimStory(id string) (bool, error) {
-	res, err := s.db.Exec(`UPDATE stories SET status='running' WHERE id=? AND status='backlog'`, id)
+	return s.ClaimStoryInProject("", id)
+}
+
+// ClaimStoryInProject is ClaimStory scoped to projectID (empty = legacy unscoped),
+// so a claim only ever moves the addressed tenant's row backlog → running.
+func (s *Store) ClaimStoryInProject(projectID, id string) (bool, error) {
+	q := `UPDATE stories SET status='running' WHERE id=? AND status='backlog'`
+	args := []any{id}
+	if projectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
+	res, err := s.db.Exec(q, args...)
 	if err != nil {
 		return false, err
 	}
@@ -887,16 +1015,26 @@ func (s *Store) ClaimStory(id string) (bool, error) {
 // clawed back. Returns ErrIllegalTransition (no-op) if the story is not in that
 // reset-eligible state, ErrNotFound if it does not exist.
 func (s *Store) MarkBacklog(id string) error {
-	res, err := s.db.Exec(`UPDATE stories SET status='backlog', run_id='' WHERE id=? AND status='running' AND run_id=''`, id)
+	return s.markBacklog("", id)
+}
+
+// markBacklog is MarkBacklog scoped to projectID (empty = legacy unscoped).
+func (s *Store) markBacklog(projectID, id string) error {
+	q := `UPDATE stories SET status='backlog', run_id='' WHERE id=? AND status='running' AND run_id=''`
+	args := []any{id}
+	if projectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
+	res, err := s.db.Exec(q, args...)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		return nil
 	}
-	var cur Status
-	err = s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, id).Scan(&cur)
-	if errors.Is(err, sql.ErrNoRows) {
+	cur, err := s.statusOfScoped(projectID, id)
+	if errors.Is(err, ErrNotFound) {
 		return ErrNotFound
 	}
 	if err != nil {
@@ -990,17 +1128,26 @@ func (s *Store) RequeueByRun(runID string) (int, error) {
 // always a mistake (a stale completion path) and must be a no-op, surfaced as
 // ErrIllegalTransition rather than silently stamping a finished story.
 func (s *Store) SetStoryRun(id, runID string) error {
-	res, err := s.db.Exec(
-		`UPDATE stories SET run_id=? WHERE id=? AND status IN ('backlog','running','in_review')`, runID, id)
+	return s.SetStoryRunInProject("", id, runID)
+}
+
+// SetStoryRunInProject is SetStoryRun scoped to projectID (empty = legacy unscoped).
+func (s *Store) SetStoryRunInProject(projectID, id, runID string) error {
+	q := `UPDATE stories SET run_id=? WHERE id=? AND status IN ('backlog','running','in_review')`
+	args := []any{runID, id}
+	if projectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
+	res, err := s.db.Exec(q, args...)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		return nil
 	}
-	var cur Status
-	err = s.db.QueryRow(`SELECT status FROM stories WHERE id=?`, id).Scan(&cur)
-	if errors.Is(err, sql.ErrNoRows) {
+	cur, err := s.statusOfScoped(projectID, id)
+	if errors.Is(err, ErrNotFound) {
 		return ErrNotFound
 	}
 	if err != nil {
@@ -1489,7 +1636,7 @@ func (s *Store) MarkSprintDone(sprintID string) error {
 		return err
 	}
 	for _, id := range ids {
-		s.fireStoryDone(id)
+		s.fireStoryDone("", id)
 	}
 	return nil
 }
@@ -1528,7 +1675,12 @@ func (s *Store) SetSprintRun(sprintID, runID string) error {
 // Guarded: only a running story may move to in_review, so a stale completion path
 // cannot drag a done/failed story back into the reconcile loop (B2).
 func (s *Store) MarkInReview(id, prURL string) error {
-	return s.transition(id, StatusInReview, "pr_url=?", prURL)
+	return s.MarkInReviewInProject("", id, prURL)
+}
+
+// MarkInReviewInProject is MarkInReview scoped to projectID (empty = legacy unscoped).
+func (s *Store) MarkInReviewInProject(projectID, id, prURL string) error {
+	return s.transitionScoped(projectID, id, StatusInReview, "pr_url=?", prURL)
 }
 
 // MarkDone advances a single story to done (used when its in_review PR merges).

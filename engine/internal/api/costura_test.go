@@ -62,7 +62,7 @@ func TestExportStoryBacklogCreatesOnlyTheNewIssue(t *testing.T) {
 	if err := store.CreateStory(prev); err != nil {
 		t.Fatalf("seed S1-01: %v", err)
 	}
-	if err := store.SetStoryExternalRef("S1-01", "github:o/r#7"); err != nil {
+	if err := store.SetStoryExternalRef("p1", "S1-01", "github:o/r#7"); err != nil {
 		t.Fatalf("seed external_ref: %v", err)
 	}
 
@@ -87,6 +87,41 @@ func TestExportStoryBacklogCreatesOnlyTheNewIssue(t *testing.T) {
 	// La dep se cablea contra el database-id del blocker (number*10 en el fake).
 	if len(gh.deps) != 1 || gh.deps[0] != "101<-70" {
 		t.Fatalf("dep edges = %v, want [101<-70]", gh.deps)
+	}
+}
+
+// Con dos stories del MISMO id en proyectos distintos (el incidente S11-01), el
+// export por-story viaja SOLO la del proyecto pedido — export.GitHubBacklog lista
+// por proyecto, así que el huérfano de "default" nunca se toca.
+func TestExportStoryBacklogScopesToProjectWithDuplicateIDs(t *testing.T) {
+	store := newTicketsStore(t)
+	srv := &Server{Tickets: store}
+
+	// Huérfano en default (sin repo) + la buena en p1 (con repo), mismo id.
+	if err := store.CreateStory(tickets.Story{ID: "S1-01", Title: "orphan", ProjectID: "default"}); err != nil {
+		t.Fatalf("seed default: %v", err)
+	}
+	good := tickets.Story{ID: "S1-01", Title: "real", ProjectID: "p1", Repo: "https://github.com/o/r"}
+	if err := store.CreateStory(good); err != nil {
+		t.Fatalf("seed p1: %v", err)
+	}
+
+	gh := &costuraFakeGH{nextNum: 200}
+	if _, err := srv.exportStoryBacklog(context.Background(), gh, good, "https://github.com/o/r"); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	if len(gh.issues) != 1 || gh.issues[0] != "S1-01 — real" {
+		t.Fatalf("issues = %v, want only [S1-01 — real]", gh.issues)
+	}
+	// La de p1 quedó espejada; la de default sigue sin external_ref.
+	p1, _ := store.GetStoryInProject("p1", "S1-01")
+	if p1.ExternalRef == "" {
+		t.Fatalf("p1 story not mirrored: %+v", p1)
+	}
+	def, _ := store.GetStoryInProject("default", "S1-01")
+	if def.ExternalRef != "" {
+		t.Fatalf("default orphan was wrongly exported: %q", def.ExternalRef)
 	}
 }
 

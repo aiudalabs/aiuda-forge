@@ -7,7 +7,9 @@
 // when the story failed — the user shouldn't need to dig 3 levels to unblock work.
 // If the story has a run, a button drops one level deeper into the execution.
 
-import { useRequeue, useRequeueStory } from "@/lib/hooks";
+import { useEffect, useState } from "react";
+import { useDeleteStory, useExportStory, useRequeue, useRequeueStory } from "@/lib/hooks";
+import { ApiError } from "@/lib/api";
 import type { DispatchCandidate, OrchestratorTicket } from "@/lib/types";
 import { LaneChip } from "@/components/tickets/LaneChip";
 import { statusToken } from "@/lib/statusToken";
@@ -22,8 +24,16 @@ function acceptanceLines(accept?: string): string[] {
     .filter(Boolean);
 }
 
+// "github:owner/repo#N" → https://github.com/owner/repo/issues/N (or null).
+function issueUrl(ref?: string | null): string | null {
+  if (!ref) return null;
+  const m = ref.match(/^github:(.+)#(\d+)$/);
+  return m ? `https://github.com/${m[1]}/issues/${m[2]}` : null;
+}
+
 export function TicketDetail({
   ticket,
+  projectId,
   candidate,
   onDispatch,
   onClose,
@@ -31,6 +41,8 @@ export function TicketDetail({
   onOpenRun,
 }: {
   ticket: OrchestratorTicket | null;
+  /** Proyecto activo — scopea el export/delete a la story del proyecto correcto. */
+  projectId?: string | null;
   candidate?: DispatchCandidate;
   onDispatch?: (c: DispatchCandidate) => void;
   onClose: () => void;
@@ -40,8 +52,49 @@ export function TicketDetail({
   const t = useT();
   const requeue = useRequeue();
   const requeueStory = useRequeueStory();
+  const exportStory = useExportStory();
+  const deleteStory = useDeleteStory();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [exportedRef, setExportedRef] = useState<string | null>(null);
   const open = !!ticket;
   const acs = acceptanceLines(ticket?.acceptance);
+
+  // Reset per-ticket feedback al cambiar de story (el drawer se reutiliza).
+  useEffect(() => {
+    setActionError(null);
+    setExportedRef(null);
+  }, [ticket?.id]);
+
+  function doExport() {
+    if (!ticket) return;
+    setActionError(null);
+    exportStory.mutate(
+      { id: ticket.id, project: projectId ?? undefined },
+      {
+        onSuccess: (r) => setExportedRef(r.external_ref ?? null),
+        onError: (e) => setActionError(e instanceof Error ? e.message : String(e)),
+      },
+    );
+  }
+
+  function doDelete() {
+    if (!ticket) return;
+    if (!window.confirm(t("tickets.detail.deleteConfirm"))) return;
+    setActionError(null);
+    deleteStory.mutate(
+      { id: ticket.id, project: projectId ?? undefined },
+      {
+        onSuccess: (r) => {
+          if (r.external_ref) window.alert(t("tickets.detail.githubRemains"));
+          onClose();
+        },
+        onError: (e) => {
+          if (e instanceof ApiError && e.status === 409) setActionError(t("tickets.detail.deleteBlocked"));
+          else setActionError(e instanceof Error ? e.message : String(e));
+        },
+      },
+    );
+  }
 
   return (
     <>
@@ -130,6 +183,30 @@ export function TicketDetail({
               {/* Resultado + acciones: PR directo, ejecución, y recuperación de
                   una story fallida SIN el viaje ticket→run→requeue. */}
               <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
+                {/* Enviar a GitHub: solo si la story no está aún espejada (sin
+                    external_ref) ni tiene PR. Tras exportar, el ▶ de dispatch la ejecuta. */}
+                {!ticket.external_ref && !ticket.pr_url && (
+                  <button
+                    className="btn primary"
+                    style={{ width: "100%" }}
+                    onClick={doExport}
+                    disabled={exportStory.isPending}
+                    title={t("tickets.detail.exportTitle")}
+                  >
+                    {exportStory.isPending ? t("tickets.detail.exporting") : t("tickets.detail.export")}
+                  </button>
+                )}
+                {exportedRef && (
+                  <a
+                    className="btn ghost"
+                    style={{ width: "100%", textAlign: "center" }}
+                    href={issueUrl(exportedRef) ?? undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {t("tickets.detail.viewIssue")}
+                  </a>
+                )}
                 {candidate && onDispatch && (
                   <button
                     className="btn primary"
@@ -205,6 +282,33 @@ export function TicketDetail({
                     {requeue.isPending ? t("tickets.detail.requeueing") : t("tickets.detail.requeue")}
                   </button>
                 )}
+
+                {actionError && (
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      background: "var(--accent-soft)",
+                      border: "1px solid var(--accent-line)",
+                      borderRadius: 4,
+                      fontSize: 12,
+                      color: "var(--accent)",
+                    }}
+                  >
+                    {actionError}
+                  </div>
+                )}
+
+                {/* Eliminar la story (local, no toca GitHub) — acción destructiva
+                    con confirm, separada del resto. */}
+                <button
+                  className="btn ghost"
+                  style={{ width: "100%", color: "var(--danger)", marginTop: 8 }}
+                  onClick={doDelete}
+                  disabled={deleteStory.isPending}
+                  title={t("tickets.detail.deleteTitle")}
+                >
+                  {deleteStory.isPending ? t("tickets.detail.deleting") : t("tickets.detail.delete")}
+                </button>
               </div>
             </div>
           </>
