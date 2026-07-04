@@ -180,6 +180,21 @@ CREATE TABLE IF NOT EXISTS story_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_story_deps_story ON story_deps(story_id);
 CREATE INDEX IF NOT EXISTS idx_story_deps_dep   ON story_deps(dep_id);
+
+-- El "cerebro" producto↔código (task #5): las rutas que el PR mergeado de una
+-- story tocó de verdad. Es la única arista del grafo que no se deriva ya de
+-- stories/deps (esos son nativos en Issues). Se puebla en el pase de proyección
+-- cuando una story llega a done por un PR mergeado (github.ListPRFiles). Tabla
+-- nueva → sin ALTER de migración; los índices sirven las dos consultas: por
+-- módulo (qué stories tocaron un path) y por story (qué tocó una story).
+CREATE TABLE IF NOT EXISTS story_files (
+  project_id TEXT NOT NULL DEFAULT 'default',
+  story_id   TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  PRIMARY KEY (project_id, story_id, path)
+);
+CREATE INDEX IF NOT EXISTS idx_story_files_path  ON story_files(project_id, path);
+CREATE INDEX IF NOT EXISTS idx_story_files_story ON story_files(project_id, story_id);
 `
 
 // migrationAddRepo is an upgrade guard that adds the repo column to existing

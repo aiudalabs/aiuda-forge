@@ -217,3 +217,68 @@ func TestClosesRefs(t *testing.T) {
 		}
 	}
 }
+
+// fakeFiler stubs the PR file listing; records which PR number was asked.
+type fakeFiler struct {
+	files []string
+	gotPR int
+}
+
+func (f *fakeFiler) ListPRFiles(_ context.Context, _ string, n int) ([]string, error) {
+	f.gotPR = n
+	return f.files, nil
+}
+
+func TestSyncProjectCapturesFilesOnMerge(t *testing.T) {
+	st := newStore(t)
+	if err := st.CreateStory(tickets.Story{ID: "S-01", ProjectID: "p1", Owner: "react-dev", ExternalRef: "github:o/r#1"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// The story already carried a PR (recorded on a prior in_review pass).
+	if _, err := st.SyncExternalStatus("S-01", tickets.StatusInReview, "https://github.com/o/r/pull/45"); err != nil {
+		t.Fatalf("pre-set in_review: %v", err)
+	}
+
+	filer := &fakeFiler{files: []string{"frontend/src/App.tsx", "frontend/src/Login.tsx"}}
+	gh := &fakeGH{issues: []github.IssueState{{Number: 1, State: "closed"}}} // → done
+	p := NewProjector(st, gh)
+	p.Files = filer
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	if filer.gotPR != 45 {
+		t.Fatalf("listed PR #%d, want #45 (from pr_url)", filer.gotPR)
+	}
+	files, err := st.FilesForStory("p1", "S-01")
+	if err != nil {
+		t.Fatalf("files: %v", err)
+	}
+	want := []string{"frontend/src/App.tsx", "frontend/src/Login.tsx"}
+	if len(files) != len(want) {
+		t.Fatalf("captured %v, want %v", files, want)
+	}
+	// The captured paths must surface in the module map for injection.
+	mods, err := st.ModuleMap("p1", 2)
+	if err != nil {
+		t.Fatalf("modulemap: %v", err)
+	}
+	if len(mods) != 1 || mods[0].Dir != "frontend/src" || mods[0].Files != 2 {
+		t.Fatalf("module map = %+v, want one frontend/src with 2 files", mods)
+	}
+}
+
+func TestSyncProjectNoFilerNoCaptureNoPanic(t *testing.T) {
+	st := newStore(t)
+	if err := st.CreateStory(tickets.Story{ID: "S-01", ProjectID: "p1", ExternalRef: "github:o/r#1"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	gh := &fakeGH{issues: []github.IssueState{{Number: 1, State: "closed"}}}
+	p := NewProjector(st, gh) // Files nil — capture must simply not happen
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if files, _ := st.FilesForStory("p1", "S-01"); len(files) != 0 {
+		t.Fatalf("captured %v with nil filer, want none", files)
+	}
+}

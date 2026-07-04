@@ -300,6 +300,10 @@ func (d *Dispatcher) fireChannel(ctx context.Context, gh GitHubDispatcher, repoU
 // goal-mode contract: every story, in order, one branch, ONE PR closing all.
 func (d *Dispatcher) buildPrompt(projectID, repoURL, kind string, storyIDs []string) (string, error) {
 	var b strings.Builder
+	// Contexto del grafo producto↔código (task #5): el mapa de módulos ya
+	// construidos, para que el agente reutilice en vez de crear estructura
+	// paralela. Vacío en un proyecto nuevo → no ensucia el prompt.
+	b.WriteString(d.projectContext(projectID))
 	issueOf := func(st tickets.Story) int {
 		if i := strings.LastIndex(st.ExternalRef, "#"); i >= 0 {
 			if n, err := strconv.Atoi(st.ExternalRef[i+1:]); err == nil {
@@ -342,6 +346,39 @@ func (d *Dispatcher) buildPrompt(projectID, repoURL, kind string, storyIDs []str
 	fmt.Fprintf(&b, "The pull request description MUST include: %s.\n", strings.Join(closes, ", "))
 	b.WriteString("Every story's acceptance criteria must pass together; write honest tests per criterion.\n")
 	return b.String(), nil
+}
+
+// projectContext renderiza un mapa compacto de los módulos ya construidos en el
+// proyecto (del grafo producto↔código, task #5), most-touched primero, para
+// inyectarlo al inicio del prompt del agente. Es el "repo map" barato de Forja:
+// no promete "los archivos exactos a tocar" (eso lo resuelve el agente con su
+// búsqueda nativa), sino "esto ya existe y vive aquí — reutilízalo". Vacío en un
+// proyecto sin merges todavía → "".
+func (d *Dispatcher) projectContext(projectID string) string {
+	if d.Tickets == nil {
+		return ""
+	}
+	mods, err := d.Tickets.ModuleMap(projectID, 2)
+	if err != nil || len(mods) == 0 {
+		return ""
+	}
+	const maxMods = 12
+	var b strings.Builder
+	b.WriteString("## Existing modules (already shipped — reuse, don't duplicate)\n")
+	b.WriteString("Paths prior stories already built, most-touched first. Prefer extending these over creating parallel structure; stay in your lane.\n\n")
+	for i, m := range mods {
+		if i >= maxMods {
+			fmt.Fprintf(&b, "- …and %d more modules\n", len(mods)-maxMods)
+			break
+		}
+		lanes := ""
+		if len(m.Lanes) > 0 {
+			lanes = " · " + strings.Join(m.Lanes, ", ")
+		}
+		fmt.Fprintf(&b, "- `%s/` — %d files%s\n", m.Dir, m.Files, lanes)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 func dominantLane(members []tickets.Story) string {

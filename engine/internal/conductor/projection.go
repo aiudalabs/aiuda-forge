@@ -60,6 +60,14 @@ type TaskStater interface {
 	AgentTaskState(ctx context.Context, repoURL, taskID string) (string, error)
 }
 
+// PRFileLister lista los archivos que un PR tocó. Alimenta el grafo
+// producto↔código (task #5): cuando una story llega a done por un PR mergeado,
+// sus rutas se registran (story→archivos). Opcional: nil desactiva la captura.
+// *github.Client lo implementa (ListPRFiles).
+type PRFileLister interface {
+	ListPRFiles(ctx context.Context, repoURL string, number int) ([]string, error)
+}
+
 // Projector mirrors GitHub state into the ticket store.
 type Projector struct {
 	Tickets *tickets.Store
@@ -69,6 +77,9 @@ type Projector struct {
 	TaskState TaskStater
 	// Closer, when set, closes issues whose story PR merged without auto-close.
 	Closer IssueCloser
+	// Files, when set, records a merged story's changed paths into the code graph
+	// (task #5). Best-effort — nil, or a failed listing, just skips the capture.
+	Files PRFileLister
 	// ClientFor, si está presente, resuelve el cliente GitHub POR PROYECTO
 	// (multi-tenant: token del dueño / installation token); nil = usar los
 	// campos fijos GH/TaskState/Closer (auth del host).
@@ -157,11 +168,13 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 	ghR := p.GH
 	taskState := p.TaskState
 	closer := p.Closer
+	filer := p.Files
 	if p.ClientFor != nil {
 		if c := p.ClientFor(ctx, projectID); c != nil {
 			ghR = c
 			taskState = c
 			closer = c
+			filer = c
 		}
 	}
 
@@ -339,9 +352,34 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 		}
 		if changed {
 			res.Changed++
+			// Grafo producto↔código (task #5): al MOMENTO en que la story llega a
+			// done, registrar las rutas de su PR mergeado. Solo en la transición
+			// (changed) → una llamada por story, no por tick. Best-effort: sin
+			// filer o sin nº de PR conocido, se omite sin ensuciar el pase.
+			if target == tickets.StatusDone && filer != nil {
+				if n := prNum(st.PRURL); n > 0 {
+					p.captureFiles(ctx, filer, projectID, repoURL, st.ID, n)
+				}
+			}
 		}
 	}
 	return res, nil
+}
+
+// captureFiles registra en el grafo las rutas que el PR n de storyID tocó.
+// Best-effort y silencioso salvo log: un fallo de listado no debe abortar el
+// pase de proyección (que es el que mantiene la UI al día).
+func (p *Projector) captureFiles(ctx context.Context, filer PRFileLister, projectID, repoURL, storyID string, n int) {
+	files, err := filer.ListPRFiles(ctx, repoURL, n)
+	if err != nil {
+		log.Printf("conductor: grafo — listar archivos del PR #%d (%s): %v", n, storyID, err)
+		return
+	}
+	if inserted, err := p.Tickets.RecordStoryFiles(projectID, storyID, files); err != nil {
+		log.Printf("conductor: grafo — registrar archivos de %s: %v", storyID, err)
+	} else if inserted > 0 {
+		log.Printf("conductor: grafo — %s tocó %d archivos (PR #%d)", storyID, inserted, n)
+	}
 }
 
 // Loop polls every interval, mirroring every target that has a repo. It is the

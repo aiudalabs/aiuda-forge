@@ -291,6 +291,7 @@ func Build(cfg Config) (*App, error) {
 		srv.Projector = conductor.NewProjector(tix, gh)
 		srv.Projector.TaskState = gh // barrido de sesiones muertas (F3)
 		srv.Projector.Closer = gh    // cierre de loop de PRs mergeados sin auto-close
+		srv.Projector.Files = gh     // grafo producto↔código: rutas del PR mergeado (task #5)
 		// Multi-tenant: cada proyecto opera con SU credencial (token del dueño
 		// o installation token de la App); sin credenciales → auth del host.
 		srv.Projector.ClientFor = srv.GHForProject
