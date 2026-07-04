@@ -68,10 +68,16 @@ func SaveCredentials(path string, c Credentials) error {
 // API, billing) sale del OAuth de la misma App.
 func Manifest(name, org, baseURL, consoleURL string) map[string]any {
 	m := manifestBase(name, baseURL, consoleURL)
-	// GitHub valida hook_attributes.url SI el objeto está presente, y rechaza
-	// localhost. En dev el manifest viaja SIN hook_attributes (webhook off).
+	// GitHub exige hook_attributes.url presente Y pública (rechaza localhost y
+	// también la ausencia del campo — validado empíricamente 2026-07-04). En dev
+	// el hook apunta a la URL futura de producción con active:false: no se
+	// entrega nada hasta que exista, y se activa desde los settings de la App.
 	if strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1") {
-		delete(m, "hook_attributes")
+		hookURL := os.Getenv("VIBEFORGE_GHAPP_HOOK_URL")
+		if hookURL == "" {
+			hookURL = "https://forja.aiudalabs.com/webhooks/github"
+		}
+		m["hook_attributes"] = map[string]any{"url": hookURL, "active": false}
 	}
 	return m
 }
