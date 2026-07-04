@@ -21,6 +21,7 @@ steps:
       reason: "Review the project brief (docs/BRIEF.md). Approve to proceed to PRD, or reject with feedback."
     on_fail:
       goto: discovery
+      max: 100
       feedback: $discovery_gate.detail
 
   # ── Phase 2: PRD ──────────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ steps:
       reason: "Review the PRD (docs/PRD.md). Approve to proceed to architecture, or reject with feedback."
     on_fail:
       goto: prd
+      max: 100
       feedback: $prd_gate.detail
 
   # ── Phase 3: Architecture ─────────────────────────────────────────────────
@@ -54,6 +56,7 @@ steps:
       reason: "Review the architecture (docs/ARCHITECTURE.md). Approve to proceed to UI, or reject with feedback."
     on_fail:
       goto: architecture
+      max: 100
       feedback: $arch_gate.detail
 
   # ── Phase 4: UI / Screens ─────────────────────────────────────────────────
@@ -71,23 +74,28 @@ steps:
       reason: "Review the UI spec (docs/UI_SCREENS.md). Approve to proceed to mockups, or reject with feedback."
     on_fail:
       goto: ui
+      max: 100
       feedback: $ui_gate.detail
 
-  # ── Phase 5: Mockups — self-contained HTML prototype ─────────────────────
+  # ── Phase 5: Mockups — one HTML per surface ──────────────────────────────
+  # The designer reads the spec files directly (paths, not content) to keep the
+  # initial prompt small (~5k instead of ~80k). It writes one HTML file per app
+  # surface into docs/mockups/ (passenger, driver, admin, etc.).
   - id: mockups
     type: design
     agent: designer
     inputs:
-      screens: $ui.text
-      prd: $prd.text
+      screens_path: docs/UI_SCREENS.md
+      prd_path: docs/PRD.md
       output: docs/mockups/index.html
 
   - id: mockups_gate
     type: human_gate
     inputs:
-      reason: "Revisa el mockup HTML (docs/mockups/index.html). Apruébalo o pide cambios."
+      reason: "Revisa los mockups en docs/mockups/ (un HTML por superficie de la app). Aprueba o pide cambios."
     on_fail:
       goto: mockups
+      max: 100
       feedback: $mockups_gate.detail
 
   # ── Phase 6: Backlog ──────────────────────────────────────────────────────
@@ -113,6 +121,7 @@ steps:
       reason: "Review the backlog (docs/backlog.yaml). Approve to publish to the ticket store, or reject with feedback."
     on_fail:
       goto: backlog
+      max: 100
       feedback: $backlog_gate.detail
 
   # ── Phase 7: Handoff — publish backlog into the native ticket store ───────
@@ -129,5 +138,8 @@ steps:
   - id: docs_pr
     type: pr
     inputs:
-      base: dev
+      # main, no dev: los agentes GitHub-native (Copilot/Claude) trabajan sobre
+      # main — el PRD/arquitectura/design-system deben ser visibles ahí.
+      # (dev era el modelo two-branch del factory legacy.)
+      base: main
       ticket: "design: publish docs for review"

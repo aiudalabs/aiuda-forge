@@ -494,10 +494,13 @@ function TemplatesBrowser() {
     if (!project || group === "_common") return;
     if (!window.confirm(t("registry.templates.applyConfirm", { project: project.name }))) return;
     scaffold.mutate(group, {
-      onSuccess: (r) =>
-        window.alert(
-          t("registry.templates.applyDone", { written: String(r.written?.length ?? 0), skipped: String(r.skipped?.length ?? 0) }),
-        ),
+      onSuccess: (r) => {
+        let msg = t("registry.templates.applyDone", { written: String(r.written?.length ?? 0), skipped: String(r.skipped?.length ?? 0) });
+        if (r.missing_vars?.length) {
+          msg += "\n\n" + t("registry.templates.applyMissing", { vars: r.missing_vars.join(", ") });
+        }
+        window.alert(msg);
+      },
       onError: (e) => window.alert(t("registry.templates.applyError") + "\n" + (e instanceof Error ? e.message : String(e))),
     });
   }

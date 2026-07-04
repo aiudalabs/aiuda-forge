@@ -18,13 +18,11 @@ interface DocPage {
 
 // The page set (also the reading order). Content is authored as the matching .md.
 const PAGES: DocPage[] = [
-  { file: "01-filosofia.md", title: "Filosofía", icon: "✦" },
+  { file: "01-el-viaje.md", title: "El viaje: de la idea al software", icon: "✦" },
   { file: "02-arquitectura.md", title: "Arquitectura", icon: "◫" },
-  { file: "03-kernel.md", title: "Kernel de workflows", icon: "⚙" },
-  { file: "04-orquestador.md", title: "Orquestador", icon: "⟳" },
-  { file: "05-diseno-y-fabrica.md", title: "Diseño y Fábrica", icon: "▤" },
-  { file: "06-seguridad-resiliencia.md", title: "Seguridad y Resiliencia", icon: "🛡" },
-  { file: "07-engines.md", title: "Engines y portabilidad", icon: "⇄" },
+  { file: "03-agentes-y-templates.md", title: "Agentes y templates", icon: "▶" },
+  { file: "04-calidad-y-seguridad.md", title: "Calidad y seguridad", icon: "🛡" },
+  { file: "05-operacion.md", title: "Operación y troubleshooting", icon: "⚙" },
 ];
 
 export function DocsView() {
