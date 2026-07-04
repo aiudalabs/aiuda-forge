@@ -15,6 +15,7 @@ import (
 
 	"forge/internal/export"
 	"forge/internal/scaffold"
+	"forge/internal/tickets"
 )
 
 // OnBacklogPublished corre tras el handoff del diseño (hook del PublishRunner,
@@ -51,6 +52,54 @@ func (s *Server) OnBacklogPublished(projectID, repoURL string) {
 		return
 	}
 	log.Printf("costura(%s): scaffold aplicado — %d escritos, %d al día (stack %s)", projectID, written, skipped, stack)
+}
+
+// OnStoryCreated corre tras crear una story a mano (POST /stories): encadena el
+// mismo export idempotente de la costura (issue + deps nativas) para que el
+// conductor github-native pueda despacharla — sin esto una story manual jamás
+// llegaba a GitHub Issues. Best-effort: si el export falla, la story queda
+// creada y el botón manual de export sigue como plan B. El handler la invoca
+// con `go` (como publish.go hace con OnPublished).
+func (s *Server) OnStoryCreated(st tickets.Story) {
+	repo := s.exportRepoFor(st)
+	if repo == "" {
+		return // proyecto default / sin repo GitHub: no hay a dónde exportar
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	s.exportStoryBacklog(ctx, s.ghFor(ctx, st.ProjectID), st, repo)
+}
+
+// exportStoryBacklog es el cuerpo testeable de OnStoryCreated: reusa
+// export.GitHubBacklog, idempotente por external_ref — las stories ya
+// exportadas se saltan, así que solo viajan la nueva y sus deps.
+func (s *Server) exportStoryBacklog(ctx context.Context, gh export.GitHubWriter, st tickets.Story, repo string) {
+	res, err := export.GitHubBacklog(ctx, s.Tickets, gh, st.ProjectID, repo)
+	if err != nil {
+		log.Printf("costura(%s): export de la story %s a GitHub falló (queda el botón manual): %v", st.ProjectID, st.ID, err)
+		return
+	}
+	log.Printf("costura(%s): story %s exportada — %d issues nuevos, %d deps", st.ProjectID, st.ID, res.IssuesCreated, res.DepsCreated)
+}
+
+// exportRepoFor resuelve el repo GitHub destino de una story creada a mano: el
+// de la story si lo trae, si no el del proyecto. El proyecto "default" (legacy,
+// sin repo real) no exporta.
+func (s *Server) exportRepoFor(st tickets.Story) string {
+	if st.ProjectID == "" || st.ProjectID == tickets.DefaultProjectID {
+		return ""
+	}
+	if st.Repo != "" {
+		return st.Repo
+	}
+	if s.Projects == nil {
+		return ""
+	}
+	p, err := s.Projects.Get(st.ProjectID)
+	if err != nil {
+		return ""
+	}
+	return p.Repo
 }
 
 // stackForProject deduce el stack por las lanes reales del backlog:
