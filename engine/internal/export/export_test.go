@@ -161,3 +161,34 @@ func TestExportResumesAfterMidRunFailure(t *testing.T) {
 		t.Fatalf("issues on GitHub = %d, want 3", len(gh.issues))
 	}
 }
+
+func TestPriorArtForLane(t *testing.T) {
+	mods := []tickets.ModuleHit{
+		{Dir: "frontend/src", Files: 3, Lanes: []string{"react-dev"}, Stories: []string{"S1", "S4"}},
+		{Dir: "backend/api", Files: 2, Lanes: []string{"python-dev"}, Stories: []string{"S2"}},
+	}
+	got := priorArtForLane("react-dev", mods)
+	if !strings.Contains(got, "frontend/src/") || strings.Contains(got, "backend/api/") {
+		t.Fatalf("react-dev prior art = %q, want only its own module", got)
+	}
+	if !strings.Contains(got, "S1, S4") {
+		t.Fatalf("prior art should cite the stories: %q", got)
+	}
+	// A lane with no prior work → empty, so a fresh export is unchanged.
+	if s := priorArtForLane("flutter-dev", mods); s != "" {
+		t.Fatalf("unknown lane prior art = %q, want empty", s)
+	}
+	if s := priorArtForLane("react-dev", nil); s != "" {
+		t.Fatalf("no modules = %q, want empty", s)
+	}
+}
+
+func TestIssueBodyPriorArtGating(t *testing.T) {
+	st := tickets.Story{ID: "S1", Body: "As a user…", Accept: "- works"}
+	if body := issueBody(st, ""); strings.Contains(body, "Prior art") {
+		t.Fatalf("empty prior art leaked into body:\n%s", body)
+	}
+	if body := issueBody(st, "### Prior art (x)\n- `y/`\n\n"); !strings.Contains(body, "Prior art") {
+		t.Fatalf("prior art not included:\n%s", body)
+	}
+}

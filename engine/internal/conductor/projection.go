@@ -80,6 +80,9 @@ type Projector struct {
 	// Files, when set, records a merged story's changed paths into the code graph
 	// (task #5). Best-effort — nil, or a failed listing, just skips the capture.
 	Files PRFileLister
+	// OnGraphChanged, when set, fires once per pass that captured new files into
+	// the graph — the app wires it to regenerate docs/MODULE_MAP.md. nil disables.
+	OnGraphChanged func(projectID, repoURL string)
 	// ClientFor, si está presente, resuelve el cliente GitHub POR PROYECTO
 	// (multi-tenant: token del dueño / installation token); nil = usar los
 	// campos fijos GH/TaskState/Closer (auth del host).
@@ -316,6 +319,7 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 		}
 	}
 
+	graphChanged := false
 	for _, iss := range issues {
 		st, mirrored := byNumber[iss.Number]
 		if !mirrored {
@@ -358,28 +362,39 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 			// filer o sin nº de PR conocido, se omite sin ensuciar el pase.
 			if target == tickets.StatusDone && filer != nil {
 				if n := prNum(st.PRURL); n > 0 {
-					p.captureFiles(ctx, filer, projectID, repoURL, st.ID, n)
+					if p.captureFiles(ctx, filer, projectID, repoURL, st.ID, n) > 0 {
+						graphChanged = true
+					}
 				}
 			}
 		}
 	}
+	// El grafo cambió en este pase → regenerar docs/MODULE_MAP.md (Capa 1
+	// mantenida). El callback hace su propio ctx/goroutine; aquí solo lo gatillamos.
+	if graphChanged && p.OnGraphChanged != nil {
+		p.OnGraphChanged(projectID, repoURL)
+	}
 	return res, nil
 }
 
-// captureFiles registra en el grafo las rutas que el PR n de storyID tocó.
-// Best-effort y silencioso salvo log: un fallo de listado no debe abortar el
-// pase de proyección (que es el que mantiene la UI al día).
-func (p *Projector) captureFiles(ctx context.Context, filer PRFileLister, projectID, repoURL, storyID string, n int) {
+// captureFiles registra en el grafo las rutas que el PR n de storyID tocó y
+// devuelve cuántas insertó (0 = nada nuevo). Best-effort y silencioso salvo log:
+// un fallo de listado no debe abortar el pase de proyección (que mantiene la UI).
+func (p *Projector) captureFiles(ctx context.Context, filer PRFileLister, projectID, repoURL, storyID string, n int) int {
 	files, err := filer.ListPRFiles(ctx, repoURL, n)
 	if err != nil {
 		log.Printf("conductor: grafo — listar archivos del PR #%d (%s): %v", n, storyID, err)
-		return
+		return 0
 	}
-	if inserted, err := p.Tickets.RecordStoryFiles(projectID, storyID, files); err != nil {
+	inserted, err := p.Tickets.RecordStoryFiles(projectID, storyID, files)
+	if err != nil {
 		log.Printf("conductor: grafo — registrar archivos de %s: %v", storyID, err)
-	} else if inserted > 0 {
+		return 0
+	}
+	if inserted > 0 {
 		log.Printf("conductor: grafo — %s tocó %d archivos (PR #%d)", storyID, inserted, n)
 	}
+	return inserted
 }
 
 // Loop polls every interval, mirroring every target that has a repo. It is the

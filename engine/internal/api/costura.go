@@ -8,6 +8,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -100,6 +101,54 @@ func (s *Server) exportRepoFor(st tickets.Story) string {
 		return ""
 	}
 	return p.Repo
+}
+
+// WriteModuleMap regenera docs/MODULE_MAP.md desde el grafo producto↔código
+// (task #5, Capa 1 "mantenida fresca") y lo escribe al repo. Se dispara cuando
+// la proyección captura archivos nuevos de un PR mergeado (Projector.OnGraphChanged).
+// El iteration-planner lo lee para reutilizar módulos en vez de crear estructura
+// paralela. Best-effort y con su propio ctx (como OnStoryCreated): un mapa vacío
+// no escribe archivo, y WriteFile es idempotente (no commitea si no cambió).
+func (s *Server) WriteModuleMap(projectID, repoURL string) {
+	if s.Tickets == nil || repoURL == "" {
+		return
+	}
+	mods, err := s.Tickets.ModuleMap(projectID, 2)
+	if err != nil {
+		log.Printf("costura(%s): module map — leer grafo: %v", projectID, err)
+		return
+	}
+	content := renderModuleMap(mods)
+	if content == "" {
+		return // sin módulos todavía: no escribimos un archivo vacío
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	files := []scaffold.File{{Path: "docs/MODULE_MAP.md", Content: content}}
+	if _, _, err := scaffold.Apply(ctx, s.ghFor(ctx, projectID), repoURL, "main", files,
+		"chore(map): actualizar mapa de módulos (grafo producto↔código)"); err != nil {
+		log.Printf("costura(%s): module map — escribir docs/MODULE_MAP.md: %v", projectID, err)
+	}
+}
+
+// renderModuleMap compone docs/MODULE_MAP.md desde el mapa de módulos del grafo,
+// most-touched primero. Vacío (proyecto sin merges) → "" para que WriteModuleMap
+// no escriba un archivo vacío. Función pura → testeable sin GitHub.
+func renderModuleMap(mods []tickets.ModuleHit) string {
+	if len(mods) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# Module map\n\n")
+	b.WriteString("Módulos ya construidos en este repo, derivados de los archivos que tocaron los " +
+		"PRs mergeados (más tocados primero). Lo mantiene aiuda-forge automáticamente tras cada " +
+		"merge — al planear una iteración, EXTIENDE estos módulos en vez de crear estructura paralela.\n\n")
+	b.WriteString("| Módulo | Archivos | Lanes | Stories |\n|---|---|---|---|\n")
+	for _, m := range mods {
+		fmt.Fprintf(&b, "| `%s/` | %d | %s | %s |\n",
+			m.Dir, m.Files, strings.Join(m.Lanes, ", "), strings.Join(m.Stories, ", "))
+	}
+	return b.String()
 }
 
 // stackForProject deduce el stack por las lanes reales del backlog:

@@ -18,6 +18,13 @@ light is what lets the planning phase finish fast.
    sprint/story ids already used. Match the existing architecture and stack; reuse the
    existing modules and patterns rather than introducing parallel ones.
 
+   Also read `docs/MODULE_MAP.md` if present — aiuda-forge maintains it automatically
+   from the files each merged PR actually touched (the code graph). It is the ground
+   truth of WHICH modules exist and which lanes/stories built them, more current than
+   prose in ARCHITECTURE.md. Use it to route each new story to an EXISTING module and
+   lane instead of inventing a parallel one; if a change clearly extends a module the
+   map lists, say so in the story so the build agent reuses it.
+
 2. **Read the change request** (the `change_request` input) — the feature(s) to add or
    the improvement to make. Scope it to a coherent, shippable increment. If it's broad,
    prefer an MVP-first slice (the core of what was asked), deferring nice-to-haves.

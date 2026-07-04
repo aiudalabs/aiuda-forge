@@ -282,3 +282,30 @@ func TestSyncProjectNoFilerNoCaptureNoPanic(t *testing.T) {
 		t.Fatalf("captured %v with nil filer, want none", files)
 	}
 }
+
+func TestSyncProjectFiresOnGraphChanged(t *testing.T) {
+	st := newStore(t)
+	if err := st.CreateStory(tickets.Story{ID: "S-01", ProjectID: "p1", ExternalRef: "github:o/r#1"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := st.SyncExternalStatus("S-01", tickets.StatusInReview, "https://github.com/o/r/pull/45"); err != nil {
+		t.Fatalf("pre-set in_review: %v", err)
+	}
+	fired := 0
+	p := NewProjector(st, &fakeGH{issues: []github.IssueState{{Number: 1, State: "closed"}}})
+	p.Files = &fakeFiler{files: []string{"frontend/src/App.tsx"}}
+	p.OnGraphChanged = func(projectID, repoURL string) { fired++ }
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("OnGraphChanged fired %d times, want 1", fired)
+	}
+	// A second pass captures nothing new → callback must NOT fire again.
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatalf("sync 2: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("OnGraphChanged fired %d times after no-op pass, want 1", fired)
+	}
+}

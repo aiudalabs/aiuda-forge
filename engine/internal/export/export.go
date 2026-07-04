@@ -70,6 +70,12 @@ func GitHubBacklog(ctx context.Context, store *tickets.Store, gh GitHubWriter, p
 	}
 	sort.Slice(stories, func(i, j int) bool { return stories[i].ID < stories[j].ID })
 
+	// Grafo producto↔código (task #5, hook F2): prior art por lane para enriquecer
+	// el cuerpo del issue. En el PRIMER export el grafo está vacío → nil → los
+	// cuerpos salen idénticos (sin sección de prior art); en iteraciones ya trae
+	// los módulos que la lane construyó, para reutilizarlos.
+	mods, _ := store.ModuleMap(projectID, 2)
+
 	// Pass 0 — labels (sprint / lane / epic), deduped.
 	seen := map[string]bool{}
 	for _, st := range stories {
@@ -105,7 +111,7 @@ func GitHubBacklog(ctx context.Context, store *tickets.Store, gh GitHubWriter, p
 			res.IssuesSkipped++
 			continue
 		}
-		created, err := gh.CreateIssue(ctx, repoURL, issueTitle(st), issueBody(st), labelNames(st))
+		created, err := gh.CreateIssue(ctx, repoURL, issueTitle(st), issueBody(st, priorArtForLane(st.Owner, mods)), labelNames(st))
 		if err != nil {
 			return res, fmt.Errorf("issue %s: %w", st.ID, err)
 		}
@@ -183,10 +189,10 @@ func issueTitle(st tickets.Story) string {
 }
 
 // issueBody composes the issue body: user story + acceptance criteria as a
-// checklist + a metadata footer. F0 ships the skeleton body; folding the
-// story-detailer expansion in here (full dev-ready spec at export time, per the
-// pivot plan §6) is the F2 enrichment hook.
-func issueBody(st tickets.Story) string {
+// checklist + optional "prior art" (task #5, the F2 enrichment hook) + a
+// metadata footer. priorArt is the pre-rendered block of modules the story's
+// lane already built (empty on a fresh project → nothing extra emitted).
+func issueBody(st tickets.Story, priorArt string) string {
 	var b strings.Builder
 	if body := strings.TrimSpace(st.Body); body != "" {
 		b.WriteString(body)
@@ -198,6 +204,9 @@ func issueBody(st tickets.Story) string {
 			fmt.Fprintf(&b, "- [ ] %s\n", ac)
 		}
 		b.WriteString("\n")
+	}
+	if priorArt != "" {
+		b.WriteString(priorArt)
 	}
 	b.WriteString("---\n")
 	meta := []string{"`" + st.ID + "`"}
@@ -212,6 +221,45 @@ func issueBody(st tickets.Story) string {
 	}
 	b.WriteString(strings.Join(meta, " · "))
 	b.WriteString("\n\n_Exported by aiuda-forge Studio_\n")
+	return b.String()
+}
+
+// priorArtForLane renderiza el bloque "Prior art" del cuerpo del issue: los
+// módulos que la lane de la story YA construyó (del grafo producto↔código), para
+// que el agente los extienda en vez de crear estructura paralela. Devuelve "" si
+// la lane no ha tocado nada todavía (proyecto nuevo o primera story de la lane),
+// así el primer export no cambia. Máximo 8 módulos para no inflar el cuerpo.
+func priorArtForLane(owner string, mods []tickets.ModuleHit) string {
+	if owner == "" || len(mods) == 0 {
+		return ""
+	}
+	var rows []string
+	for _, m := range mods {
+		mine := false
+		for _, l := range m.Lanes {
+			if l == owner {
+				mine = true
+				break
+			}
+		}
+		if !mine {
+			continue
+		}
+		rows = append(rows, fmt.Sprintf("- `%s/` — %d files (%s)", m.Dir, m.Files, strings.Join(m.Stories, ", ")))
+		if len(rows) >= 8 {
+			break
+		}
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Prior art (your lane already built these — extend, don't duplicate)\n")
+	for _, r := range rows {
+		b.WriteString(r)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 

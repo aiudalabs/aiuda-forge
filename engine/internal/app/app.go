@@ -292,6 +292,9 @@ func Build(cfg Config) (*App, error) {
 		srv.Projector.TaskState = gh // barrido de sesiones muertas (F3)
 		srv.Projector.Closer = gh    // cierre de loop de PRs mergeados sin auto-close
 		srv.Projector.Files = gh     // grafo producto↔código: rutas del PR mergeado (task #5)
+		// Al capturar archivos nuevos, regenerar docs/MODULE_MAP.md (Capa 1 mantenida);
+		// en goroutine para no bloquear el pase de proyección con la escritura al repo.
+		srv.Projector.OnGraphChanged = func(pid, repo string) { go srv.WriteModuleMap(pid, repo) }
 		// Multi-tenant: cada proyecto opera con SU credencial (token del dueño
 		// o installation token de la App); sin credenciales → auth del host.
 		srv.Projector.ClientFor = srv.GHForProject
