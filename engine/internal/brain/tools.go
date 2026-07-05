@@ -93,6 +93,25 @@ var registry = map[string]toolDef{
 			return jsonStr(r), err
 		},
 	},
+	"read_artifact": {
+		Tool: Tool{Name: "read_artifact", Description: "Read the DOCUMENT a run's step produced (e.g. the PRD, the data model, the backlog, a mockup). Returns the doc text. Use to REVIEW or diagnose what a phase actually generated — don't guess its content.", InputSchema: obj(map[string]any{"run_id": strp("the run id"), "step": strp("the step id, e.g. discovery | prd | data_model | architecture | ui | backlog | mockups")}, "run_id", "step")},
+		Kind: Reversible, MinRole: "viewer",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			c, err := ops.Artifact(argStr(input, "run_id"), argStr(input, "step"))
+			if err != nil {
+				return "", err
+			}
+			return jsonStr(map[string]any{"content": c}), nil
+		},
+	},
+	"get_run_events": {
+		Tool: Tool{Name: "get_run_events", Description: "The timeline of a run's step events (seq, type, task, time) — use to see progress or diagnose WHERE/WHEN a run stalled or failed.", InputSchema: obj(map[string]any{"run_id": strp("the run id")}, "run_id")},
+		Kind: Reversible, MinRole: "viewer",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			evs, err := ops.RunEvents(argStr(input, "run_id"))
+			return jsonStr(evs), err
+		},
+	},
 	"pause": {
 		Tool: Tool{Name: "pause", Description: "Pause the factory engine (stops claiming new work). Reversible.", InputSchema: obj(nil)},
 		Kind: Reversible, MinRole: "editor",

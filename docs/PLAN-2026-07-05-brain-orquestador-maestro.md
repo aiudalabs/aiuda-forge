@@ -31,7 +31,7 @@ Mapa de tus ejemplos:
 
 ## 3. Fases
 
-### Fase 1 — Autoría del método (registry tools) · LA PALANCA GRANDE
+### Fase 1 — Autoría del método (registry tools) · LA PALANCA GRANDE · ✅ HECHA (commit db6b73a)
 Agregar a `ControlOps`/`EngineOps` + `tools.go`:
 - `read_registry(kind, id)` · Reversible — leer un workflow/agent/skill.
 - `list_registry(kind)` · Reversible.
@@ -42,7 +42,7 @@ Con esto el Brain hace lo que hoy se hace a mano: *"crea un flujo de solo-mockup
 - **Entregable:** el Brain autorea y corre un flujo nuevo end-to-end, con tu aprobación en cada `write`.
 - **Subsume** la feature que faltaba ("re-correr solo la fase X"): el Brain compone un workflow de 1 paso y lo lanza — no necesita botón dedicado.
 
-### Fase 2 — Inspección (diagnóstico como operador experto)
+### Fase 2 — Inspección (diagnóstico como operador experto) · ✅ HECHA (read_artifact + get_run_events)
 - `read_artifact(runID, stepId)` · Reversible — leer el doc/artefacto que produjo un paso.
 - `read_file(path)` / `search_code(query)` · Reversible, **scoped** al repo del proyecto + al registry (no fuera).
 - `get_run_events(runID)` · Reversible — el live-log / eventos de los steps.

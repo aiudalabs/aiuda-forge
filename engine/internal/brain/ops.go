@@ -33,6 +33,12 @@ type ControlOps interface {
 	ReadRegistry(kind, id string) (string, error)
 	WriteRegistry(kind, id, content string) error
 	DeleteRegistry(kind, id string) error
+
+	// Inspection / diagnosis. Read the document a run's step produced, and the run's
+	// event timeline — so the Brain can review artifacts and diagnose failures the
+	// way an operator does. Both reversible (read-only).
+	Artifact(runID, stepID string) (string, error)
+	RunEvents(runID string) ([]map[string]any, error)
 }
 
 // EngineOps is the production ControlOps, wired to the kernel Engine, store, and
