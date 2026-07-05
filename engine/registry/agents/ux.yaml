@@ -1,6 +1,7 @@
 id: ux
-version: 1.0.0
+version: 1.1.0
 model: claude-sonnet-4-6
-skills: []
+skills:
+  - ui-screens-template
 tools: [read, write]
 role: "Design the UI screens, flows, and component inventory from the PRD and architecture doc."

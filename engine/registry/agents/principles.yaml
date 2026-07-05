@@ -1,0 +1,7 @@
+id: principles
+version: 1.0.0
+model: claude-sonnet-4-6
+skills:
+  - opinionated-defaults
+tools: [read, write]
+role: "Lock the durable product and stack decisions surfaced by the brief into a small, stable constitution that every later design phase reads."

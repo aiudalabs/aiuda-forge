@@ -1,0 +1,18 @@
+# Solo-mockups: regenera los mockups leyendo los docs YA existentes en el repo
+# (UI_SCREENS.md + PRD.md), con el designer (ahora Opus). Un solo paso; el run
+# termina al escribir docs/mockups/. Usado para regenerar sin re-correr el diseño.
+id: mockups-only
+version: 1.0.0
+steps:
+  - id: mockups
+    type: design
+    label: Mockups
+    agent: designer
+    inputs:
+      screens_path: docs/UI_SCREENS.md
+      prd_path: docs/PRD.md
+      output: docs/mockups/index.html
+    on_fail:
+      goto: mockups
+      max: 3
+      feedback: "La generación anterior se cortó (stall/timeout). Reintenta escribiendo los mockups de forma INCREMENTAL: un HTML por superficie en docs/mockups/ (patient.html, doctor.html, admin.html, pharmacy.html) más index.html, guardando tras cada uno. Continúa donde quedó si hay parciales."

@@ -10,6 +10,7 @@ version: 1.0.0
 steps:
   - id: plan
     type: design
+    label: Plan de iteración
     agent: iteration-planner
     inputs:
       change_request: $trigger.instructions   # the feature/improvement to add
@@ -27,6 +28,7 @@ steps:
   # stories/sprints are untouched; the new ones become buildable backlog).
   - id: handoff
     type: ticket_publish
+    label: Handoff → stories
     inputs:
       backlog: docs/backlog.yaml
       repo: $trigger.repo               # empty for a Brain run → OnSeed resolves from project_id

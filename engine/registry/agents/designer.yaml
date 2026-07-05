@@ -1,6 +1,6 @@
 id: designer
 version: 1.1.0
-model: claude-sonnet-4-6
+model: claude-opus-4-8
 skills:
   - mockup-html
   - design-system

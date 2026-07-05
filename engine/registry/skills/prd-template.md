@@ -3,6 +3,13 @@
 Use this template as the structure for the **Product Requirements Document** produced by the PM phase.
 Every section is mandatory. Derive content from the project brief; surface gaps as open questions.
 
+**Modelo delta (obligatorio).** Cada requisito es una afirmación MUST/SHALL y lleva ≥1
+**escenario** GIVEN/WHEN/THEN — ese escenario ES el contrato de aceptación (lo hereda la
+story y alimenta la verificación). En una ITERACIÓN sobre un producto existente, agrupa los
+requisitos bajo encabezados `## ADDED Requirements`, `## MODIFIED Requirements`,
+`## REMOVED Requirements` (solo lo que cambia); en el diseño inicial todos son ADDED implícito
+y se listan normal por epic.
+
 ---
 
 ## Product Requirements Document
@@ -14,14 +21,25 @@ One sentence: what this PRD authorises the team to build and why it matters.
 Two to four sentences of context. Link to the project brief.
 
 ### 3. Functional Requirements
-Group by epic. Each requirement: unique ID (FR-01), verb-first statement, priority (P0/P1/P2).
+Group by epic. Each requirement: unique ID (FR-01), MUST/SHALL statement, priority (P0/P1/P2),
+and **at least one scenario** in GIVEN/WHEN/THEN form. The scenario is the falsifiable
+acceptance contract — the story inherits it and the verification checks it.
 
 #### Epic 1 — <name>
-- FR-01 [P0]: The system shall …
-- FR-02 [P1]: …
+- **FR-01 [P0]**: The system MUST …
+  - Scenario: <nombre corto>
+    - GIVEN <estado/precondición>
+    - WHEN <acción del actor>
+    - THEN <resultado observable>
+  - Scenario: <caso borde o de error, si aplica>
+    - GIVEN … WHEN … THEN …
+- **FR-02 [P1]**: The system MUST …
+  - Scenario: …
+    - GIVEN … WHEN … THEN …
 
 #### Epic 2 — <name>
-- FR-03 [P0]: …
+- **FR-03 [P0]**: …
+  - Scenario: … (GIVEN/WHEN/THEN)
 
 ### 4. Non-Functional Requirements
 - NFR-01 [Performance]: …
@@ -51,5 +69,6 @@ Numbered list of unresolved items blocking the next phase (Architecture).
 
 ---
 
-**Quality bar**: Every FR must be testable. Every epic has at least one acceptance criterion.
-No requirement is both functional AND non-functional — separate them cleanly.
+**Quality bar**: Every FR is a MUST/SHALL statement carrying ≥1 GIVEN/WHEN/THEN scenario that
+can fail — that scenario is the acceptance contract the story inherits. No requirement is both
+functional AND non-functional — separate them cleanly.

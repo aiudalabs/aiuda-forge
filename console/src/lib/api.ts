@@ -6,6 +6,7 @@
 // (lib/mock) para que la UI se construya/vea sin el backend arriba. `getApiMode()` expone el
 // modo activo para que la UI lo muestre y para que el WS sepa si conectarse.
 
+import { load as loadYaml } from "js-yaml";
 import { API_URL, FORCE_MOCK, HEALTH_TIMEOUT_MS } from "./config";
 import { authHeaders, handleUnauthorized } from "./auth";
 import {
@@ -1027,38 +1028,69 @@ export async function listProjects(): Promise<Project[]> {
 // de los steps con el mapa hardcodeado de la especificación.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Mapa de fases del workflow "design": stepId del agente → nombre display.
-// El gate de cada fase NO siempre es "<stepId>_gate" (architecture → arch_gate),
-// así que el id del gate es explícito. handoff no tiene gate.
-const DESIGN_PHASE_MAP: { stepId: string; name: string; gateId: string }[] = [
-  { stepId: "discovery", name: "Descubrimiento", gateId: "discovery_gate" },
-  { stepId: "prd", name: "PRD", gateId: "prd_gate" },
-  { stepId: "architecture", name: "Arquitectura", gateId: "arch_gate" },
-  { stepId: "ui", name: "UI / Pantallas", gateId: "ui_gate" },
-  { stepId: "mockups", name: "Mockups", gateId: "mockups_gate" },
-  { stepId: "backlog", name: "Backlog", gateId: "backlog_gate" },
-  { stepId: "handoff", name: "Handoff → stories", gateId: "" },
-];
+// Las fases NO se hardcodean: se DERIVAN del workflow (datos). Se trae el YAML del
+// registry (GET /registry/workflows/<id>) y se parsea: cada step que NO es human_gate
+// es una fase; su gate es el human_gate que le sigue inmediatamente. El nombre sale del
+// campo `label:` del step (dato en el YAML); si falta, se humaniza el id. Funciona para
+// CUALQUIER workflow que el usuario defina, sin tocar este código.
+interface PhaseDef {
+  stepId: string;
+  name: string;
+  gateId: string;
+}
 
-// El workflow "iterate" (registry/workflows/iterate.yaml) NO regenera los docs:
-// planifica un backlog DELTA sobre el producto ya desplegado y lo publica. Solo
-// dos fases: el plan (con su gate) y el handoff. Step ids reales: plan / plan_gate
-// / handoff.
-const ITERATE_PHASE_MAP: { stepId: string; name: string; gateId: string }[] = [
-  { stepId: "plan", name: "Plan de iteración", gateId: "plan_gate" },
-  { stepId: "handoff", name: "Handoff → stories", gateId: "" },
-];
+interface WorkflowStepDef {
+  id: string;
+  type: string;
+  label?: string;
+}
 
-// Selecciona el mapa de fases según el workflow del run.
-function phaseMapFor(workflowID?: string) {
-  return workflowID === "iterate" ? ITERATE_PHASE_MAP : DESIGN_PHASE_MAP;
+function humanizeStepId(id: string): string {
+  return id
+    .split(/[_-]/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+function derivePhaseDefs(steps: WorkflowStepDef[]): PhaseDef[] {
+  const out: PhaseDef[] = [];
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i].type === "human_gate") continue; // los gates se adjuntan a su fase
+    const next = steps[i + 1];
+    const gateId = next && next.type === "human_gate" ? next.id : "";
+    out.push({
+      stepId: steps[i].id,
+      name: steps[i].label || humanizeStepId(steps[i].id),
+      gateId,
+    });
+  }
+  return out;
+}
+
+// Cache por workflow id: el YAML del workflow no cambia entre renders del run.
+const phaseTemplateCache = new Map<string, PhaseDef[]>();
+
+async function phaseTemplateFor(workflowID?: string): Promise<PhaseDef[]> {
+  const wf = workflowID || "design";
+  const cached = phaseTemplateCache.get(wf);
+  if (cached) return cached;
+  let defs: PhaseDef[] = [];
+  try {
+    const raw = await getRegistryItem("workflows", wf);
+    const doc = loadYaml(raw) as { steps?: WorkflowStepDef[] } | undefined;
+    defs = derivePhaseDefs(doc?.steps ?? []);
+  } catch {
+    defs = [];
+  }
+  phaseTemplateCache.set(wf, defs);
+  return defs;
 }
 
 interface KernelRunWithSteps extends KernelRun {
   steps?: KernelStep[];
 }
 
-function mapDesignRun(r: KernelRunWithSteps): DesignRun {
+function mapDesignRun(r: KernelRunWithSteps, phaseDefs: PhaseDef[]): DesignRun {
   let idea = "";
   let project_id: string | undefined;
   let repo: string | undefined;
@@ -1085,7 +1117,7 @@ function mapDesignRun(r: KernelRunWithSteps): DesignRun {
     return (s?.status ?? "QUEUED") as DesignStepStatus;
   };
 
-  const phases: DesignPhase[] = phaseMapFor(r.workflow_id).map(({ stepId, name, gateId }) => ({
+  const phases: DesignPhase[] = phaseDefs.map(({ stepId, name, gateId }) => ({
     stepId,
     name,
     gateId,
@@ -1124,9 +1156,12 @@ export async function listDesignRuns(): Promise<DesignRun[]> {
   if (await isMock()) return [...mockDesignRuns];
   const res = await http<KernelRun[] | { runs: KernelRun[] }>(`/runs`);
   const raw = Array.isArray(res) ? res : res?.runs ?? [];
-  return raw
-    .filter((r) => r.workflow_id === "design" || r.workflow_id === "iterate")
-    .map((r) => mapDesignRun(r));
+  const filtered = raw.filter((r) => r.workflow_id === "design" || r.workflow_id === "iterate");
+  // Fases derivadas del workflow de cada run (cacheado por workflow id).
+  const wfIds = Array.from(new Set(filtered.map((r) => r.workflow_id || "design")));
+  const templates = new Map<string, PhaseDef[]>();
+  await Promise.all(wfIds.map(async (id) => templates.set(id, await phaseTemplateFor(id))));
+  return filtered.map((r) => mapDesignRun(r, templates.get(r.workflow_id || "design") ?? []));
 }
 
 export interface CreateDesignRunInput {
@@ -1146,7 +1181,7 @@ export async function createDesignRun(input: CreateDesignRunInput): Promise<Desi
       created_at: Date.now(),
       project_id: input.project_id,
       repo: input.repo,
-      phases: DESIGN_PHASE_MAP.map(({ stepId, name, gateId }) => ({
+      phases: (await phaseTemplateFor("design")).map(({ stepId, name, gateId }) => ({
         stepId,
         name,
         gateId,
@@ -1168,7 +1203,7 @@ export async function createDesignRun(input: CreateDesignRunInput): Promise<Desi
       },
     }),
   });
-  return mapDesignRun(r);
+  return mapDesignRun(r, await phaseTemplateFor("design"));
 }
 
 export interface CreateIterationRunInput {
@@ -1193,7 +1228,7 @@ export async function createIterationRun(input: CreateIterationRunInput): Promis
       created_at: Date.now(),
       project_id: input.project_id,
       repo: input.repo,
-      phases: ITERATE_PHASE_MAP.map(({ stepId, name, gateId }) => ({
+      phases: (await phaseTemplateFor("iterate")).map(({ stepId, name, gateId }) => ({
         stepId,
         name,
         gateId,
@@ -1215,7 +1250,7 @@ export async function createIterationRun(input: CreateIterationRunInput): Promis
       },
     }),
   });
-  return mapDesignRun(r);
+  return mapDesignRun(r, await phaseTemplateFor("iterate"));
 }
 
 /** Detalle de un design run con fases actualizadas desde los steps. */
@@ -1226,7 +1261,7 @@ export async function getDesignRun(id: string): Promise<DesignRun> {
     return { ...run };
   }
   const r = await http<KernelRunWithSteps>(`/runs/${id}`);
-  return mapDesignRun(r);
+  return mapDesignRun(r, await phaseTemplateFor(r.workflow_id));
 }
 
 /** Trae el artefacto (documento markdown) producido por un paso de diseño. */

@@ -1,0 +1,7 @@
+id: data-modeler
+version: 1.0.0
+model: claude-opus-4-8
+skills:
+  - data-model-template
+tools: [read, write]
+role: "Derive the product data model from the PRD — entities, fields, state machines with server-side transition owners, data placement, and query costs — before the architecture is designed."

@@ -28,6 +28,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # DooD workdir: same absolute path on host and in container (see note above)
       - ${FORGE_WORKDIR}:${FORGE_WORKDIR}
+      # Dev loop: mount the registry (methodology = data) so host edits to
+      # workflows/agents/skills are live in the running control WITHOUT a rebuild.
+      # Read-only: the engine only READS the registry (it never writes methodology back).
+      - ./engine/registry:/app/registry:ro
     environment:
       VIBEFORGE_ADDR: ":8080"
       VIBEFORGE_DB: /data/vibeforge.db

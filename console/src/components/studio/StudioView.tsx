@@ -84,7 +84,9 @@ function activePhaseIndex(phases: DesignPhase[]): number {
 // Pasos con artefacto visible (los que producen un doc). "plan" es el paso del
 // workflow "iterate": escribe docs/backlog.yaml (el backlog DELTA) igual que
 // "backlog" en el diseño completo, así que se renderiza como backlog.
-const ARTIFACT_STEPS = new Set(["discovery", "prd", "architecture", "ui", "mockups", "backlog", "plan", "handoff"]);
+// NO se hardcodea qué fases tienen doc: todo paso DONE expone su artefacto (el endpoint
+// GET /runs/{id}/artifacts/{stepId} devuelve el result de cualquier step completado).
+// hasArtifact se deriva de designStatus === "DONE" — funciona para cualquier fase nueva.
 
 // Pasos cuyo artefacto es un backlog.yaml (se renderiza con tarjetas de historia).
 const BACKLOG_STEPS = new Set(["backlog", "plan"]);
@@ -580,8 +582,7 @@ function PhasePanel({
   state: PhaseState;
 }) {
   const t = useT();
-  const hasArtifact =
-    ARTIFACT_STEPS.has(phase.stepId) && phase.designStatus === "DONE";
+  const hasArtifact = phase.designStatus === "DONE";
   const isRunning = phase.designStatus === "RUNNING";
   // Live-log de la fase en curso: mismo stream WS que el board, pero compacto.
   const liveEvents = useLiveEvents(runId, isRunning);

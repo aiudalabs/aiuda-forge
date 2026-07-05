@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,8 +58,17 @@ type StepRunner struct {
 // NewStepRunner builds an agent step runner.
 func NewStepRunner(backend Backend, agents Loader) *StepRunner {
 	// Absolute backstop generous (2h) so a long-but-progressing task isn't guillotined;
-	// the idle watchdog (8m of no streamed output → stalled) is the real guard.
-	return &StepRunner{Backend: backend, Agents: agents, Timeout: 2 * time.Hour, IdleTimeout: 8 * time.Minute}
+	// the idle watchdog (no streamed output → stalled) is the real guard. The idle
+	// window is CONFIGURABLE (VIBEFORGE_AGENT_IDLE_TIMEOUT_MIN, default 8) — a
+	// legitimately-working agent can go quiet during a large generation or a provider
+	// rate-limit pause, and killing it there is a false positive. NOT hardcoded.
+	idle := 8 * time.Minute
+	if v := os.Getenv("VIBEFORGE_AGENT_IDLE_TIMEOUT_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			idle = time.Duration(n) * time.Minute
+		}
+	}
+	return &StepRunner{Backend: backend, Agents: agents, Timeout: 2 * time.Hour, IdleTimeout: idle}
 }
 
 // backendFor picks the backend for a step: the manifest's named backend when it
