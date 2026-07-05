@@ -24,6 +24,15 @@ type ControlOps interface {
 	RejectStep(runID, step, reason string) error
 	Metrics(projectID string) (map[string]any, error)
 	ActiveState(projectID string) (map[string]any, error)
+
+	// Registry / method authoring. The registry (workflows/agents/skills) IS the
+	// methodology, as DATA. read+list are reversible; write+delete MUTATE that data
+	// and are gated behind human approval. This is what turns the Brain from an
+	// operator of flows into an author of the method.
+	ListRegistry(kind string) ([]string, error)
+	ReadRegistry(kind, id string) (string, error)
+	WriteRegistry(kind, id, content string) error
+	DeleteRegistry(kind, id string) error
 }
 
 // EngineOps is the production ControlOps, wired to the kernel Engine, store, and
@@ -32,6 +41,10 @@ type EngineOps struct {
 	Engine  *workflow.Engine
 	Store   *store.Store
 	Tickets *tickets.Store
+	// RegistryDir is the root of the methodology registry (workflows/, agents/,
+	// skills/). Wired from VIBEFORGE_REGISTRY so the Brain edits the SAME files the
+	// kernel reads — no privileged path (kernel constitution).
+	RegistryDir string
 }
 
 func (o EngineOps) Status() (bool, int64) {

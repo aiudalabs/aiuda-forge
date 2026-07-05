@@ -170,6 +170,49 @@ var registry = map[string]toolDef{
 			return ok(ops.RejectStep(argStr(input, "run_id"), argStr(input, "step"), argStr(input, "reason")))
 		},
 	},
+
+	// ---- registry / method authoring -----------------------------------------
+	// The registry IS the methodology, as data. These let the Brain author it:
+	// create a new flow, edit a persona, change a model, add a skill — the same
+	// edits a human operator makes by hand. read/list are reversible; write/delete
+	// are mutating and proposed for approval.
+	"list_registry": {
+		Tool: Tool{Name: "list_registry", Description: "List the ids of registry items of a kind. kind = workflow (a flow) | agent (a persona's manifest: model/skills/tools/role) | agent_persona (a persona's prompt markdown) | skill (a method fragment).", InputSchema: obj(map[string]any{"kind": strp("workflow | agent | agent_persona | skill")}, "kind")},
+		Kind: Reversible, MinRole: "viewer",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			ids, err := ops.ListRegistry(argStr(input, "kind"))
+			return jsonStr(ids), err
+		},
+	},
+	"read_registry": {
+		Tool: Tool{Name: "read_registry", Description: "Read the raw content of a registry item (YAML for workflow/agent, markdown for agent_persona/skill). Call before editing so you replace the FULL file, not a fragment.", InputSchema: obj(map[string]any{"kind": strp("workflow | agent | agent_persona | skill"), "id": strp("the item id")}, "kind", "id")},
+		Kind: Reversible, MinRole: "viewer",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			c, err := ops.ReadRegistry(argStr(input, "kind"), argStr(input, "id"))
+			if err != nil {
+				return "", err
+			}
+			return jsonStr(map[string]any{"content": c}), nil
+		},
+	},
+	"write_registry": {
+		Tool: Tool{Name: "write_registry", Description: "Create or replace a registry item — this AUTHORS THE METHOD: a new workflow, an edited persona, a changed model, a new skill. `content` is the FULL file (YAML for workflow/agent, markdown for agent_persona/skill). Validated with the kernel's own parser (an invalid workflow/agent is rejected); a written workflow goes live for the next run. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"kind": strp("workflow | agent | agent_persona | skill"), "id": strp("the item id"), "content": strp("the FULL file content")}, "kind", "id", "content")},
+		Kind: Mutating, MinRole: "editor",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			a := args(input)
+			kind, _ := a["kind"].(string)
+			id, _ := a["id"].(string)
+			content, _ := a["content"].(string)
+			return ok(ops.WriteRegistry(kind, id, content))
+		},
+	},
+	"delete_registry": {
+		Tool: Tool{Name: "delete_registry", Description: "Delete a registry item (workflow/agent/agent_persona/skill). MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"kind": strp("workflow | agent | agent_persona | skill"), "id": strp("the item id")}, "kind", "id")},
+		Kind: Mutating, MinRole: "editor",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			return ok(ops.DeleteRegistry(argStr(input, "kind"), argStr(input, "id")))
+		},
+	},
 }
 
 // toolList returns the LLM-facing tool schemas (stable order not required).

@@ -276,7 +276,7 @@ func Build(cfg Config) (*App, error) {
 		if bErr != nil {
 			return nil, fmt.Errorf("brain store: %w", bErr)
 		}
-		ops := brain.EngineOps{Engine: eng, Store: st, Tickets: tix}
+		ops := brain.EngineOps{Engine: eng, Store: st, Tickets: tix, RegistryDir: cfg.RegistryRoot}
 		llm := brain.NewClient(key, os.Getenv("BRAIN_MODEL"))
 		emit := func(convID, typ string, data map[string]any) { _, _ = st.AppendEvent(convID, "", typ, data) }
 		srv.Brain = brain.New(llm, ops, bst, emit)

@@ -54,6 +54,10 @@ func (o *fakeOps) StartRun(wf string, _ map[string]any) (string, error) {
 func (o *fakeOps) ApproveStep(string, string) error        { return nil }
 func (o *fakeOps) RejectStep(string, string, string) error { return nil }
 func (o *fakeOps) Metrics(string) (map[string]any, error)  { return map[string]any{}, nil }
+func (o *fakeOps) ListRegistry(string) ([]string, error)       { return nil, nil }
+func (o *fakeOps) ReadRegistry(string, string) (string, error) { return "", nil }
+func (o *fakeOps) WriteRegistry(string, string, string) error  { return nil }
+func (o *fakeOps) DeleteRegistry(string, string) error         { return nil }
 func (o *fakeOps) ActiveState(string) (map[string]any, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
