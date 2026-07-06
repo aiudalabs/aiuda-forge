@@ -155,7 +155,7 @@ button {
 .brand-by {
   display: inline-flex;
   align-items: baseline;
-  gap: 2px;
+  gap: 1px;
   font-family: var(--display);
   font-size: 11.5px;
   color: var(--ink4);
@@ -169,7 +169,7 @@ button {
   font-size: inherit;
   font-weight: 900;
   letter-spacing: -0.04em;
-  gap: 2px;
+  gap: 1px;
 }
 .brand-by .logo .labs {
   font-size: inherit;
