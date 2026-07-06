@@ -12,7 +12,7 @@ import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
 import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
-import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep } from "@/lib/hooks";
+import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useCreateIterationRun } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
@@ -154,6 +154,24 @@ export function StudioDocs() {
     if (!refine.trim() || !projectRun || !activeStep) return;
     rerun.mutate([projectRun.id, activeStep, refine.trim()], { onSuccess: () => setRefine("") });
   }
+
+  // Change Request (C4): a PROJECT-level action (may touch several docs) — lives in
+  // the header, not inside a phase. Plans a delta backlog on top of the shipped product.
+  const createCR = useCreateIterationRun();
+  const [crOpen, setCrOpen] = useState(false);
+  const [crText, setCrText] = useState("");
+  function submitCR() {
+    if (!crText.trim() || !project?.repo || !projectId) return;
+    createCR.mutate(
+      { project_id: projectId, repo: project.repo, changeRequest: crText.trim() },
+      {
+        onSuccess: () => {
+          setCrOpen(false);
+          setCrText("");
+        },
+      },
+    );
+  }
   const { data: history } = useDocHistory(projectId, active && !isHtml(active) ? active : null);
 
   const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active, ver ?? "design");
@@ -179,14 +197,22 @@ export function StudioDocs() {
   return (
     <div className="wrap">
       <div className="eyebrow acc">{t("studio.docs.eyebrow")}</div>
-      <h2 className="docs-h1">
-        {project.name}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+        <h2 className="docs-h1" style={{ margin: 0 }}>
+          {project.name}
+          {project.repo && (
+            <a className="docs-repo" href={project.repo} target="_blank" rel="noreferrer">
+              {t("studio.docs.repo")}
+            </a>
+          )}
+        </h2>
+        <div style={{ flex: 1 }} />
         {project.repo && (
-          <a className="docs-repo" href={project.repo} target="_blank" rel="noreferrer">
-            {t("studio.docs.repo")}
-          </a>
+          <button className="btn primary sm" onClick={() => setCrOpen(true)}>
+            {t("studio.view.newIteration")}
+          </button>
         )}
-      </h2>
+      </div>
 
       <div className="docs-layout">
         {/* Page tree */}
@@ -325,6 +351,31 @@ export function StudioDocs() {
           )}
         </section>
       </div>
+      {crOpen && (
+        <div
+          onClick={() => setCrOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(13,13,15,.42)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}
+        >
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "min(560px,94vw)" }}>
+            <h3 style={{ fontSize: 18 }}>{t("studio.iteration.title")}</h3>
+            <p className="role">{t("studio.iteration.hint")}</p>
+            <textarea
+              value={crText}
+              onChange={(e) => setCrText(e.target.value)}
+              placeholder={t("studio.iteration.placeholder")}
+              style={{ width: "100%", minHeight: 90, background: "var(--bg)", border: "1px solid var(--stroke-strong)", borderRadius: 10, padding: 11, font: "inherit", color: "var(--ink)", resize: "vertical", marginTop: 6 }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+              <button className="btn ghost" onClick={() => setCrOpen(false)}>
+                {t("studio.iteration.cancel")}
+              </button>
+              <button className="btn primary" disabled={!crText.trim() || createCR.isPending} onClick={submitCR}>
+                {createCR.isPending ? t("studio.iteration.launching") : t("studio.iteration.launch")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
