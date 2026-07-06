@@ -37,6 +37,14 @@ import type { DesignPhase, DesignRun, DesignStepStatus, Project } from "@/lib/ty
 // Estado compuesto de una fase: derivado del estado del paso de diseño y del gate.
 type PhaseState = "pending" | "running" | "awaiting" | "approved" | "failed";
 
+// Nombre de fase i18n: usa la clave studio.phase.<stepId> si existe; si no cae al
+// label del workflow (para fases custom de un flujo definido por el usuario).
+function phaseLabel(t: (k: string) => string, stepId: string, fallback: string): string {
+  const k = "studio.phase." + stepId;
+  const v = t(k);
+  return v === k ? fallback : v;
+}
+
 function phaseState(p: DesignPhase): PhaseState {
   // Fase sin gate (handoff): el estado del step ES el estado de la fase; si no,
   // un run 100% terminado quedaría clavado en "6/7 · running" para siempre.
@@ -298,7 +306,7 @@ function ProjectCard({
           {t("studio.view.phasesProgress", { done, total })}
         </span>
         {curPhase && state !== "approved" && (
-          <span className="proj-cur">{curPhase.name}</span>
+          <span className="proj-cur">{phaseLabel(t, curPhase.stepId, curPhase.name)}</span>
         )}
       </div>
     </button>
@@ -408,10 +416,10 @@ function ProjectDetail({
               key={p.stepId}
               className={`phase-step${isView ? " active" : ""} ${PHASE_GLYPH_CLS[st]}`}
               onClick={() => setSelectedPhaseIdx(i)}
-              title={p.name}
+              title={phaseLabel(t, p.stepId, p.name)}
             >
               <span className="ps-icon">{PHASE_ICON[st]}</span>
-              <span className="ps-name">{p.name}</span>
+              <span className="ps-name">{phaseLabel(t, p.stepId, p.name)}</span>
             </button>
           );
         })}
@@ -625,7 +633,7 @@ function PhasePanel({
       {/* Cabecera de fase */}
       <div className="phase-panel-header">
         <div>
-          <h3 className="phase-panel-title">{phase.name}</h3>
+          <h3 className="phase-panel-title">{phaseLabel(t, phase.stepId, phase.name)}</h3>
           <PhaseStatusBadge state={state} stepId={phase.stepId} designStatus={phase.designStatus} />
         </div>
       </div>

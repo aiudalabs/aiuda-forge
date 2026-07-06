@@ -22,7 +22,9 @@ SyntaxHighlighter.registerLanguage("yaml", yaml);
 // i18n key; null means use the raw filename.
 const DOC_META: Record<string, { titleKey: string | null; icon: string; order: number }> = {
   "BRIEF.md": { titleKey: "studio.docs.title.brief", icon: "✦", order: 1 },
+  "CONSTITUTION.md": { titleKey: "studio.docs.title.constitution", icon: "⬡", order: 1.5 },
   "PRD.md": { titleKey: "studio.docs.title.prd", icon: "▤", order: 2 },
+  "DATA_MODEL.md": { titleKey: "studio.docs.title.dataModel", icon: "▦", order: 2.5 },
   "ARCHITECTURE.md": { titleKey: "studio.docs.title.architecture", icon: "◫", order: 3 },
   "UI_SCREENS.md": { titleKey: "studio.docs.title.uiScreens", icon: "▢", order: 4 },
   "DESIGN_SYSTEM.md": { titleKey: "studio.docs.title.designSystem", icon: "◈", order: 5 },
