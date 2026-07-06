@@ -5,7 +5,7 @@
 // design run. Left: a page tree; right: the rendered markdown. Always available
 // for the active project, so "what we're building" never disappears.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -114,11 +114,12 @@ export function StudioDocs() {
   const projectId = project?.id ?? null;
   const [branch, setBranch] = useState<"design" | "main">("design");
   const { data: docs, isLoading, isError } = useProjectDocs(projectId, branch);
-  // El pipeline (fases/gates) vive INLINE aquí como un estado de la Especificación
-  // (C6b): abierto por defecto mientras hay un run activo, colapsable para quien
-  // solo quiere leer los docs mientras una fase corre en segundo plano.
-  const [pipelineOpen, setPipelineOpen] = useState(true);
   const [showNewProject, setShowNewProject] = useState(false);
+  // El pipeline (stepper de fases, live-log, artefactos, aprobar/rechazar) vive
+  // INLINE aquí como un estado de la Especificación (C6b): siempre visible —
+  // la misma experiencia en vivo que antes tenía su propio tab "Diseño", no una
+  // versión resumida — mientras haya un run activo. Sin toggle: nada que ocultar.
+  const pipelineRef = useRef<HTMLDivElement>(null);
 
   // Subdirectory entries are expanded by the API (one level), so all entries are
   // files. Sort by the logical reading order defined in DOC_META.
@@ -268,12 +269,11 @@ export function StudioDocs() {
         {activeRun && (
           <button
             className="btn ghost sm"
-            onClick={() => setPipelineOpen((v) => !v)}
+            onClick={() => pipelineRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
             style={{ display: "inline-flex", alignItems: "center", gap: 7 }}
           >
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: awaitingCount > 0 ? "var(--accent)" : "var(--navy)" }} />
-            {awaitingCount > 0 ? t("studio.docs.awaitingN", { n: awaitingCount }) : t("studio.docs.runActive")} ·{" "}
-            {pipelineOpen ? t("studio.docs.hidePipeline") : t("studio.docs.openPipeline")}
+            {awaitingCount > 0 ? t("studio.docs.awaitingN", { n: awaitingCount }) : t("studio.docs.runActive")}
           </button>
         )}
         <div style={{ flex: 1 }} />
@@ -292,7 +292,7 @@ export function StudioDocs() {
         )}
       </div>
 
-      {awaitingCount > 0 && !pipelineOpen && (
+      {awaitingCount > 0 && (
         <div
           style={{
             display: "flex",
@@ -309,14 +309,20 @@ export function StudioDocs() {
           <span style={{ flex: 1, fontSize: 13, color: "var(--ink2)" }}>
             {t("studio.docs.awaitingBanner", { n: awaitingCount })}
           </span>
-          <button className="btn primary sm" onClick={() => setPipelineOpen(true)}>
+          <button
+            className="btn primary sm"
+            onClick={() => pipelineRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          >
             {t("studio.docs.reviewChanges")}
           </button>
         </div>
       )}
 
-      {activeRun && pipelineOpen && (
-        <div className="card" style={{ marginBottom: 20 }}>
+      {/* Pipeline en vivo: stepper + live-log + artefactos + aprobar/rechazar —
+          la MISMA vista que antes tenía su propio tab "Diseño", ahora inline y
+          siempre visible mientras haya un run activo (sin resumir/colapsar). */}
+      {activeRun && (
+        <div ref={pipelineRef} className="card" style={{ marginBottom: 20 }}>
           <DesignPipeline runId={activeRun.id} />
         </div>
       )}
