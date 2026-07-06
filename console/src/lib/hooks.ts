@@ -510,6 +510,9 @@ export function useActiveDesignRun(projectId: string | null) {
     const isActive = (r: DesignRun) =>
       r.status === "RUNNING" ||
       r.status === "AWAITING" ||
+      // FAILED too: the inline pipeline is the ONLY way to see/relaunch a failed design
+      // now that the standalone run list is gone — otherwise a failed run is a dead end.
+      r.status === "FAILED" ||
       (r.phases ?? []).some((p) => p.gateStatus === "AWAITING" || p.designStatus === "RUNNING");
     return (
       (runs ?? [])
