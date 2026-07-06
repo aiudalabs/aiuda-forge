@@ -63,7 +63,7 @@ cp .env.example .env
 nano .env
 ```
 
-Llená `.env` con esto. **Requerida** = sin ella no arranca bien.
+Llena `.env` con esto. **Requerida** = sin ella no arranca bien.
 
 ### Básicas
 
@@ -173,6 +173,24 @@ docker compose logs -f control    # "vibeforge control listening on :8080 ... 1 
    `CLAUDE_CODE_OAUTH_TOKEN` como secret del repo para que el workflow `claude.yml` escriba código
    en GitHub Actions. Forja **no** lo almacena, solo lo siembra.
 6. Ya podés crear tu primer proyecto desde `/` (nombre + owner + descripción).
+
+---
+
+## 5.1 Cómo entra un usuario nuevo (Pedro) — sin setear nada por detrás
+
+El admin (arriba) solo hace falta **una vez** para conectar la GitHub App de la instancia.
+De ahí en más, **cualquiera al que le pases el link entra solo**:
+
+1. Abre `https://forja.aiudalabs.com` → **Continuar con GitHub**.
+2. GitHub le pide autorizar la App → vuelve logueado (la cuenta se crea sola, no necesita tu
+   admin ni que le setees nada).
+3. Cae en la pantalla de crear proyecto, que ya muestra **sus** organizaciones (nombre +
+   orgs). Crea el proyecto → el repo se crea en **su** cuenta/org, con **su** token.
+4. Diseña. Los agentes de diseño usan el Claude **del operador** (compartido) — Pedro no
+   configura ninguna credencial de IA.
+
+Si alguien entra con email/contraseña (o su GitHub no está conectado), la pantalla le muestra
+una tarjeta **"Conectá tu GitHub"** para hacerlo en 10 segundos. No hay pasos ocultos.
 
 ---
 
