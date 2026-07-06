@@ -281,6 +281,28 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
         )}
       </div>
 
+      {awaitingCount > 0 && onOpenPipeline && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            background: "var(--accent-soft)",
+            border: "1px solid var(--accent-line)",
+            borderRadius: "var(--r)",
+            padding: "12px 16px",
+            marginBottom: 18,
+          }}
+        >
+          <span style={{ fontSize: 15 }}>⚠</span>
+          <span style={{ flex: 1, fontSize: 13, color: "var(--ink2)" }}>
+            {t("studio.docs.awaitingBanner", { n: awaitingCount })}
+          </span>
+          <button className="btn primary sm" onClick={onOpenPipeline}>
+            {t("studio.docs.reviewChanges")}
+          </button>
+        </div>
+      )}
       <div className="docs-layout">
         {/* Page tree */}
         <aside className="docs-tree">
