@@ -102,7 +102,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		if req.Org != "" {
 			org = req.Org
 		}
-		gh := github.New()
+		gh := s.ghForUser(r.Context())
 		// GitHub caps a repo description at 350 chars (a longer one fails the create
 		// with HTTP 422). Truncate for the repo; the full description is stored on the
 		// project row below.
@@ -438,22 +438,6 @@ func ghCLIUser() (string, error) {
 	return strings.TrimSpace(buf.String()), nil
 }
 
-// ghCLIOrgs returns the orgs the gh-authenticated user belongs to.
-func ghCLIOrgs() ([]string, error) {
-	cmd := exec.Command("gh", "api", "user/orgs", "--paginate", "--jq", ".[].login")
-	var buf bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &buf, &buf
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, l := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			out = append(out, l)
-		}
-	}
-	return out, nil
-}
 
 // githubOrgs lists the owners (the gh user + their orgs) a repo can be created under —
 // powers the org picker on project creation. Best-effort: a gh error still returns the
@@ -467,14 +451,12 @@ func (s *Server) githubOrgs(w http.ResponseWriter, r *http.Request) {
 			owners = append(owners, o)
 		}
 	}
-	if user, err := ghCLIUser(); err == nil {
-		add(user)
+	// The CURRENT user's owners (their login + orgs) via their token, or the host's if
+	// they haven't connected GitHub — Owners() resolves that. Plus the configured default
+	// so the picker is never empty.
+	for _, o := range s.ghForUser(r.Context()).Owners(r.Context()) {
+		add(o)
 	}
 	add(s.ghOrg())
-	if orgs, err := ghCLIOrgs(); err == nil {
-		for _, o := range orgs {
-			add(o)
-		}
-	}
 	writeJSON(w, http.StatusOK, map[string]any{"owners": owners})
 }

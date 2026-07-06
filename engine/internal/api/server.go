@@ -129,6 +129,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /auth/register", s.needAuth(s.register))
 	m.HandleFunc("POST /auth/logout", s.needAuth(s.logout))
 	m.HandleFunc("GET /auth/me", s.needAuth(s.me))
+	// Onboarding: what the current user still needs to self-serve (GitHub connected?).
+	m.HandleFunc("GET /me/capabilities", s.capabilities)
 	m.HandleFunc("POST /auth/change-password", s.needAuth(s.changePassword))
 	// GitHub OAuth (onboarding Forja): setup de la App vía manifest + login.
 	m.HandleFunc("GET /setup/github-app", s.setupGitHubApp)
