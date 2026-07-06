@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"regexp"
 	"strconv"
@@ -60,6 +61,34 @@ func (e *Engine) RetryRun(runID string) error {
 		return err
 	}
 	return e.enqueueStep(runID, failed.WorkflowID, step, ctx)
+}
+
+// RerunStep re-runs a SINGLE step of an existing run IN PLACE: it reuses the run's
+// workdir (its docs are already there — no re-clone) and does NOT cascade to the
+// downstream steps. Use it to regenerate one phase after changing that phase's
+// persona/model — e.g. re-run `mockups` after switching the designer to Opus —
+// without re-running the whole design or re-publishing the backlog/PR to GitHub.
+func (e *Engine) RerunStep(runID, stepID string) error {
+	run, err := e.Store.GetRun(runID)
+	if err != nil {
+		return err
+	}
+	wf, err := e.Loader.Load(run.WorkflowID)
+	if err != nil {
+		return err
+	}
+	step, ok := wf.StepByID(stepID)
+	if !ok {
+		return fmt.Errorf("run %q has no step %q", runID, stepID)
+	}
+	if err := e.Store.ReopenRunForRerun(runID); err != nil {
+		return err
+	}
+	ctx, err := e.buildContext(runID)
+	if err != nil {
+		return err
+	}
+	return e.enqueueStepTerminal(runID, run.WorkflowID, step, ctx)
 }
 
 // ApproveStep resolves a human_gate that is awaiting approval for stepID in

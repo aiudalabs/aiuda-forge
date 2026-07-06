@@ -190,6 +190,13 @@ var registry = map[string]toolDef{
 			return ok(ops.RejectStep(argStr(input, "run_id"), argStr(input, "step"), argStr(input, "reason")))
 		},
 	},
+	"rerun_step": {
+		Tool: Tool{Name: "rerun_step", Description: "Re-run a SINGLE step of an existing run IN PLACE — regenerate one phase (e.g. mockups after changing the designer's model) reusing the run's existing docs, WITHOUT re-running the whole design or cascading to downstream steps (no GitHub re-publish). Overwrites that phase's artifact. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"run_id": strp("the run id"), "step": strp("the step to re-run, e.g. mockups | ui | prd | data_model")}, "run_id", "step")},
+		Kind: Mutating, MinRole: "editor",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			return ok(ops.RerunStep(argStr(input, "run_id"), argStr(input, "step")))
+		},
+	},
 
 	// ---- registry / method authoring -----------------------------------------
 	// The registry IS the methodology, as data. These let the Brain author it:

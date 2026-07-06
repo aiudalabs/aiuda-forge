@@ -123,6 +123,38 @@ func (e *Engine) enqueueStep(runID, workflowID string, step Step, ctx Context) e
 	})
 }
 
+// terminalMarker is an internal input key flagging a rerun-in-place task; advance()
+// honours it to stop the flow after the single re-run step (no downstream cascade).
+const terminalMarker = "__rerun_terminal"
+
+// enqueueStepTerminal enqueues a step that advance() will NOT cascade past on success.
+// Used by RerunStep to re-run one phase of an existing run in its existing workdir.
+func (e *Engine) enqueueStepTerminal(runID, workflowID string, step Step, ctx Context) error {
+	inputs := ResolveInputs(step.Inputs, ctx)
+	if inputs == nil {
+		inputs = map[string]any{}
+	}
+	inputs[terminalMarker] = true
+	payload, _ := json.Marshal(inputs)
+	return e.Store.EnqueueTask(&store.Task{
+		ID:         newID("task"),
+		RunID:      runID,
+		WorkflowID: workflowID,
+		StepID:     step.ID,
+		Type:       step.Type,
+		Payload:    string(payload),
+	})
+}
+
+func taskIsTerminal(task *store.Task) bool {
+	var m map[string]any
+	if json.Unmarshal([]byte(task.Payload), &m) == nil {
+		v, _ := m[terminalMarker].(bool)
+		return v
+	}
+	return false
+}
+
 // ExecuteOne claims one ready task, runs its step, reports the result, and
 // advances the workflow. Returns (false, nil) when no task is ready.
 func (e *Engine) ExecuteOne(ctx context.Context, workerID string) (bool, error) {
@@ -288,6 +320,12 @@ func (e *Engine) advance(wf *Workflow, task *store.Task, result StepResult) erro
 	}
 
 	if result.Success {
+		// A rerun-in-place task terminates the flow here: it must NOT cascade to the
+		// downstream steps (which for a design run would re-publish to GitHub). See
+		// RerunStep — this is how "re-run just one phase" stays surgical.
+		if taskIsTerminal(task) {
+			return e.Store.SetRunStatus(task.RunID, store.StatusDone)
+		}
 		next, ok := wf.Next(task.StepID)
 		if !ok {
 			return e.Store.SetRunStatus(task.RunID, store.StatusDone) // last step done

@@ -44,6 +44,7 @@ func (o *fakeOps) ListRuns(string) ([]map[string]any, error) { return nil, nil }
 func (o *fakeOps) GetRun(string) (map[string]any, error)     { return map[string]any{}, nil }
 func (o *fakeOps) CancelRun(string) error                    { return nil }
 func (o *fakeOps) RetryRun(string) error                     { return nil }
+func (o *fakeOps) RerunStep(string, string) error            { return nil }
 func (o *fakeOps) RequeueRun(string) (int, error)            { return 0, nil }
 func (o *fakeOps) StartRun(wf string, _ map[string]any) (string, error) {
 	o.mu.Lock()

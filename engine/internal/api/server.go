@@ -117,6 +117,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /runs/{id}/steps/{step}/approve", s.approveStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/reject", s.rejectStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/merge", s.mergeStep)
+	m.HandleFunc("POST /runs/{id}/steps/{step}/rerun", s.rerunStep)
 	m.HandleFunc("GET /runs/{id}/artifacts/{kind}", s.artifacts)
 	m.HandleFunc("GET /metrics", s.metrics)
 	m.HandleFunc("GET /analytics", s.metrics)
@@ -707,6 +708,22 @@ func (s *Server) mergeStep(w http.ResponseWriter, r *http.Request) {
 	// In the MVP the pr step already commits/pushes (PR_MODE=local); merge is an
 	// explicit ack endpoint so the contract surface exists and is exercisable.
 	writeJSON(w, http.StatusOK, map[string]any{"merged": step, "run": id})
+}
+
+// rerunStep re-runs a SINGLE step of an existing run in place (reusing its workdir,
+// no cascade to downstream) — e.g. regenerate `mockups` after switching the designer
+// to Opus, without re-running the whole design or re-publishing to GitHub.
+func (s *Server) rerunStep(w http.ResponseWriter, r *http.Request) {
+	id, step := r.PathValue("id"), r.PathValue("step")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
+	if err := s.Engine.RerunStep(id, step); err != nil {
+		httpErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rerun": step, "run": id})
 }
 
 func (s *Server) artifacts(w http.ResponseWriter, r *http.Request) {

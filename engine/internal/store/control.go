@@ -84,6 +84,38 @@ func (s *Store) ReopenRun(runID string) error {
 	return tx.Commit()
 }
 
+// ReopenRunForRerun reopens a run to RUNNING for an in-place single-step rerun.
+// Unlike ReopenRun (the retry path, which reopens only FAILED/CANCELLED), this also
+// accepts a DONE run: RerunStep enqueues exactly one TERMINAL step, so a reopened
+// run can't be left idle-but-RUNNING. Direct status set (DONE has no SM out-edge).
+func (s *Store) ReopenRunForRerun(runID string) error {
+	run, err := s.GetRun(runID)
+	if err != nil {
+		return err
+	}
+	switch run.Status {
+	case StatusDone, StatusFailed, StatusCancelled:
+		// allowed
+	case StatusRunning, StatusQueued:
+		return nil // already active
+	default:
+		return ErrIllegalTransition
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := s.now()
+	if _, err := tx.Exec(`UPDATE runs SET status=?, updated_at=? WHERE id=?`, string(StatusRunning), now, runID); err != nil {
+		return err
+	}
+	if err := emitTx(tx, runID, "", run.ProjectID, EventRunStatusChanged, map[string]any{"from": run.Status, "to": StatusRunning, "reason": "rerun"}, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // LastRetryAt returns the created_at (ms) of the most recent retry boundary for
 // a run — the run.status_changed event ReopenRun emits with reason "retry" — or
 // 0 if the run has never been retried. The engine uses it as a watermark so a
