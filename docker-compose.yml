@@ -56,6 +56,9 @@ services:
       VIBEFORGE_GHAPP_CREDS: /data/github-app.json
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # Brain (in-app assistant) LLM — the master orchestrator reasons better on Opus
+      # (judgment-heavy work); the Brain activates only when ANTHROPIC_API_KEY is set.
+      BRAIN_MODEL: ${BRAIN_MODEL:-claude-opus-4-8}
       GH_TOKEN: ${GH_TOKEN:-}
       TARGET_REMOTE: ${TARGET_REMOTE:-}
     networks:
