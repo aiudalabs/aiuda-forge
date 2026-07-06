@@ -4,11 +4,11 @@
 // campana con contador de notificaciones (awaiting/failed) + popover · avatar.
 
 import { useRouter, usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { sectionForPath } from "@/lib/sections";
 import { useApiMode, useNotifications, useSpendToday } from "@/lib/hooks";
 import { useActiveProjectId } from "@/lib/activeProject";
-import { logout } from "@/lib/auth";
+import { logout, me, type LoginUser } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 
@@ -18,6 +18,11 @@ export function Topbar() {
   const section = sectionForPath(path);
   const t = useT();
   const projectId = useActiveProjectId();
+  const [user, setUser] = useState<LoginUser | null>(null);
+  useEffect(() => {
+    me().then(setUser);
+  }, []);
+  const initials = user?.email ? user.email.split("@")[0].slice(0, 2).toUpperCase() : "·";
   const { data: spend } = useSpendToday(projectId);
   const { data: mode } = useApiMode();
   const { data: notifications = [] } = useNotifications(projectId);
@@ -85,13 +90,13 @@ export function Topbar() {
 
       <button
         className="ava"
-        title={t("top.logout")}
+        title={`${user?.email ?? ""} — ${t("top.logout")}`}
         onClick={async () => {
           await logout();
           window.location.href = "/login";
         }}
       >
-        NM
+        {initials}
       </button>
     </header>
   );
