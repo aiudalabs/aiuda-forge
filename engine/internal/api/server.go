@@ -644,7 +644,7 @@ func (s *Server) persistDesignDocs(ctx context.Context, runID, step string) {
 		return
 	}
 	run, err := s.Store.GetRun(runID)
-	if err != nil || run == nil || run.WorkflowID != "design" {
+	if err != nil || run == nil || (run.WorkflowID != "design" && run.WorkflowID != "iterate") {
 		return
 	}
 	proj, err := s.Projects.Get(run.ProjectID)
@@ -654,6 +654,15 @@ func (s *Server) persistDesignDocs(ctx context.Context, runID, step string) {
 	root := s.Engine.Workdir(runID)
 	docsDir := filepath.Join(root, "docs")
 	gh := github.New()
+	// The per-project `design` branch is the APPROVED design history: every gate
+	// approval (initial phase, re-run, or change-request) commits its docs here, so
+	// `git log` on `design` is the full design evolution — separate from the code/
+	// implementation history on main. `main` gets the released spec via the docs PR.
+	const designBranch = "design"
+	if err := gh.EnsureBranch(ctx, proj.Repo, designBranch, "main"); err != nil {
+		log.Printf("persistDesignDocs %s ensure branch: %v", runID, err)
+		return
+	}
 	err = filepath.WalkDir(docsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
@@ -668,7 +677,7 @@ func (s *Server) persistDesignDocs(ctx context.Context, runID, step string) {
 		}
 		repoPath := filepath.ToSlash(rel)
 		msg := "design: publish " + repoPath + " (" + step + " approved)"
-		if _, err := gh.WriteFile(ctx, proj.Repo, "dev", repoPath, string(content), msg); err != nil {
+		if _, err := gh.WriteFile(ctx, proj.Repo, designBranch, repoPath, string(content), msg); err != nil {
 			log.Printf("persistDesignDocs %s %s: %v", runID, repoPath, err)
 		}
 		return nil

@@ -88,7 +88,7 @@ func (e *Engine) RerunStep(runID, stepID string) error {
 	if err != nil {
 		return err
 	}
-	return e.enqueueStepTerminal(runID, run.WorkflowID, step, ctx)
+	return e.enqueueStepRerun(runID, run.WorkflowID, step, ctx)
 }
 
 // ApproveStep resolves a human_gate that is awaiting approval for stepID in

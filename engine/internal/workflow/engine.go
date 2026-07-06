@@ -123,18 +123,25 @@ func (e *Engine) enqueueStep(runID, workflowID string, step Step, ctx Context) e
 	})
 }
 
-// terminalMarker is an internal input key flagging a rerun-in-place task; advance()
-// honours it to stop the flow after the single re-run step (no downstream cascade).
-const terminalMarker = "__rerun_terminal"
+// Re-run markers (internal input keys on a task's payload). They give "re-run one
+// phase" its surgical, non-cascading behaviour with NO workflow-name knowledge in the
+// kernel — advance() reads them generically:
+//   rerunMarker    — a re-run PHASE step: advance re-parks it at its review gate.
+//   terminalMarker — a re-run's review gate: approving it stops the run (no cascade).
+const (
+	rerunMarker    = "__rerun"
+	terminalMarker = "__rerun_terminal"
+)
 
-// enqueueStepTerminal enqueues a step that advance() will NOT cascade past on success.
-// Used by RerunStep to re-run one phase of an existing run in its existing workdir.
-func (e *Engine) enqueueStepTerminal(runID, workflowID string, step Step, ctx Context) error {
+// enqueueStepMarked enqueues a step tagged with an internal marker ("" for none).
+func (e *Engine) enqueueStepMarked(runID, workflowID string, step Step, ctx Context, marker string) error {
 	inputs := ResolveInputs(step.Inputs, ctx)
-	if inputs == nil {
-		inputs = map[string]any{}
+	if marker != "" {
+		if inputs == nil {
+			inputs = map[string]any{}
+		}
+		inputs[marker] = true
 	}
-	inputs[terminalMarker] = true
 	payload, _ := json.Marshal(inputs)
 	return e.Store.EnqueueTask(&store.Task{
 		ID:         newID("task"),
@@ -146,14 +153,23 @@ func (e *Engine) enqueueStepTerminal(runID, workflowID string, step Step, ctx Co
 	})
 }
 
-func taskIsTerminal(task *store.Task) bool {
+func (e *Engine) enqueueStepTerminal(runID, workflowID string, step Step, ctx Context) error {
+	return e.enqueueStepMarked(runID, workflowID, step, ctx, terminalMarker)
+}
+func (e *Engine) enqueueStepRerun(runID, workflowID string, step Step, ctx Context) error {
+	return e.enqueueStepMarked(runID, workflowID, step, ctx, rerunMarker)
+}
+
+func taskHasMarker(task *store.Task, marker string) bool {
 	var m map[string]any
 	if json.Unmarshal([]byte(task.Payload), &m) == nil {
-		v, _ := m[terminalMarker].(bool)
+		v, _ := m[marker].(bool)
 		return v
 	}
 	return false
 }
+func taskIsTerminal(task *store.Task) bool { return taskHasMarker(task, terminalMarker) }
+func taskIsRerun(task *store.Task) bool    { return taskHasMarker(task, rerunMarker) }
 
 // ExecuteOne claims one ready task, runs its step, reports the result, and
 // advances the workflow. Returns (false, nil) when no task is ready.
@@ -320,15 +336,24 @@ func (e *Engine) advance(wf *Workflow, task *store.Task, result StepResult) erro
 	}
 
 	if result.Success {
-		// A rerun-in-place task terminates the flow here: it must NOT cascade to the
-		// downstream steps (which for a design run would re-publish to GitHub). See
-		// RerunStep — this is how "re-run just one phase" stays surgical.
+		// The re-run's review gate is terminal: approving it commits the regenerated
+		// doc (industry practice — commit approved, not drafts) and stops here, with NO
+		// cascade to downstream phases (which would re-publish to GitHub).
 		if taskIsTerminal(task) {
 			return e.Store.SetRunStatus(task.RunID, store.StatusDone)
 		}
 		next, ok := wf.Next(task.StepID)
 		if !ok {
 			return e.Store.SetRunStatus(task.RunID, store.StatusDone) // last step done
+		}
+		// A re-run of a single phase: re-park at that phase's review gate for
+		// re-approval (marked terminal so approval doesn't cascade). A phase with no
+		// gate just completes. This keeps "re-run one phase" surgical.
+		if taskIsRerun(task) {
+			if next.Type == "human_gate" {
+				return e.enqueueStepTerminal(task.RunID, task.WorkflowID, next, ctx)
+			}
+			return e.Store.SetRunStatus(task.RunID, store.StatusDone)
 		}
 		return e.enqueueStep(task.RunID, task.WorkflowID, next, ctx)
 	}

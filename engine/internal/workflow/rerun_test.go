@@ -89,3 +89,65 @@ func TestRerunStepUnknownStep(t *testing.T) {
 		t.Fatal("expected error for unknown step")
 	}
 }
+
+// TestRerunStepReparksAtGate: re-running a phase that has a review gate re-parks at
+// that gate (for re-approval — that's when the regenerated doc is committed), and
+// approving it stops the run without cascading to the step after the gate.
+func TestRerunStepReparksAtGate(t *testing.T) {
+	wf, _ := Parse([]byte(`
+id: gated
+version: 1.0.0
+steps:
+  - id: spec
+    type: echo
+  - id: spec_gate
+    type: human_gate
+  - id: publish
+    type: echo
+`))
+	e := newEngine(t, MapLoader{"gated": wf})
+	e.Register("human_gate", parkRunner{})
+
+	runID, _ := e.StartRun("gated", nil)
+	drain(t, e) // spec → spec_gate parks
+	if err := e.ApproveStep(runID, "spec_gate"); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, e) // publish → DONE
+	before := stepCounts(e, runID)
+	if before["publish"] != 1 {
+		t.Fatalf("setup: publish should have run once, got %d", before["publish"])
+	}
+
+	// Re-run the phase: must re-park at spec_gate (not auto-complete).
+	if err := e.RerunStep(runID, "spec"); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, e)
+	awaiting := false
+	tasks, _ := e.Store.TasksForRun(runID)
+	for _, tk := range tasks {
+		if tk.StepID == "spec_gate" && tk.Status == store.StatusAwaiting {
+			awaiting = true
+		}
+	}
+	if !awaiting {
+		t.Fatal("re-run should re-park at spec_gate (AWAITING) for re-approval")
+	}
+
+	// Approve the re-run gate → DONE, publish NOT re-run (no cascade past the gate).
+	if err := e.ApproveStep(runID, "spec_gate"); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, e)
+	after := stepCounts(e, runID)
+	if after["publish"] != before["publish"] {
+		t.Errorf("publish must NOT re-run: before=%d after=%d", before["publish"], after["publish"])
+	}
+	if after["spec"] != before["spec"]+1 {
+		t.Errorf("spec should have re-run once: %d -> %d", before["spec"], after["spec"])
+	}
+	if run, _ := e.Store.GetRun(runID); run.Status != store.StatusDone {
+		t.Errorf("run should be DONE, got %s", run.Status)
+	}
+}

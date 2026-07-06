@@ -251,6 +251,29 @@ func (c *Client) FileOnBranch(ctx context.Context, repoURL, branch, path string)
 	return strings.TrimSpace(out) != "", nil
 }
 
+// EnsureBranch creates `branch` off `from` if it does not already exist (no-op if it
+// does). Used so the per-project `design` branch exists for incremental design commits.
+func (c *Client) EnsureBranch(ctx context.Context, repoURL, branch, from string) error {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return err
+	}
+	// Already exists?
+	if _, err := c.runner(ctx, "", "gh", "api", fmt.Sprintf("repos/%s/git/ref/heads/%s", slug, branch)); err == nil {
+		return nil
+	}
+	// Resolve the source branch head sha, then create the ref.
+	sha, err := c.runner(ctx, "", "gh", "api", fmt.Sprintf("repos/%s/git/ref/heads/%s", slug, from), "--jq", ".object.sha")
+	if err != nil {
+		return fmt.Errorf("ensure branch %q: source %q: %w", branch, from, err)
+	}
+	if _, err := c.runner(ctx, "", "gh", "api", "-X", "POST", fmt.Sprintf("repos/%s/git/refs", slug),
+		"-f", "ref=refs/heads/"+branch, "-f", "sha="+strings.TrimSpace(sha)); err != nil {
+		return fmt.Errorf("ensure branch %q: create: %w", branch, err)
+	}
+	return nil
+}
+
 // slugFromURL derives "owner/repo" from an HTTPS GitHub repo URL, e.g.
 // "https://github.com/acme/widgets" or "https://github.com/acme/widgets.git" →
 // "acme/widgets". It tolerates a trailing slash and the optional ".git" suffix.
