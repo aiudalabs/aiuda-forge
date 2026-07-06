@@ -14,6 +14,7 @@ import {
   useApprove,
   useCreateDesignRun,
   useCreateIterationRun,
+  useRerunStep,
   useCreateProject,
   useDeleteRun,
   useDesignRun,
@@ -595,6 +596,7 @@ function PhasePanel({
 
   const approve = useApprove();
   const reject = useReject();
+  const rerun = useRerunStep();
   const [rejectInput, setRejectInput] = useState("");
   const [showRejectForm, setShowRejectForm] = useState(false);
 
@@ -602,6 +604,10 @@ function PhasePanel({
 
   function doApprove() {
     approve.mutate([runId, gateStepId]);
+  }
+
+  function doRerun() {
+    rerun.mutate([runId, phase.stepId]);
   }
 
   function doReject() {
@@ -723,6 +729,14 @@ function PhasePanel({
       {state === "approved" && (
         <div className="phase-banner ok">
           {t("studio.view.phaseApproved")}
+        </div>
+      )}
+      {/* Regenerar: rehacer esta fase (vuelve a su gate para re-aprobación). Solo fases de diseño (con gate). */}
+      {state === "approved" && phase.gateId && (
+        <div className="phase-actions">
+          <button className="btn ghost sm" onClick={doRerun} disabled={rerun.isPending}>
+            {rerun.isPending ? t("studio.view.regenerating") : t("studio.view.regenerate")}
+          </button>
         </div>
       )}
       {state === "failed" && (

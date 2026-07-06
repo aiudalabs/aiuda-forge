@@ -576,6 +576,12 @@ export async function approveStep(id: string, step: string): Promise<void> {
   await http<void>(`/runs/${id}/steps/${step}/approve`, { method: "POST" });
 }
 
+/** Re-run (regenerate) one design phase in place; it re-parks at its gate for re-approval. */
+export async function rerunStep(id: string, step: string): Promise<void> {
+  if (await isMock()) return;
+  await http<void>(`/runs/${id}/steps/${step}/rerun`, { method: "POST" });
+}
+
 /**
  * Rechazo con motivo del human_gate. El kernel reencola al implementer como feedback (on_fail).
  * Si el endpoint aún no existe (404), el caller deja el botón como TODO — ver doc 17 §1.
