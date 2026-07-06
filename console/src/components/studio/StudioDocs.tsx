@@ -203,15 +203,37 @@ export function StudioDocs() {
   return (
     <div className="wrap">
       <div className="eyebrow acc">{t("studio.docs.eyebrow")}</div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-        <h2 className="docs-h1" style={{ margin: 0 }}>
-          {project.name}
-          {project.repo && (
-            <a className="docs-repo" href={project.repo} target="_blank" rel="noreferrer">
-              {t("studio.docs.repo")}
-            </a>
-          )}
-        </h2>
+      <h2 className="docs-h1" style={{ marginBottom: 8 }}>
+        {project.name}
+        {project.repo && (
+          <a className="docs-repo" href={project.repo} target="_blank" rel="noreferrer">
+            {t("studio.docs.repo")}
+          </a>
+        )}
+      </h2>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "0 0 14px",
+          marginBottom: 20,
+          borderBottom: "1px solid var(--stroke)",
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--mono)",
+            fontSize: 11.5,
+            color: "var(--ink4)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--emerald)" }} />
+          {t("studio.docs.onBranch")}
+        </span>
         <div style={{ flex: 1 }} />
         {project.repo && (
           <button className="btn primary sm" onClick={() => setCrOpen(true)}>
