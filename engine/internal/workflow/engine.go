@@ -156,8 +156,28 @@ func (e *Engine) enqueueStepMarked(runID, workflowID string, step Step, ctx Cont
 func (e *Engine) enqueueStepTerminal(runID, workflowID string, step Step, ctx Context) error {
 	return e.enqueueStepMarked(runID, workflowID, step, ctx, terminalMarker)
 }
-func (e *Engine) enqueueStepRerun(runID, workflowID string, step Step, ctx Context) error {
-	return e.enqueueStepMarked(runID, workflowID, step, ctx, rerunMarker)
+// enqueueStepRerun re-runs a phase (rerun marker) and, if feedback is given, injects
+// it as the `feedback` input — the same channel on_fail uses, which the design personas
+// already read ("if feedback is present, address every point"). This is what makes a
+// re-run conversational: "use Firebase, not Postgres" regenerates with that in mind.
+func (e *Engine) enqueueStepRerun(runID, workflowID string, step Step, ctx Context, feedback string) error {
+	inputs := ResolveInputs(step.Inputs, ctx)
+	if inputs == nil {
+		inputs = map[string]any{}
+	}
+	inputs[rerunMarker] = true
+	if feedback != "" {
+		inputs["feedback"] = feedback
+	}
+	payload, _ := json.Marshal(inputs)
+	return e.Store.EnqueueTask(&store.Task{
+		ID:         newID("task"),
+		RunID:      runID,
+		WorkflowID: workflowID,
+		StepID:     step.ID,
+		Type:       step.Type,
+		Payload:    string(payload),
+	})
 }
 
 func taskHasMarker(task *store.Task, marker string) bool {

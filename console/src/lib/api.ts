@@ -577,9 +577,12 @@ export async function approveStep(id: string, step: string): Promise<void> {
 }
 
 /** Re-run (regenerate) one design phase in place; it re-parks at its gate for re-approval. */
-export async function rerunStep(id: string, step: string): Promise<void> {
+export async function rerunStep(id: string, step: string, feedback = ""): Promise<void> {
   if (await isMock()) return;
-  await http<void>(`/runs/${id}/steps/${step}/rerun`, { method: "POST" });
+  await http<void>(`/runs/${id}/steps/${step}/rerun`, {
+    method: "POST",
+    body: JSON.stringify({ feedback }),
+  });
 }
 
 /**

@@ -728,7 +728,13 @@ func (s *Server) rerunStep(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusNotFound, "run not found: "+id)
 		return
 	}
-	if err := s.Engine.RerunStep(id, step); err != nil {
+	// Optional body {"feedback": "..."} — the conversational refine; injected into the
+	// phase so the persona addresses it. Empty body = a plain regenerate.
+	var req struct {
+		Feedback string `json:"feedback"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := s.Engine.RerunStep(id, step, req.Feedback); err != nil {
 		httpErr(w, http.StatusConflict, err.Error())
 		return
 	}

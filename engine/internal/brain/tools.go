@@ -191,10 +191,10 @@ var registry = map[string]toolDef{
 		},
 	},
 	"rerun_step": {
-		Tool: Tool{Name: "rerun_step", Description: "Re-run a SINGLE step of an existing run IN PLACE — regenerate one phase (e.g. mockups after changing the designer's model) reusing the run's existing docs, WITHOUT re-running the whole design or cascading to downstream steps (no GitHub re-publish). Overwrites that phase's artifact. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"run_id": strp("the run id"), "step": strp("the step to re-run, e.g. mockups | ui | prd | data_model")}, "run_id", "step")},
+		Tool: Tool{Name: "rerun_step", Description: "Re-run one design phase IN PLACE with optional feedback — e.g. regenerate `data_model` with feedback \"use Firebase, not Postgres\". Reuses the run's existing docs, does NOT cascade downstream (no GitHub re-publish), and re-parks at the phase's gate for re-approval. The `feedback` is injected as the phase's feedback input so the persona addresses it. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"run_id": strp("the run id"), "step": strp("the step to re-run, e.g. mockups | ui | prd | data_model"), "feedback": strp("optional: what to change / what you didn't like")}, "run_id", "step")},
 		Kind: Mutating, MinRole: "editor",
 		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
-			return ok(ops.RerunStep(argStr(input, "run_id"), argStr(input, "step")))
+			return ok(ops.RerunStep(argStr(input, "run_id"), argStr(input, "step"), argStr(input, "feedback")))
 		},
 	},
 

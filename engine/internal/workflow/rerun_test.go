@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"forge/internal/store"
@@ -60,7 +61,7 @@ steps:
 	before := stepCounts(e, runID)
 
 	// Re-run the MIDDLE step in place.
-	if err := e.RerunStep(runID, "b"); err != nil {
+	if err := e.RerunStep(runID, "b", ""); err != nil {
 		t.Fatalf("RerunStep: %v", err)
 	}
 	drain(t, e)
@@ -85,7 +86,7 @@ func TestRerunStepUnknownStep(t *testing.T) {
 	e := newEngine(t, MapLoader{"p": wf})
 	runID, _ := e.StartRun("p", nil)
 	drain(t, e)
-	if err := e.RerunStep(runID, "nope"); err == nil {
+	if err := e.RerunStep(runID, "nope", ""); err == nil {
 		t.Fatal("expected error for unknown step")
 	}
 }
@@ -120,7 +121,7 @@ steps:
 	}
 
 	// Re-run the phase: must re-park at spec_gate (not auto-complete).
-	if err := e.RerunStep(runID, "spec"); err != nil {
+	if err := e.RerunStep(runID, "spec", ""); err != nil {
 		t.Fatal(err)
 	}
 	drain(t, e)
@@ -149,5 +150,27 @@ steps:
 	}
 	if run, _ := e.Store.GetRun(runID); run.Status != store.StatusDone {
 		t.Errorf("run should be DONE, got %s", run.Status)
+	}
+}
+
+// TestRerunStepInjectsFeedback: re-running with feedback injects it as the `feedback`
+// input the design personas read — the backbone of the conversational refine.
+func TestRerunStepInjectsFeedback(t *testing.T) {
+	wf, _ := Parse([]byte("id: p\nversion: 1.0.0\nsteps:\n  - id: a\n    type: echo\n"))
+	e := newEngine(t, MapLoader{"p": wf})
+	runID, _ := e.StartRun("p", nil)
+	drain(t, e)
+	if err := e.RerunStep(runID, "a", "usa Firebase, no Postgres"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ := e.Store.TasksForRun(runID)
+	var last *store.Task
+	for _, tk := range tasks {
+		if tk.StepID == "a" {
+			last = tk
+		}
+	}
+	if last == nil || !strings.Contains(last.Payload, "Firebase") {
+		t.Fatalf("rerun feedback not injected into payload: %+v", last)
 	}
 }

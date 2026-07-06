@@ -68,7 +68,7 @@ func (e *Engine) RetryRun(runID string) error {
 // downstream steps. Use it to regenerate one phase after changing that phase's
 // persona/model — e.g. re-run `mockups` after switching the designer to Opus —
 // without re-running the whole design or re-publishing the backlog/PR to GitHub.
-func (e *Engine) RerunStep(runID, stepID string) error {
+func (e *Engine) RerunStep(runID, stepID, feedback string) error {
 	run, err := e.Store.GetRun(runID)
 	if err != nil {
 		return err
@@ -88,7 +88,7 @@ func (e *Engine) RerunStep(runID, stepID string) error {
 	if err != nil {
 		return err
 	}
-	return e.enqueueStepRerun(runID, run.WorkflowID, step, ctx)
+	return e.enqueueStepRerun(runID, run.WorkflowID, step, ctx, feedback)
 }
 
 // ApproveStep resolves a human_gate that is awaiting approval for stepID in

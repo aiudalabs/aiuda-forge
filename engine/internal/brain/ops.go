@@ -18,7 +18,7 @@ type ControlOps interface {
 	GetRun(id string) (map[string]any, error)
 	CancelRun(id string) error
 	RetryRun(id string) error
-	RerunStep(runID, stepID string) error
+	RerunStep(runID, stepID, feedback string) error
 	RequeueRun(id string) (int, error)
 	StartRun(workflow string, payload map[string]any) (string, error)
 	ApproveStep(runID, step string) error
@@ -110,8 +110,8 @@ func (o EngineOps) GetRun(id string) (map[string]any, error) {
 func (o EngineOps) CancelRun(id string) error { return o.Store.CancelRun(id) }
 func (o EngineOps) RetryRun(id string) error  { return o.Engine.RetryRun(id) }
 
-func (o EngineOps) RerunStep(runID, stepID string) error {
-	return o.Engine.RerunStep(runID, stepID)
+func (o EngineOps) RerunStep(runID, stepID, feedback string) error {
+	return o.Engine.RerunStep(runID, stepID, feedback)
 }
 
 func (o EngineOps) RequeueRun(id string) (int, error) {
