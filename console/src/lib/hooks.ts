@@ -451,10 +451,10 @@ export function useSprints() {
 }
 
 // Studio = Confluence (U1): the project's repo docs/ tree + a single doc's content.
-export function useProjectDocs(projectId: string | null) {
+export function useProjectDocs(projectId: string | null, ref = "design") {
   return useQuery({
-    queryKey: ["project-docs", projectId],
-    queryFn: () => api.listProjectDocs(projectId as string),
+    queryKey: ["project-docs", projectId, ref],
+    queryFn: () => api.listProjectDocs(projectId as string, ref),
     enabled: !!projectId,
     staleTime: 60_000,
   });
@@ -470,10 +470,10 @@ export function useProjectDoc(projectId: string | null, path: string | null, ref
 }
 
 // Version history (commits on the design branch) of one doc — for the version chips.
-export function useDocHistory(projectId: string | null, path: string | null) {
+export function useDocHistory(projectId: string | null, path: string | null, ref = "design") {
   return useQuery({
-    queryKey: ["doc-history", projectId, path],
-    queryFn: () => api.getDocHistory(projectId as string, path as string),
+    queryKey: ["doc-history", projectId, path, ref],
+    queryFn: () => api.getDocHistory(projectId as string, path as string, ref),
     enabled: !!projectId && !!path,
     staleTime: 30_000,
   });
