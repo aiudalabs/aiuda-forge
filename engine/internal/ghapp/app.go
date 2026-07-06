@@ -1,6 +1,6 @@
 package ghapp
 
-// GitHub App "Forja" (onboarding cloud, GTM 2026-07-03): la App se crea vía el
+// GitHub App "Fluxo" (onboarding cloud, GTM 2026-07-03): la App se crea vía el
 // MANIFEST FLOW — el operador abre /setup/github-app, aprueba en GitHub bajo la
 // org (aiudalabs), y GitHub nos devuelve un code que convertimos en las
 // credenciales completas (id, client id/secret, webhook secret, PEM). Cero
@@ -75,7 +75,7 @@ func Manifest(name, org, baseURL, consoleURL string) map[string]any {
 	if strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1") {
 		hookURL := os.Getenv("VIBEFORGE_GHAPP_HOOK_URL")
 		if hookURL == "" {
-			hookURL = "https://forja.aiudalabs.com/webhooks/github"
+			hookURL = "https://fluxo.aiudalabs.com/webhooks/github"
 		}
 		m["hook_attributes"] = map[string]any{"url": hookURL, "active": false}
 	}
@@ -86,7 +86,7 @@ func manifestBase(name, baseURL, consoleURL string) map[string]any {
 	return map[string]any{
 		"name":        name,
 		"url":         consoleURL,
-		"description": "Forja by aiudalabs — del diseño gateado al software entregado, en tu GitHub.",
+		"description": "Fluxo by AIuda Labs — del diseño gateado al software entregado, en tu GitHub.",
 		// public: los TENANTS instalan la App en SUS cuentas/orgs — private solo
 		// permite instalarla en la cuenta dueña (cazado en vivo con el 1er usuario).
 		"public":       true,

@@ -916,7 +916,7 @@ function SandboxSection({
 // ─────────────────────────────────────────────────────────────────────────────
 // Canal Claude: siembra del secret CLAUDE_CODE_OAUTH_TOKEN en el repo del
 // proyecto. El token viaja directo a GitHub (cifrado con la public key del
-// repo) — Forja no lo guarda. El probe de canales lo verifica en vivo.
+// repo) — Fluxo no lo guarda. El probe de canales lo verifica en vivo.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ClaudeSecretSection({ projectId }: { projectId: string | null }) {

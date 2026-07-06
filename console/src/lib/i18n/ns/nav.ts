@@ -3,7 +3,7 @@
 
 export const nav = {
   es: {
-    "nav.factory": "Forja",
+    "nav.factory": "Fluxo",
     "nav.project": "Proyecto",
     "nav.createFirst": "Crear el primero →",
     "nav.loading": "Cargando…",
@@ -40,7 +40,7 @@ export const nav = {
     "nav.settings.title": "Settings",
   },
   en: {
-    "nav.factory": "Forja",
+    "nav.factory": "Fluxo",
     "nav.project": "Project",
     "nav.createFirst": "Create your first →",
     "nav.loading": "Loading…",
@@ -77,7 +77,7 @@ export const nav = {
     "nav.settings.title": "Settings",
   },
   pt: {
-    "nav.factory": "Forja",
+    "nav.factory": "Fluxo",
     "nav.project": "Projeto",
     "nav.createFirst": "Criar o primeiro →",
     "nav.loading": "Carregando…",

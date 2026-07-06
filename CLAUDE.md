@@ -213,7 +213,7 @@ Primera tajada de v1.1 (ver `docs/ROADMAP-v1.1-v1.4.md`). Los 4 bugs HIGH que bl
 - ✅ **R3** `reconcileRevivedRuns` re-sincroniza una story `failed` cuyo run revive a RUNNING — `native.go` + nuevo `StoryProvider.Failed()`.
 
 ## FORJA — estado del pivote GitHub-native (cierre 2026-07-04)
-El producto se llama **Forja** (forja.aiudalabs.com; forja.io libre como defensa). Plan F0–F4 COMPLETO.
+El producto se llama **Fluxo** (fluxo.aiudalabs.com; fluxo.sh libre como defensa). Plan F0–F4 COMPLETO.
 Informes clave: docs/ADR-2026-07-03-studio-first-github-native.md, docs/PLAN-2026-07-03-pivot-github-native.md,
 docs/GTM-2026-07-03-onboarding-monetizacion.md, docs/UI-AUDIT-2026-07-03.md. Docs de usuario reescritos (console/public/docs, 5 nuevos).
 
@@ -227,9 +227,9 @@ docs/GTM-2026-07-03-onboarding-monetizacion.md, docs/UI-AUDIT-2026-07-03.md. Doc
   resolución por proyecto (tenant.go: usuario→installation→host) en API y conductor loop. Validado: marketpty opera
   con credenciales del tenant.
 - Costura: publicar backlog → export issues+deps + scaffold automáticos (api/costura.go, hook OnPublished).
-- Secret Claude: probe real (workflow+secret) + siembra desde Settings→Canal Claude (no se almacena en Forja).
+- Secret Claude: probe real (workflow+secret) + siembra desde Settings→Canal Claude (no se almacena en Fluxo).
 - UI: vista Agentes (sesiones+cola PRs+aprobar workflows), Settings completo, Registry con tab Templates GitHub
-  (cards humanas, editor renderizado, Aplicar al proyecto), Board legacy eliminado, rebranding Forja.
+  (cards humanas, editor renderizado, Aplicar al proyecto), Board legacy eliminado, rebranding Fluxo.
 - design.yaml: docs_pr → base main (trunk-based; dev era del factory legacy). Factory legacy OFF por default.
 
 ### Pila pendiente (próximas sesiones, en orden)
@@ -238,7 +238,7 @@ docs/GTM-2026-07-03-onboarding-monetizacion.md, docs/UI-AUDIT-2026-07-03.md. Doc
    Mientras: degradación al host en dev (github/dispatch.go CreateAgentTask + probe).
 2. **Wizard UI de onboarding** (5 pantallas del GTM): Continue with GitHub → instalar App → semáforos de
    capacidades (Copilot/Claude-secret) → org+preset autonomía → primer proyecto. Todo el backend ya existe.
-3. **Despliegue público** forja.aiudalabs.com: webhooks activos (receptor F1 listo; la App ya apunta ahí con
+3. **Despliegue público** fluxo.aiudalabs.com: webhooks activos (receptor F1 listo; la App ya apunta ahí con
    active:false), TLS, y el manifest deja de omitir hooks.
 4. Menores acumulados: barrido de sesiones muertas para claude_action (mirar conclusión del run);
    gatear/avisar dispatch si docs/ no está en main; quitar EnsureDevBranch (rama dev vestigial);

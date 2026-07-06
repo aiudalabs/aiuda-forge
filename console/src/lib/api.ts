@@ -1578,7 +1578,7 @@ export async function scaffoldProject(
   });
 }
 
-/** Siembra el secret CLAUDE_CODE_OAUTH_TOKEN en el repo del proyecto (no se guarda en Forja). */
+/** Siembra el secret CLAUDE_CODE_OAUTH_TOKEN en el repo del proyecto (no se guarda en Fluxo). */
 export async function setClaudeSecret(projectId: string, token: string): Promise<void> {
   if (await isMock()) return;
   await http(`/projects/${projectId}/secrets/claude`, {

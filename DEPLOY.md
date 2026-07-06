@@ -1,4 +1,4 @@
-# Desplegar Forja en un VPS (para ~10 usuarios)
+# Desplegar Fluxo en un VPS (para ~10 usuarios)
 
 Guía paso a paso, sin ambigüedades. Todo corre en **un solo VPS** con docker-compose detrás
 de **Caddy** (HTTPS automático) en **un solo dominio**. El cómputo pesado (escribir código) lo
@@ -9,7 +9,7 @@ hace GitHub (Copilot / GitHub Actions), no este servidor — por eso un VPS medi
 ## 0. Topología (qué corre y dónde)
 
 ```
-                    https://forja.aiudalabs.com
+                    https://fluxo.aiudalabs.com
                               │
                           ┌───┴────┐   (Caddy: TLS automático + proxy)
                           │ caddy  │   :80  :443
@@ -27,7 +27,7 @@ hace GitHub (Copilot / GitHub Actions), no este servidor — por eso un VPS medi
                    └──────── egress-proxy (allowlist de salida)
 ```
 
-El navegador habla **solo** con `https://forja.aiudalabs.com`:
+El navegador habla **solo** con `https://fluxo.aiudalabs.com`:
 - `/` → console
 - `/forge-api/*` → control (Caddy le quita el prefijo `/forge-api`)
 - `/forge-api/ws` → WebSocket del control (Caddy hace el upgrade solo)
@@ -40,8 +40,8 @@ El navegador habla **solo** con `https://forja.aiudalabs.com`:
 |---|---|
 | **VPS** | 4 vCPU / 8 GB RAM / 40+ GB disco. Ubuntu 22.04/24.04. (Hostinger, DigitalOcean, etc.) |
 | **Docker** | Docker Engine + el plugin `docker compose` v2 |
-| **Dominio** | Un dominio/subdominio que controles, ej. `forja.aiudalabs.com` |
-| **DNS** | Un registro **A**: `forja.aiudalabs.com → <IP pública del VPS>`, **antes** de arrancar (Caddy lo necesita para emitir el certificado TLS) |
+| **Dominio** | Un dominio/subdominio que controles, ej. `fluxo.aiudalabs.com` |
+| **DNS** | Un registro **A**: `fluxo.aiudalabs.com → <IP pública del VPS>`, **antes** de arrancar (Caddy lo necesita para emitir el certificado TLS) |
 | **GitHub** | El `gh` CLI autenticado en el VPS (`gh auth login`) para el fallback del conductor, y la cuenta/org donde se crearán los repos |
 
 Instalar Docker en Ubuntu:
@@ -69,7 +69,7 @@ Llena `.env` con esto. **Requerida** = sin ella no arranca bien.
 
 | Variable | ¿Requerida? | Qué es / cómo obtenerla |
 |---|---|---|
-| `FORJA_DOMAIN` | **Sí** | El dominio público. Ej: `forja.aiudalabs.com`. (La usa Caddy + el override de prod.) |
+| `FLUXO_DOMAIN` | **Sí** | El dominio público. Ej: `fluxo.aiudalabs.com`. (La usa Caddy + el override de prod.) |
 | `VIBEFORGE_API_TOKEN` | **Sí** | Token de servicio interno. Generalo: `openssl rand -hex 32`. Sin esto la auth no se activa. |
 | `VIBEFORGE_ADMIN_EMAIL` | **Sí** | Email del **primer usuario** (se crea en el primer boot). Ej: `noel@aiudalabs.com`. |
 | `VIBEFORGE_ADMIN_PASSWORD` | **Sí** | Contraseña de ese primer usuario. Poné una fuerte; podés cambiarla después en la app. |
@@ -79,7 +79,7 @@ Llena `.env` con esto. **Requerida** = sin ella no arranca bien.
 
 ### Las DOS credenciales de Claude — la parte importante (cero ambigüedad)
 
-Forja usa Claude en **dos lugares distintos**, y son **credenciales diferentes**:
+Fluxo usa Claude en **dos lugares distintos**, y son **credenciales diferentes**:
 
 **A) Los agentes de DISEÑO** (los que generan brief/PRD/arquitectura/mockups/backlog, corriendo
 dentro del contenedor `control`). Usan **UNA** de estas dos, según el modo:
@@ -121,14 +121,14 @@ dentro del contenedor `control`). Usan **UNA** de estas dos, según el modo:
 
 **No pongas en `.env`**: `VIBEFORGE_PUBLIC_URL`, `VIBEFORGE_CONSOLE_URL`, `VIBEFORGE_CORS_ORIGIN`,
 `NEXT_PUBLIC_VIBEFORGE_API_URL` — el override de producción (`deploy/docker-compose.prod.yml`) las
-setea solo a partir de `FORJA_DOMAIN`.
+setea solo a partir de `FLUXO_DOMAIN`.
 
 ---
 
 ## 3. DNS + firewall
 
-1. **DNS**: creá el registro **A** `forja.aiudalabs.com → <IP del VPS>` y esperá a que propague
-   (`dig +short forja.aiudalabs.com` debe devolver la IP del VPS).
+1. **DNS**: creá el registro **A** `fluxo.aiudalabs.com → <IP del VPS>` y esperá a que propague
+   (`dig +short fluxo.aiudalabs.com` debe devolver la IP del VPS).
 2. **Firewall** (que solo 80/443/22 sean públicos; el 8080/3000 quedan internos):
    ```bash
    sudo ufw allow 22
@@ -161,17 +161,17 @@ docker compose logs -f control    # "vibeforge control listening on :8080 ... 1 
 
 ## 5. Primer arranque (en la app)
 
-1. Abrí **`https://forja.aiudalabs.com`** → deberías ver la pantalla de login/entrada.
+1. Abrí **`https://fluxo.aiudalabs.com`** → deberías ver la pantalla de login/entrada.
 2. Logueate con `VIBEFORGE_ADMIN_EMAIL` / `VIBEFORGE_ADMIN_PASSWORD`.
-3. **Conectar GitHub (la App de Forja)**: en la app, andá a Ajustes → conexión de GitHub, o abrí
-   `https://forja.aiudalabs.com/forge-api/setup/github-app`. Eso te lleva al flujo de manifest de
+3. **Conectar GitHub (la App de Fluxo)**: en la app, andá a Ajustes → conexión de GitHub, o abrí
+   `https://fluxo.aiudalabs.com/forge-api/setup/github-app`. Eso te lleva al flujo de manifest de
    GitHub que **crea la GitHub App** y guarda sus credenciales en `/data/github-app.json`
    (dentro del volumen `forge-data`) — **no** es algo que pongas a mano en el `.env`.
-4. **Instalá la App** en tu cuenta/org (`nmlemus` y/o `aiudalabs`) para que Forja pueda crear
+4. **Instalá la App** en tu cuenta/org (`nmlemus` y/o `aiudalabs`) para que Fluxo pueda crear
    repos y despachar trabajo ahí.
 5. (Opcional) **Secret de Claude para los repos**: en Ajustes → Canal Claude, sembrás el
    `CLAUDE_CODE_OAUTH_TOKEN` como secret del repo para que el workflow `claude.yml` escriba código
-   en GitHub Actions. Forja **no** lo almacena, solo lo siembra.
+   en GitHub Actions. Fluxo **no** lo almacena, solo lo siembra.
 6. Ya podés crear tu primer proyecto desde `/` (nombre + owner + descripción).
 
 ---
@@ -181,7 +181,7 @@ docker compose logs -f control    # "vibeforge control listening on :8080 ... 1 
 El admin (arriba) solo hace falta **una vez** para conectar la GitHub App de la instancia.
 De ahí en más, **cualquiera al que le pases el link entra solo**:
 
-1. Abre `https://forja.aiudalabs.com` → **Continuar con GitHub**.
+1. Abre `https://fluxo.aiudalabs.com` → **Continuar con GitHub**.
 2. GitHub le pide autorizar la App → vuelve logueado (la cuenta se crea sola, no necesita tu
    admin ni que le setees nada).
 3. Cae en la pantalla de crear proyecto, que ya muestra **sus** organizaciones (nombre +
@@ -196,9 +196,9 @@ una tarjeta **"Conectá tu GitHub"** para hacerlo en 10 segundos. No hay pasos o
 
 ## 6. Webhooks de GitHub (recomendado, no bloqueante)
 
-Sin webhooks, Forja sincroniza el estado con un poll cada 25s (funciona, pero gasta más rate-limit
+Sin webhooks, Fluxo sincroniza el estado con un poll cada 25s (funciona, pero gasta más rate-limit
 de GitHub). Para activarlos: en la config de la GitHub App (en github.com), poné el webhook URL en
-`https://forja.aiudalabs.com/forge-api/` (el receptor ya existe) y activá los eventos de issues/PRs.
+`https://fluxo.aiudalabs.com/forge-api/` (el receptor ya existe) y activá los eventos de issues/PRs.
 El secret del webhook va en la variable de entorno `VIBEFORGE_GITHUB_WEBHOOK_SECRET` del control
 (agregala al `.env` si activás webhooks).
 
@@ -220,8 +220,8 @@ crontab -e
 ## 8. Verificar que quedó bien
 
 ```bash
-curl -s https://forja.aiudalabs.com/forge-api/healthz          # -> 200
-curl -s https://forja.aiudalabs.com/ -o /dev/null -w '%{http_code}\n'   # -> 200
+curl -s https://fluxo.aiudalabs.com/forge-api/healthz          # -> 200
+curl -s https://fluxo.aiudalabs.com/ -o /dev/null -w '%{http_code}\n'   # -> 200
 ```
 En el browser: login OK, el live-log de un run se actualiza en tiempo real (eso confirma que el
 WebSocket pasa por Caddy).

@@ -442,7 +442,7 @@ function ItemEditorModal({
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Templates GitHub: lo que Forja instala en el repo de cada proyecto nuevo para
+// Templates GitHub: lo que Fluxo instala en el repo de cada proyecto nuevo para
 // que los agentes (Copilot / Claude / Codex) sepan CÓMO trabajar en ese código.
 // Cards con nombre humano (mismo patrón visual que Agentes/Workflows); el path
 // real queda como detalle. Editar → afecta proyectos futuros; el botón
