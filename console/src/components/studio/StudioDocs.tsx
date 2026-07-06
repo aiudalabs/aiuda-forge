@@ -5,14 +5,14 @@
 // design run. Left: a page tree; right: the rendered markdown. Always available
 // for the active project, so "what we're building" never disappears.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
 import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
-import { useProjectDocs, useProjectDoc } from "@/lib/hooks";
+import { useProjectDocs, useProjectDoc, useDocHistory } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
@@ -98,11 +98,33 @@ export function StudioDocs() {
     return [...list].sort((a, b) => meta(a.name, a.path).order - meta(b.name, b.path).order);
   }, [docs]);
 
+  // Group the html mockups under one collapsible "Mockups" node (order 5.5, between
+  // UI and Backlog) instead of listing each html file loose in the tree.
+  const treeNodes = useMemo(() => {
+    const htmls = files.filter((f) => isHtml(f.path));
+    type Node = { order: number; doc?: (typeof files)[number]; mockups?: typeof files };
+    const nodes: Node[] = files
+      .filter((f) => !isHtml(f.path))
+      .map((f) => ({ order: meta(f.name, f.path).order, doc: f }));
+    if (htmls.length) nodes.push({ order: 5.5, mockups: htmls });
+    return nodes.sort((a, b) => a.order - b.order);
+  }, [files]);
+
   // Default selection: PRD if present, else the first file.
   const [selected, setSelected] = useState<string | null>(null);
   const active = selected ?? files.find((f) => f.name === "PRD.md")?.path ?? files[0]?.path ?? null;
 
-  const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active);
+  // Version time-travel: `ver` is a commit sha (null = current/latest). History is
+  // fetched only for markdown/yaml docs, not html mockups.
+  const [ver, setVer] = useState<string | null>(null);
+  useEffect(() => setVer(null), [active]);
+  const [mockOpen, setMockOpen] = useState(false);
+  useEffect(() => {
+    if (active && isHtml(active)) setMockOpen(true);
+  }, [active]);
+  const { data: history } = useDocHistory(projectId, active && !isHtml(active) ? active : null);
+
+  const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active, ver ?? "design");
 
   if (projLoading) {
     return (
@@ -150,23 +172,71 @@ export function StudioDocs() {
             </div>
           ) : (
             <nav>
-              {files.map((d) => (
-                <button
-                  key={d.path}
-                  className={`docs-tree-item${active === d.path ? " on" : ""}`}
-                  onClick={() => setSelected(d.path)}
-                >
-                  <span className="docs-tree-ic">{meta(d.name, d.path).icon}</span>
-                  <span className="docs-tree-label">{metaTitle(d.name, d.path, t)}</span>
-                  {isHtml(d.path) && <span className="docs-tree-badge">html</span>}
-                </button>
-              ))}
+              {treeNodes.map((n) =>
+                n.doc ? (
+                  <button
+                    key={n.doc.path}
+                    className={`docs-tree-item${active === n.doc.path ? " on" : ""}`}
+                    onClick={() => setSelected(n.doc!.path)}
+                  >
+                    <span className="docs-tree-ic">{meta(n.doc.name, n.doc.path).icon}</span>
+                    <span className="docs-tree-label">{metaTitle(n.doc.name, n.doc.path, t)}</span>
+                  </button>
+                ) : (
+                  <div key="mockups-group">
+                    <button className="docs-tree-item" onClick={() => setMockOpen((o) => !o)}>
+                      <span className="docs-tree-ic">{mockOpen ? "▾" : "▸"}</span>
+                      <span className="docs-tree-label">{t("studio.docs.title.mockups")}</span>
+                      <span className="docs-tree-badge">{n.mockups!.length}</span>
+                    </button>
+                    {mockOpen &&
+                      n.mockups!.map((h) => (
+                        <button
+                          key={h.path}
+                          className={`docs-tree-item${active === h.path ? " on" : ""}`}
+                          style={{ paddingLeft: 32 }}
+                          onClick={() => setSelected(h.path)}
+                        >
+                          <span className="docs-tree-ic">▨</span>
+                          <span className="docs-tree-label" style={{ fontSize: 12.5 }}>
+                            {h.name.replace(/\.html?$/i, "")}
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                ),
+              )}
             </nav>
           )}
         </aside>
 
         {/* Reader */}
         <section className="docs-reader">
+          {active && !isHtml(active) && history && history.length > 1 && (
+            <div className="chips" style={{ marginBottom: 12 }}>
+              {history.map((h, i) => {
+                const vnum = history.length - i;
+                const isLatest = i === 0;
+                const on = isLatest ? ver === null || ver === h.sha : ver === h.sha;
+                return (
+                  <button
+                    key={h.sha}
+                    className={`chip${on ? " on" : ""}`}
+                    style={{ fontFamily: "var(--mono)", fontSize: 11.5, padding: "4px 10px" }}
+                    title={`${h.message} · ${new Date(h.date).toLocaleString()}`}
+                    onClick={() => setVer(isLatest ? null : h.sha)}
+                  >
+                    v{vnum}
+                  </button>
+                );
+              })}
+              {ver !== null && (
+                <span style={{ color: "var(--ink4)", fontSize: 12, alignSelf: "center" }}>
+                  {t("studio.docs.viewingOld")}
+                </span>
+              )}
+            </div>
+          )}
           {isError ? (
             <div className="placeholder err">{t("studio.docs.readError")}</div>
           ) : !active ? (

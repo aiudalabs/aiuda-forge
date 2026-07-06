@@ -460,12 +460,22 @@ export function useProjectDocs(projectId: string | null) {
   });
 }
 
-export function useProjectDoc(projectId: string | null, path: string | null) {
+export function useProjectDoc(projectId: string | null, path: string | null, ref = "design") {
   return useQuery({
-    queryKey: ["project-doc", projectId, path],
-    queryFn: () => api.getProjectDoc(projectId as string, path as string),
+    queryKey: ["project-doc", projectId, path, ref],
+    queryFn: () => api.getProjectDoc(projectId as string, path as string, ref),
     enabled: !!projectId && !!path,
     staleTime: 60_000,
+  });
+}
+
+// Version history (commits on the design branch) of one doc — for the version chips.
+export function useDocHistory(projectId: string | null, path: string | null) {
+  return useQuery({
+    queryKey: ["doc-history", projectId, path],
+    queryFn: () => api.getDocHistory(projectId as string, path as string),
+    enabled: !!projectId && !!path,
+    staleTime: 30_000,
   });
 }
 
