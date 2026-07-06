@@ -259,7 +259,7 @@ func (s *Server) getProjectDocHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	ref := docRef(r)
 	path := r.URL.Query().Get("path")
-	if !strings.HasPrefix(path, "docs/") || strings.Contains(path, "..") {
+	if !strings.HasPrefix(path, "docs/") || strings.Contains(path, "..") || strings.ContainsAny(path, "?&") {
 		httpErr(w, http.StatusBadRequest, "path must be under docs/")
 		return
 	}
@@ -379,7 +379,7 @@ func (s *Server) getProjectDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	ref := docRef(r)
 	path := r.URL.Query().Get("path")
-	if !strings.HasPrefix(path, "docs/") || strings.Contains(path, "..") {
+	if !strings.HasPrefix(path, "docs/") || strings.Contains(path, "..") || strings.ContainsAny(path, "?&") {
 		httpErr(w, http.StatusBadRequest, "path must be under docs/")
 		return
 	}

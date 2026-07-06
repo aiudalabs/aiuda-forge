@@ -51,10 +51,6 @@ export const PHASE_GLYPH_CLS: Record<PhaseState, string> = {
   failed: "ph-fail",
 };
 
-// Cuántas fases están aprobadas (para el indicador de progreso).
-export function approvedCount(phases: DesignPhase[]): number {
-  return phases.filter((p) => phaseState(p) === "approved").length;
-}
 
 // Fase activa: la primera que no está aprobada.
 export function activePhaseIndex(phases: DesignPhase[]): number {

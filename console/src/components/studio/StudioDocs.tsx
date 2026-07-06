@@ -12,7 +12,8 @@ import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
 import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
-import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useCreateIterationRun, useActiveDesignRun, useDesignLog } from "@/lib/hooks";
+import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useActiveDesignRun, useDesignLog } from "@/lib/hooks";
+import { IterationModal } from "./StudioModals";
 import { useT } from "@/lib/i18n";
 import { DesignPipeline } from "./DesignPipeline";
 import { useRouter } from "next/navigation";
@@ -55,7 +56,9 @@ function isMarkdown(path: string) {
 }
 
 // Which design phase (step) produces each doc — so the refine on a doc re-runs the
-// right phase. Html mockups → the mockups phase.
+// right phase. Html mockups → the mockups phase. NOTE: this mirrors the phases in
+// registry/workflows/design.yaml — keep in sync if a phase is renamed or added
+// (unlike derivePhaseDefs in api.ts, this mapping is NOT derived from the workflow).
 const DOC_STEP: Record<string, string> = {
   "BRIEF.md": "discovery",
   "CONSTITUTION.md": "constitution",
@@ -183,23 +186,9 @@ export function StudioDocs() {
     rerun.mutate([refineRun.id, activeStep, fb], { onSuccess: () => setRefine("") });
   }
 
-  // Change Request (C4): a PROJECT-level action (may touch several docs) — lives in
-  // the header, not inside a phase. Plans a delta backlog on top of the shipped product.
-  const createCR = useCreateIterationRun();
+  // Change Request (C4): a PROJECT-level action (may touch several docs) — lives in the
+  // header, not inside a phase. Uses the shared IterationModal (Escape + error display).
   const [crOpen, setCrOpen] = useState(false);
-  const [crText, setCrText] = useState("");
-  function submitCR() {
-    if (!crText.trim() || !project?.repo || !projectId) return;
-    createCR.mutate(
-      { project_id: projectId, repo: project.repo, changeRequest: crText.trim() },
-      {
-        onSuccess: () => {
-          setCrOpen(false);
-          setCrText("");
-        },
-      },
-    );
-  }
   const { data: history } = useDocHistory(projectId, active);
 
   const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active, ver ?? "design");
@@ -481,30 +470,17 @@ export function StudioDocs() {
           </div>
         </div>
       )}
-      {crOpen && (
-        <div
-          onClick={() => setCrOpen(false)}
-          style={{ position: "fixed", inset: 0, background: "rgba(13,13,15,.42)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}
-        >
-          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "min(560px,94vw)" }}>
-            <h3 style={{ fontSize: 18 }}>{t("studio.iteration.title")}</h3>
-            <p className="role">{t("studio.iteration.hint")}</p>
-            <textarea
-              value={crText}
-              onChange={(e) => setCrText(e.target.value)}
-              placeholder={t("studio.iteration.placeholder")}
-              style={{ width: "100%", minHeight: 90, background: "var(--bg)", border: "1px solid var(--stroke-strong)", borderRadius: 10, padding: 11, font: "inherit", color: "var(--ink)", resize: "vertical", marginTop: 6 }}
-            />
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
-              <button className="btn ghost" onClick={() => setCrOpen(false)}>
-                {t("studio.iteration.cancel")}
-              </button>
-              <button className="btn primary" disabled={!crText.trim() || createCR.isPending} onClick={submitCR}>
-                {createCR.isPending ? t("studio.iteration.launching") : t("studio.iteration.launch")}
-              </button>
-            </div>
-          </div>
-        </div>
+      <div
+        className={`overlay ${crOpen ? "on" : ""}`}
+        onClick={() => setCrOpen(false)}
+      />
+      {crOpen && projectId && project.repo && (
+        <IterationModal
+          projectId={projectId}
+          repo={project.repo}
+          onClose={() => setCrOpen(false)}
+          onCreated={() => setCrOpen(false)}
+        />
       )}
     </div>
   );
