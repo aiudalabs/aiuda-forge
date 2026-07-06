@@ -21,7 +21,6 @@ export function Sidebar() {
   return (
     <aside className="nav">
       <Logo />
-      <div className="navsec">{t("nav.factory")}</div>
       <nav>
         {SECTIONS.map((s) => (
           <Link key={s.key} href={s.href} className={active === s.key ? "on" : ""}>

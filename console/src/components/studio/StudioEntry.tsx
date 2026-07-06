@@ -11,6 +11,7 @@ import { useActiveProject } from "@/lib/activeProject";
 import { useCreateDesignRun, useCreateProject, useGithubOrgs, useCapabilities } from "@/lib/hooks";
 import { API_URL } from "@/lib/config";
 import { useT } from "@/lib/i18n";
+import { Logo } from "@/components/Logo";
 
 // Slugify an idea/name into a valid repo name (lowercase, dashes).
 function slugify(s: string): string {
@@ -90,14 +91,7 @@ export function StudioEntry({ onLaunched }: { onLaunched?: () => void }) {
     <div className="entry">
       <div className="entry-inner">
         <div className="entry-brand">
-          <span className="logo">
-            <span className="b">&lt;</span>
-            <span className="word">
-              <span className="ai">ai</span>
-              <span className="uda">uda</span>
-            </span>
-            <span className="b">/&gt;</span>
-          </span>
+          <Logo size="lg" />
         </div>
         <h1 className="entry-h1">{t("studio.entry.h1")}</h1>
         <p className="entry-sub">{t("studio.entry.sub")}</p>

@@ -126,6 +126,55 @@ button {
   color: var(--ink4);
 }
 
+/* Marca Fluxo: "{ Fluxo }" (producto, estilo código) + "by <aiuda/> labs" (autor). */
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.brand-name {
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  line-height: 1;
+}
+.brand-name .brace {
+  color: var(--accent);
+  font-weight: 500;
+}
+.brand.sm .brand-name {
+  font-size: 21px;
+}
+.brand.lg .brand-name {
+  font-size: clamp(38px, 6vw, 54px);
+}
+.brand-by {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-family: var(--display);
+  font-size: 11.5px;
+  color: var(--ink4);
+}
+.brand.lg .brand-by {
+  font-size: 15px;
+  gap: 6px;
+}
+/* el sub-logo <aiuda/> hereda el tamaño chico del "by ..." (anula el .labs 18px) */
+.brand-by .logo {
+  font-size: inherit;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+.brand-by .logo .labs {
+  font-size: inherit;
+  font-weight: 500;
+}
+
 aside.nav {
   padding: 22px 16px;
   border-right: 1px solid var(--stroke);
@@ -2212,10 +2261,11 @@ details.log-row[open] > summary::before {
 }
 .entry-brand {
   margin-bottom: 26px;
+  display: flex;
+  justify-content: center;
 }
-.entry-brand .logo {
-  font-size: 34px;
-  padding: 0;
+.entry-brand .brand {
+  align-items: center;
 }
 .entry-h1 {
   font-family: var(--serif);
