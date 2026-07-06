@@ -1,6 +1,6 @@
 package api
 
-// Onboarding GitHub (Forja, GTM 2026-07-03):
+// Onboarding GitHub (Fluxo, GTM 2026-07-03):
 //   GET /setup/github-app          — página del operador: crea la App vía manifest flow
 //   GET /setup/github-app/callback — canjea el code → credenciales persistidas
 //   GET /auth/github/start         — "Continue with GitHub" (OAuth user-to-server)
@@ -94,7 +94,7 @@ func (s *Server) setupGitHubApp(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.URL.Query().Get("name")
 	if name == "" {
-		name = "Forja"
+		name = "Fluxo"
 	}
 	manifest, err := json.Marshal(ghapp.Manifest(name, org, s.publicBaseURL(), s.consoleURL()))
 	if err != nil {
@@ -103,7 +103,7 @@ func (s *Server) setupGitHubApp(w http.ResponseWriter, r *http.Request) {
 	}
 	action := fmt.Sprintf("https://github.com/organizations/%s/settings/apps/new", html.EscapeString(org))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>Crear GitHub App Forja</title>
+	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>Crear GitHub App Fluxo</title>
 <body style="font-family:system-ui;max-width:640px;margin:80px auto;line-height:1.5">
 <h1>Crear la GitHub App «%s» en <code>%s</code></h1>
 <p>Al continuar, GitHub te pedirá aprobar la App con los permisos que el conductor
@@ -137,7 +137,7 @@ func (s *Server) setupGitHubAppCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>Forja conectada</title>
+	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>Fluxo conectada</title>
 <body style="font-family:system-ui;max-width:640px;margin:80px auto;line-height:1.5">
 <h1>✓ App «%s» creada en %s</h1>
 <p>Credenciales guardadas. Siguiente paso: <a href="%s/installations/new">instalar la App
