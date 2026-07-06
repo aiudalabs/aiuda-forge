@@ -39,6 +39,12 @@ type ControlOps interface {
 	// way an operator does. Both reversible (read-only).
 	Artifact(runID, stepID string) (string, error)
 	RunEvents(runID string) ([]map[string]any, error)
+
+	// Exec is the escape hatch: run a shell command on the control host. The most
+	// powerful and most dangerous capability — gated hard (mutating, owner-only,
+	// opt-in per deployment). It's what lets the Brain do the long tail (gh, git,
+	// docker, scripts) that no specific tool covers.
+	Exec(command string) (string, error)
 }
 
 // EngineOps is the production ControlOps, wired to the kernel Engine, store, and

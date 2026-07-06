@@ -60,6 +60,7 @@ func (o *fakeOps) WriteRegistry(string, string, string) error  { return nil }
 func (o *fakeOps) DeleteRegistry(string, string) error         { return nil }
 func (o *fakeOps) Artifact(string, string) (string, error)     { return "", nil }
 func (o *fakeOps) RunEvents(string) ([]map[string]any, error)  { return nil, nil }
+func (o *fakeOps) Exec(string) (string, error)                 { return "", nil }
 func (o *fakeOps) ActiveState(string) (map[string]any, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()

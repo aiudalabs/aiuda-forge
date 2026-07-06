@@ -3,6 +3,7 @@ package brain
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 )
 
 // ToolKind classifies a tool by blast radius. Reversible tools run automatically;
@@ -232,15 +233,40 @@ var registry = map[string]toolDef{
 			return ok(ops.DeleteRegistry(argStr(input, "kind"), argStr(input, "id")))
 		},
 	},
+
+	// ---- escape hatch (opt-in) ------------------------------------------------
+	// The long tail: anything no specific tool covers (gh, git, docker, scripts).
+	// Owner-only, mutating (the user sees the exact command before it runs), and
+	// OFFERED ONLY when VIBEFORGE_BRAIN_EXEC=1 — off by default.
+	"exec": {
+		Tool: Tool{Name: "exec", Description: "Run a shell command on the control host and return its combined output. The ESCAPE HATCH for anything no specific tool covers (gh, git, docker, scripts). MUTATING and owner-only — proposed for human approval; the user sees the exact command before it runs.", InputSchema: obj(map[string]any{"command": strp("the shell command to run")}, "command")},
+		Kind: Mutating, MinRole: "owner",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			return ops.Exec(argStr(input, "command"))
+		},
+	},
 }
 
 // toolList returns the LLM-facing tool schemas (stable order not required).
 func toolList() []Tool {
 	out := make([]Tool, 0, len(registry))
-	for _, d := range registry {
+	for name, d := range registry {
+		if !toolEnabled(name) {
+			continue
+		}
 		out = append(out, d.Tool)
 	}
 	return out
+}
+
+// toolEnabled gates opt-in tools. The exec escape hatch is offered ONLY when the
+// deployment sets VIBEFORGE_BRAIN_EXEC=1 — otherwise the Brain never sees it, and
+// execTool refuses it as a second line of defence.
+func toolEnabled(name string) bool {
+	if name == "exec" {
+		return os.Getenv("VIBEFORGE_BRAIN_EXEC") == "1"
+	}
+	return true
 }
 
 func jsonStr(v any) string { b, _ := json.Marshal(v); return string(b) }

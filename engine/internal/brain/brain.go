@@ -12,6 +12,7 @@ const (
 	EvtToken  = "assistant.token"  // a streamed text delta {text}
 	EvtAction = "assistant.action" // a proposed mutating action {action_id, tool, args}
 	EvtDone   = "assistant.done"   // turn finished {error?}
+	EvtAudit  = "assistant.audit"  // a tool execution record {tool, kind, role, ok?, approved?}
 )
 
 const (
@@ -108,8 +109,20 @@ func (b *Brain) execTool(ctx context.Context, convID, projectID, role string, tu
 	if !roleAllows(def.MinRole, role) {
 		return fmt.Sprintf("permission denied: %q requires role %q", tu.Name, def.MinRole), true
 	}
+	// Defence-in-depth: an opt-in tool (exec) that isn't enabled is refused even if
+	// it somehow reached execTool (it isn't offered in toolList when disabled).
+	if !toolEnabled(tu.Name) {
+		return fmt.Sprintf("tool %q is disabled on this deployment", tu.Name), true
+	}
+	// audit records EVERY tool execution over the (persisted) event bus — the trail
+	// of what the Brain did, and who approved the mutations.
+	audit := func(kind string, data map[string]any) {
+		data["tool"], data["kind"], data["role"] = tu.Name, kind, role
+		b.fire(convID, EvtAudit, data)
+	}
 	if def.Kind == Reversible {
 		out, err := def.Run(b.ops, projectID, tu.Input)
+		audit("reversible", map[string]any{"ok": err == nil})
 		if err != nil {
 			return err.Error(), true
 		}
@@ -141,10 +154,12 @@ func (b *Brain) execTool(ctx context.Context, convID, projectID, role string, tu
 	}
 	if !approved {
 		_ = b.store.SetActionStatus(actionID, "rejected")
+		audit("mutating", map[string]any{"approved": false})
 		return "the user rejected this action; do NOT retry it — acknowledge and ask what they want instead", false
 	}
 	_ = b.store.SetActionStatus(actionID, "approved")
 	out, err := def.Run(b.ops, projectID, tu.Input)
+	audit("mutating", map[string]any{"approved": true, "ok": err == nil})
 	if err != nil {
 		return err.Error(), true
 	}
@@ -203,9 +218,13 @@ CRITICAL — reporting state without lying:
 - If get_state shows active_runs, the factory IS working — do NOT claim it's paused or idle. Only say "paused" if get_state.paused is true. Only say a run is QUEUED/DONE/etc. if a tool says so for THAT run id.
 - When unsure, call the tool again. Do not narrate state you did not just verify.
 
-Two kinds of tools:
-- Reversible (read + safe control: get_state, get_status, get_metrics, list_runs, get_run, pause, resume, cancel_run, retry_run, requeue_run) — call these directly.
-- Mutating (launch_run, approve_step, reject_step) — calling these PROPOSES the action to the human, who approves or rejects in the UI. If rejected, do not retry; acknowledge and ask what they prefer.
+You are the master of this project's whole process. Your tools cover four areas:
+- Inspect: get_state, get_status, get_metrics, list_runs, get_run, read_artifact (the DOCUMENT a phase produced — PRD, data model, backlog, mockup), get_run_events (a run's timeline), list_registry, read_registry.
+- Control runs: launch_run, approve_step, reject_step, cancel_run, retry_run, requeue_run, pause, resume.
+- AUTHOR THE METHOD — the registry IS the methodology, as data. write_registry / delete_registry create or edit workflows, agent manifests (agent), personas (agent_persona) and skills. This is how you "create a new flow", "change a model", or "edit a persona". To re-run just one phase, compose a one-step workflow and launch it. read_registry FIRST so you replace the full file.
+- exec (only if enabled): the escape hatch for anything no specific tool covers.
+
+Reversible tools (all reads + pause/resume/cancel/retry/requeue) run directly. Mutating tools (launch_run, approve_step, reject_step, write_registry, delete_registry, exec) PROPOSE the action to the human, who approves or rejects in the UI — you NEVER write, delete, launch, or run outward-facing work without that explicit per-action approval, even if the user gave a general go-ahead earlier. If rejected, do not retry; acknowledge and ask what they prefer.
 
 Be concise and concrete. Match the user's language (Spanish or English). When you report status, summarize what matters (progress, what's running, what failed and why) rather than dumping raw JSON.`
 }

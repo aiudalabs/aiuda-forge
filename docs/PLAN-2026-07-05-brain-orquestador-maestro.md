@@ -49,7 +49,7 @@ Con esto el Brain hace lo que hoy se hace a mano: *"crea un flujo de solo-mockup
 
 Con esto: *"¿por qué falló UI?"*, *"muéstrame el PRD"*, *"revisa el backlog contra la arquitectura"* — diagnóstico real, no adivinar.
 
-### Fase 3 — Escotilla de escape (la cola larga) · GATED FUERTE
+### Fase 3 — Escotilla de escape (la cola larga) · GATED FUERTE · ✅ HECHA (exec: Mutating + owner + opt-in VIBEFORGE_BRAIN_EXEC)
 El "cualquier cosa" total. Dos caminos:
 - **(a) Tools específicos hacia-afuera** (preferido): `github_create_issue`, `github_merge_pr`, `git_*`, `dispatch_work` — cada uno **Mutating**, aprobación por-acción. Menos poder, más seguro y auditable.
 - **(b) `exec(cmd)`** · **Mutating**, `MinRole: owner`, doble confirmación, sandbox/allowlist. Es lo que da máxima flexibilidad (como un shell), y lo más peligroso.
@@ -61,7 +61,12 @@ El "cualquier cosa" total. Dos caminos:
 - **Memoria por-proyecto** (ya hay `store.go` con historial): que recuerde decisiones/estado entre turnos.
 - **Loop más largo** (`maxToolRounds`) para tareas multi-paso.
 
-### Fase 5 — Seguridad y responsabilidad (transversal)
+### Fase 5 — Seguridad y responsabilidad (transversal) · ✅ HECHA (evento de auditoría por tool; RBAC ya enforced; exec opt-in)
+
+> **Estado global (2026-07-05):** Fases 1, 2, 3, 5 ✅. Fase 4 parcial: system prompt ampliado ✅;
+> faltan modelo→Opus (env `BRAIN_MODEL`), memoria por-proyecto, y la **adaptación a suscripción**
+> (el bloqueo para chatear en vivo sin saldo API). El resto del contenido de la Fase 5 abajo ya
+> estaba en el diseño original (Reversible/Mutating, aprobación por-acción, RBAC).
 - Clasificar bien lo nuevo: **todo write/exec/hacia-afuera = Mutating**.
 - **Hacia-afuera** (merge PR, dispatch, deploy): **aprobación explícita por-acción**, aunque exista un "sí" general antes (la lección del merge).
 - RBAC `MinRole` por tool (ya existe) + **auditoría** de acciones del Brain (qué tool, qué input, aprobado por quién).
