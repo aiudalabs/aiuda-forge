@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Client wraps GitHub operations implemented via the gh/git CLIs.
@@ -46,6 +47,18 @@ func withRunner(r func(ctx context.Context, workdir string, name string, args ..
 }
 
 func (c *Client) execRunner(ctx context.Context, workdir string, name string, args ...string) (string, error) {
+	// Cap every gh/git shell-out so one hung network call can't block the caller
+	// indefinitely — critical for the conductor loop, which syncs every tenant on a
+	// single goroutine (a hung `gh` would stall projection/auto-merge for ALL tenants).
+	// Generous default (covers a shallow clone); override via VIBEFORGE_GH_TIMEOUT_SEC.
+	timeout := 90 * time.Second
+	if v := os.Getenv("VIBEFORGE_GH_TIMEOUT_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			timeout = time.Duration(n) * time.Second
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	if workdir != "" {
 		cmd.Dir = workdir

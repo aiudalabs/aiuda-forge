@@ -414,6 +414,13 @@ func (a *App) StartBackground(ctx context.Context) {
 		go a.Engine.WorkerLoop(ctx, fmt.Sprintf("inproc-worker-%d", i))
 	}
 	go a.Engine.ReaperLoop(ctx, 60_000, 10*time.Second)
+	// Retention (audit A3): opt-in disk GC — prunes old events + terminal-run workdirs.
+	// Off unless VIBEFORGE_RETENTION_DAYS is set (compose sets it for the deploy).
+	if v := os.Getenv("VIBEFORGE_RETENTION_DAYS"); v != "" {
+		if days, err := strconv.Atoi(v); err == nil && days > 0 {
+			go a.Engine.RetentionLoop(ctx, time.Duration(days)*24*time.Hour, time.Hour)
+		}
+	}
 	go a.Bus.Run(ctx)
 	// GitHub conductor tick (F1+F2): sincroniza la proyección y, para proyectos en
 	// dispatch_mode=auto, despacha el trabajo listo. Fallback de polling cuando no
