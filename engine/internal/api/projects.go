@@ -224,6 +224,10 @@ func (s *Server) putProjectSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.canAccessProject(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "project not found: "+id)
+		return
+	}
 	p, err := s.Projects.Get(id)
 	if err != nil {
 		if errors.Is(err, projects.ErrNotFound) {
@@ -249,6 +253,10 @@ func docRef(r *http.Request) string {
 // ref (default `design`) — powers the per-doc version chips/timeline.
 func (s *Server) getProjectDocHistory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.canAccessProject(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "project not found: "+id)
+		return
+	}
 	ref := docRef(r)
 	path := r.URL.Query().Get("path")
 	if !strings.HasPrefix(path, "docs/") || strings.Contains(path, "..") {
@@ -268,7 +276,7 @@ func (s *Server) getProjectDocHistory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"path": path, "ref": ref, "versions": []github.FileCommit{}})
 		return
 	}
-	commits, err := github.New().ListCommitsForPath(r.Context(), p.Repo, ref, path)
+	commits, err := s.ghFor(r.Context(), id).ListCommitsForPath(r.Context(), p.Repo, ref, path)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -280,6 +288,10 @@ func (s *Server) getProjectDocHistory(w http.ResponseWriter, r *http.Request) {
 // design changelog (each = a doc version published on a gate approval).
 func (s *Server) getProjectDesignLog(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.canAccessProject(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "project not found: "+id)
+		return
+	}
 	ref := docRef(r)
 	p, err := s.Projects.Get(id)
 	if err != nil {
@@ -294,7 +306,7 @@ func (s *Server) getProjectDesignLog(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ref": ref, "commits": []github.FileCommit{}})
 		return
 	}
-	commits, err := github.New().ListCommits(r.Context(), p.Repo, ref)
+	commits, err := s.ghFor(r.Context(), id).ListCommits(r.Context(), p.Repo, ref)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -308,6 +320,10 @@ func (s *Server) getProjectDesignLog(w http.ResponseWriter, r *http.Request) {
 // "in progress" empty state rather than failing.
 func (s *Server) listProjectDocs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.canAccessProject(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "project not found: "+id)
+		return
+	}
 	ref := docRef(r)
 	p, err := s.Projects.Get(id)
 	if err != nil {
@@ -322,7 +338,7 @@ func (s *Server) listProjectDocs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"docs": []github.DocEntry{}, "ref": ref})
 		return
 	}
-	gh := github.New()
+	gh := s.ghFor(r.Context(), id)
 	entries, err := gh.ListContents(r.Context(), p.Repo, "docs", ref)
 	if err != nil {
 		// No docs/ on this ref yet (design not handed off, or wrong branch).
@@ -357,6 +373,10 @@ func (s *Server) listProjectDocs(w http.ResponseWriter, r *http.Request) {
 // The path is constrained to docs/ to avoid reading arbitrary repo files.
 func (s *Server) getProjectDoc(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.canAccessProject(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "project not found: "+id)
+		return
+	}
 	ref := docRef(r)
 	path := r.URL.Query().Get("path")
 	if !strings.HasPrefix(path, "docs/") || strings.Contains(path, "..") {
@@ -372,7 +392,7 @@ func (s *Server) getProjectDoc(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	content, err := github.New().ReadFile(r.Context(), p.Repo, path, ref)
+	content, err := s.ghFor(r.Context(), id).ReadFile(r.Context(), p.Repo, path, ref)
 	if err != nil {
 		httpErr(w, http.StatusNotFound, err.Error())
 		return

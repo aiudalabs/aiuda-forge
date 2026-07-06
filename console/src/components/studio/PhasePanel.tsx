@@ -250,7 +250,7 @@ function MockupsArtifact({ html }: { html: string }) {
       </div>
       <iframe
         srcDoc={html}
-        sandbox="allow-scripts allow-same-origin allow-forms"
+        sandbox="allow-scripts allow-forms"
         title={t("studio.view.mockupPreviewTitle")}
         style={{
           width: "100%",

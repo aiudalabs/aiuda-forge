@@ -25,7 +25,6 @@ import (
 	"forge/internal/channels"
 	"forge/internal/conductor"
 	"forge/internal/ghapp"
-	github "forge/internal/github"
 	"forge/internal/httpx"
 	"forge/internal/projects"
 	"forge/internal/settings"
@@ -656,7 +655,7 @@ func (s *Server) persistDesignDocs(ctx context.Context, runID, step string) {
 	}
 	root := s.Engine.Workdir(runID)
 	docsDir := filepath.Join(root, "docs")
-	gh := github.New()
+	gh := s.ghFor(ctx, proj.ID)
 	// The per-project `design` branch is the APPROVED design history: every gate
 	// approval (initial phase, re-run, or change-request) commits its docs here, so
 	// `git log` on `design` is the full design evolution — separate from the code/
