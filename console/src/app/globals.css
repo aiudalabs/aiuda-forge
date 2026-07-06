@@ -169,6 +169,7 @@ button {
   font-size: inherit;
   font-weight: 900;
   letter-spacing: -0.04em;
+  gap: 2px;
 }
 .brand-by .logo .labs {
   font-size: inherit;
