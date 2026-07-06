@@ -1052,6 +1052,17 @@ export async function createProject(
   });
 }
 
+export interface Capabilities {
+  github: boolean;
+  claude: boolean;
+}
+
+/** Qué le falta al usuario actual para el self-serve (¿GitHub conectado? ¿AI lista?). */
+export async function getCapabilities(): Promise<Capabilities> {
+  if (await isMock()) return { github: true, claude: true };
+  return http<Capabilities>(`/me/capabilities`);
+}
+
 /** Los owners (usuario + orgs) bajo los que se puede crear un repo. */
 export async function listGithubOrgs(): Promise<string[]> {
   if (await isMock()) return ["vibeforge-demo"];

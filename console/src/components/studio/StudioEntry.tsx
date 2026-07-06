@@ -8,7 +8,8 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { useActiveProject } from "@/lib/activeProject";
-import { useCreateDesignRun, useCreateProject, useGithubOrgs } from "@/lib/hooks";
+import { useCreateDesignRun, useCreateProject, useGithubOrgs, useCapabilities } from "@/lib/hooks";
+import { API_URL } from "@/lib/config";
 import { useT } from "@/lib/i18n";
 
 // Slugify an idea/name into a valid repo name (lowercase, dashes).
@@ -40,6 +41,7 @@ export function StudioEntry({ onLaunched }: { onLaunched?: () => void }) {
   const createDesignRun = useCreateDesignRun();
   const { setActiveId } = useActiveProject();
   const { data: orgs = [] } = useGithubOrgs();
+  const { data: caps } = useCapabilities();
   const t = useT();
 
   // Repo name auto-derives from the project name (slugified) until the user edits it.
@@ -99,6 +101,21 @@ export function StudioEntry({ onLaunched }: { onLaunched?: () => void }) {
         </div>
         <h1 className="entry-h1">{t("studio.entry.h1")}</h1>
         <p className="entry-sub">{t("studio.entry.sub")}</p>
+
+        {caps && !caps.github && (
+          <a
+            href={`${API_URL}/auth/github/start`}
+            style={{ display: "block", textDecoration: "none", margin: "0 0 20px", padding: "16px 18px", border: "1px solid var(--accent-line)", background: "var(--accent-soft)", borderRadius: 14 }}
+          >
+            <div style={{ fontFamily: "var(--display)", fontWeight: 700, fontSize: 15, color: "var(--ink)" }}>
+              ⚡ {t("studio.entry.connectGithub")}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--ink3)", marginTop: 4 }}>{t("studio.entry.connectGithubSub")}</div>
+            <span className="btn primary sm" style={{ marginTop: 12, display: "inline-block" }}>
+              {t("studio.entry.connectGithubCta")}
+            </span>
+          </a>
+        )}
 
         <form className="entry-form" onSubmit={launch}>
           <textarea

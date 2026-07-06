@@ -14,6 +14,9 @@ export const studio = {
     "studio.entry.orgTitle": "¿Dónde crear el repositorio?",
     "studio.entry.launching": "Lanzando…",
     "studio.entry.start": "✦ Empezar el diseño →",
+    "studio.entry.connectGithub": "Conectá tu GitHub",
+    "studio.entry.connectGithubSub": "Para que los proyectos se creen en tu propia cuenta u organización. Toma 10 segundos.",
+    "studio.entry.connectGithubCta": "Continuar con GitHub →",
 
     // StudioDocs.tsx — friendly doc titles
     "studio.docs.title.brief": "Brief",
@@ -143,6 +146,9 @@ export const studio = {
     "studio.entry.orgTitle": "Where to create the repository?",
     "studio.entry.launching": "Launching…",
     "studio.entry.start": "✦ Start the design →",
+    "studio.entry.connectGithub": "Connect your GitHub",
+    "studio.entry.connectGithubSub": "So projects are created in your own account or org. Takes 10 seconds.",
+    "studio.entry.connectGithubCta": "Continue with GitHub →",
 
     // StudioDocs.tsx — friendly doc titles
     "studio.docs.title.brief": "Brief",
@@ -272,6 +278,9 @@ export const studio = {
     "studio.entry.orgTitle": "Onde criar o repositório?",
     "studio.entry.launching": "Iniciando…",
     "studio.entry.start": "✦ Começar o design →",
+    "studio.entry.connectGithub": "Conecte seu GitHub",
+    "studio.entry.connectGithubSub": "Para que os projetos sejam criados na sua própria conta ou organização. Leva 10 segundos.",
+    "studio.entry.connectGithubCta": "Continuar com GitHub →",
 
     // StudioDocs.tsx — friendly doc titles
     "studio.docs.title.brief": "Brief",

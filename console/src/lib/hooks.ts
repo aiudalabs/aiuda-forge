@@ -518,6 +518,15 @@ export function useGithubOrgs() {
   });
 }
 
+// Self-serve capabilities of the current user (GitHub connected? operator AI wired?).
+export function useCapabilities() {
+  return useQuery({
+    queryKey: ["capabilities"],
+    queryFn: () => api.getCapabilities(),
+    staleTime: 30_000,
+  });
+}
+
 // ── Studio / Design runs hooks ────────────────────────────────────────────────
 
 // The project's currently-active design/iterate run (RUNNING, AWAITING, or with a
