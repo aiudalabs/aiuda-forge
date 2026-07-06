@@ -46,6 +46,9 @@ export function PhasePanel({
   const rerun = useRerunStep();
   const [rejectInput, setRejectInput] = useState("");
   const [showRejectForm, setShowRejectForm] = useState(false);
+  // Live-log colapsable: por defecto abierto durante la generación (para ver el avance
+  // como siempre), pero el usuario lo puede plegar para que la terminal no domine.
+  const [logOpen, setLogOpen] = useState(true);
 
   const gateStepId = phase.gateId || `${phase.stepId}_gate`;
 
@@ -83,8 +86,15 @@ export function PhasePanel({
           <div className="artifact-empty">
             {isRunning ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", textAlign: "left", alignItems: "stretch" }}>
-                <span style={{ alignSelf: "center" }}><span className="spin" style={{ width: 14, height: 14 }} /> {t("studio.view.generatingDoc")}</span>
-                <LiveLog events={liveEvents} style={{ marginTop: 0, maxHeight: 220 }} />
+                <button
+                  onClick={() => setLogOpen((o) => !o)}
+                  aria-expanded={logOpen}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, alignSelf: "center", background: "none", border: "none", cursor: "pointer", font: "inherit", color: "var(--ink2)" }}
+                >
+                  <span className="spin" style={{ width: 14, height: 14 }} /> {t("studio.view.generatingDoc")}
+                  <span style={{ color: "var(--ink4)", fontSize: 13, transition: "transform .2s var(--ease)", transform: logOpen ? "none" : "rotate(-90deg)" }}>▾</span>
+                </button>
+                {logOpen && <LiveLog events={liveEvents} style={{ marginTop: 0, maxHeight: 220 }} />}
               </div>
             ) : (
               <span style={{ color: "var(--ink4)" }}>{t("studio.view.docWillShow")}</span>
