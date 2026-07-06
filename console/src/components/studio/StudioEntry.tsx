@@ -28,7 +28,7 @@ const EXAMPLES = [
   "Un CRM simple para freelancers: contactos, propuestas y seguimiento de pagos.",
 ];
 
-export function StudioEntry({ onLaunched }: { onLaunched: () => void }) {
+export function StudioEntry({ onLaunched }: { onLaunched?: () => void }) {
   const [idea, setIdea] = useState("");
   const [name, setName] = useState("");
   const [touchedName, setTouchedName] = useState(false);
@@ -64,7 +64,7 @@ export function StudioEntry({ onLaunched }: { onLaunched: () => void }) {
         repo: proj.repo,
         instructions: trimmedIdea,
       });
-      onLaunched();
+      onLaunched?.();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
         setError(t("studio.entry.repoExists", { name: finalName }));

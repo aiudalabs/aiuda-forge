@@ -1,10 +1,6 @@
 // Namespace "studio" — chrome de la vista studio (claves "studio.*").
 export const studio = {
   es: {
-    // Tabs (Studio.tsx)
-    "studio.tab.spec": "Especificación",
-    "studio.tab.design": "Diseño",
-
     // StudioEntry.tsx
     "studio.entry.validation.idea": "Describe qué quieres construir.",
     "studio.entry.validation.name": "Dale un nombre al proyecto (repositorio).",
@@ -40,6 +36,7 @@ export const studio = {
     "studio.docs.runActive": "Diseño en curso",
     "studio.docs.awaitingN": "{n} aprobación pendiente",
     "studio.docs.openPipeline": "Ver pipeline",
+    "studio.docs.hidePipeline": "Ocultar pipeline",
     "studio.docs.refine.send": "Refinar",
     "studio.docs.refine.sending": "Regenerando…",
     "studio.phase.discovery": "Descubrimiento",
@@ -67,19 +64,8 @@ export const studio = {
     "studio.docs.selectPage": "Selecciona una página.",
     "studio.docs.loadingDoc": "cargando documento…",
 
-    // StudioView.tsx
-    "studio.view.title": "Studio",
-    "studio.view.subtitle": "diseño guiado · fase por fase",
+    // DesignPipeline.tsx / PhasePanel.tsx (pipeline inline en la Especificación)
     "studio.view.newProject": "+ Nuevo proyecto",
-    "studio.view.loadingProjects": "Cargando proyectos…",
-    "studio.view.connectError": "No se pudo conectar al control-plane.",
-    "studio.view.noProjects": "Sin proyectos de diseño todavía.",
-    "studio.view.createFirst": "Crear el primero",
-    "studio.view.projects": "Proyectos",
-    "studio.view.selectProject": "Selecciona un proyecto.",
-    "studio.view.phasesProgress": "{done}/{total} fases",
-    "studio.view.cycle": "Ciclo {n}",
-    "studio.view.iteration": "Cambio",
     "studio.view.loadingProject": "Cargando proyecto…",
     "studio.view.relaunchDesign": "↺ Nuevo ciclo de diseño",
     "studio.view.relaunching": "Relanzando…",
@@ -144,10 +130,6 @@ export const studio = {
     "studio.modal.create": "Crear y diseñar",
   } as Record<string, string>,
   en: {
-    // Tabs (Studio.tsx)
-    "studio.tab.spec": "Specification",
-    "studio.tab.design": "Design",
-
     // StudioEntry.tsx
     "studio.entry.validation.idea": "Describe what you want to build.",
     "studio.entry.validation.name": "Give the project (repository) a name.",
@@ -183,6 +165,7 @@ export const studio = {
     "studio.docs.runActive": "Design in progress",
     "studio.docs.awaitingN": "{n} approval pending",
     "studio.docs.openPipeline": "View pipeline",
+    "studio.docs.hidePipeline": "Hide pipeline",
     "studio.docs.refine.send": "Refine",
     "studio.docs.refine.sending": "Regenerating…",
     "studio.phase.discovery": "Discovery",
@@ -210,19 +193,8 @@ export const studio = {
     "studio.docs.selectPage": "Select a page.",
     "studio.docs.loadingDoc": "loading document…",
 
-    // StudioView.tsx
-    "studio.view.title": "Studio",
-    "studio.view.subtitle": "guided design · phase by phase",
+    // DesignPipeline.tsx / PhasePanel.tsx (pipeline inline en la Especificación)
     "studio.view.newProject": "+ New project",
-    "studio.view.loadingProjects": "Loading projects…",
-    "studio.view.connectError": "Could not connect to the control plane.",
-    "studio.view.noProjects": "No design projects yet.",
-    "studio.view.createFirst": "Create the first one",
-    "studio.view.projects": "Projects",
-    "studio.view.selectProject": "Select a project.",
-    "studio.view.phasesProgress": "{done}/{total} phases",
-    "studio.view.cycle": "Cycle {n}",
-    "studio.view.iteration": "Change",
     "studio.view.loadingProject": "Loading project…",
     "studio.view.relaunchDesign": "↺ New design cycle",
     "studio.view.relaunching": "Relaunching…",
@@ -287,10 +259,6 @@ export const studio = {
     "studio.modal.create": "Create and design",
   } as Record<string, string>,
   pt: {
-    // Tabs (Studio.tsx)
-    "studio.tab.spec": "Especificação",
-    "studio.tab.design": "Design",
-
     // StudioEntry.tsx
     "studio.entry.validation.idea": "Descreva o que você quer construir.",
     "studio.entry.validation.name": "Dê um nome ao projeto (repositório).",
@@ -326,6 +294,7 @@ export const studio = {
     "studio.docs.runActive": "Design em andamento",
     "studio.docs.awaitingN": "{n} aprovação pendente",
     "studio.docs.openPipeline": "Ver pipeline",
+    "studio.docs.hidePipeline": "Ocultar pipeline",
     "studio.docs.refine.send": "Refinar",
     "studio.docs.refine.sending": "Regenerando…",
     "studio.phase.discovery": "Descoberta",
@@ -353,19 +322,8 @@ export const studio = {
     "studio.docs.selectPage": "Selecione uma página.",
     "studio.docs.loadingDoc": "carregando documento…",
 
-    // StudioView.tsx
-    "studio.view.title": "Studio",
-    "studio.view.subtitle": "design guiado · fase por fase",
+    // DesignPipeline.tsx / PhasePanel.tsx (pipeline inline en la Especificación)
     "studio.view.newProject": "+ Novo projeto",
-    "studio.view.loadingProjects": "Carregando projetos…",
-    "studio.view.connectError": "Não foi possível conectar ao control-plane.",
-    "studio.view.noProjects": "Ainda não há projetos de design.",
-    "studio.view.createFirst": "Criar o primeiro",
-    "studio.view.projects": "Projetos",
-    "studio.view.selectProject": "Selecione um projeto.",
-    "studio.view.phasesProgress": "{done}/{total} fases",
-    "studio.view.cycle": "Ciclo {n}",
-    "studio.view.iteration": "Mudança",
     "studio.view.loadingProject": "Carregando projeto…",
     "studio.view.relaunchDesign": "↺ Novo ciclo de design",
     "studio.view.relaunching": "Reiniciando…",

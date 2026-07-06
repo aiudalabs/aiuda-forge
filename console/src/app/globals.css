@@ -944,90 +944,7 @@ details.log-row[open] > summary::before {
   gap: 18px;
 }
 
-/* Studio real — layout y componentes */
-.studio-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 16px;
-  align-items: flex-start;
-}
-.studio-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  position: sticky;
-  top: 20px;
-}
-.studio-main {
-  min-width: 0;
-}
-
-/* Tarjeta de proyecto en la lista lateral */
-.proj-card {
-  width: 100%;
-  text-align: left;
-  background: #fff;
-  border: 1px solid var(--stroke);
-  border-radius: var(--r);
-  padding: 11px 13px;
-  cursor: pointer;
-  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
-}
-.proj-card:hover {
-  border-color: var(--stroke-strong);
-}
-.proj-card.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-line);
-}
-.proj-idea {
-  font-weight: 600;
-  font-size: 13px;
-  line-height: 1.4;
-  color: var(--ink);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.proj-meta {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 6px;
-}
-.proj-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-  background: var(--bg3);
-}
-.proj-dot.approved { background: var(--emerald); }
-.proj-dot.running  { background: var(--navy); }
-.proj-dot.awaiting { background: var(--accent); }
-.proj-dot.failed   { background: #9a2020; }
-.proj-dot.pending  { background: var(--bg3); }
-.proj-progress {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink4);
-}
-.proj-cur {
-  font-size: 11px;
-  color: var(--ink3);
-  font-style: italic;
-}
-/* Etiqueta de ciclo en la card: distingue varios design runs del mismo proyecto. */
-.proj-cycle {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--ink4);
-  white-space: nowrap;
-}
-
-/* Detalle de proyecto */
+/* Detalle de proyecto (pipeline inline en la Especificación, C6b) */
 .studio-detail {
   display: flex;
   flex-direction: column;
@@ -2041,30 +1958,6 @@ details.log-row[open] > summary::before {
 }
 
 /* ── Studio = Confluence (U1) ──────────────────────────────────────────────── */
-.studio-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 0 clamp(20px, 2.4vw, 48px);
-  border-bottom: 1px solid var(--stroke);
-  background: #fff;
-}
-.studio-tab {
-  appearance: none;
-  background: none;
-  border: none;
-  padding: 14px 16px;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--ink4);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-.studio-tab.on {
-  color: var(--ink);
-  border-bottom-color: var(--accent);
-}
-
 .docs-h1 {
   display: flex;
   align-items: baseline;
@@ -2622,7 +2515,7 @@ details.log-row[open] > summary::before {
   box-shadow: 0 10px 26px rgba(13, 13, 15, 0.08);
   border-color: var(--stroke-strong);
 }
-.ov-docitem, .ov-link, .dag-btn, .studio-tab, .entry-chip {
+.ov-docitem, .ov-link, .dag-btn, .entry-chip {
   transition: 0.15s var(--ease);
 }
 

@@ -1,51 +1,26 @@
 "use client";
 
-// Studio shell (U1 + U5).
+// Studio shell (U1 + U5 + C6b).
 //   · No project yet → the conversational entry (StudioEntry): the obvious place to
-//     start a new project. Launching it drops you straight into the Diseño flow.
-//   · With a project → two tabs:
-//       Especificación — the persistent specs read from the repo (Confluence-like).
-//       Diseño — the live design-run timeline (phases, gates, approvals).
+//     start a new project. Launching it drops you straight into the design flow.
+//   · With a project → a single view, the Especificación (StudioDocs): the repo's
+//     persistent docs, with the design pipeline (phases/gates/live generation)
+//     appearing INLINE as a state whenever there's an active design run — no more
+//     separate "Diseño" tab to hunt for the gate you need to approve.
 
-import { useState } from "react";
 import { useActiveProject } from "@/lib/activeProject";
-import { useActiveDesignRun } from "@/lib/hooks";
-import { useT } from "@/lib/i18n";
 import { StudioDocs } from "./StudioDocs";
 import { StudioEntry } from "./StudioEntry";
-import { StudioView } from "./StudioView";
-
-type Tab = "spec" | "design";
 
 export function Studio() {
   const { project, isLoading } = useActiveProject();
-  const [tab, setTab] = useState<Tab>("spec");
-  const t = useT();
-  const activeRun = useActiveDesignRun(project?.id ?? null);
-  const awaitingCount = (activeRun?.phases ?? []).filter((p) => p.gateStatus === "AWAITING").length;
 
-  // No project → the conversational entry. Launching a design auto-routes to the
-  // Diseño tab so the user lands on the live flow instead of hunting for it.
+  // No project → the conversational entry. Launching a design drops the user
+  // straight into StudioDocs, where the freshly-created run shows up inline
+  // (setActiveId makes it the active project, so no navigation is needed here).
   if (!isLoading && !project) {
-    return <StudioEntry onLaunched={() => setTab("design")} />;
+    return <StudioEntry />;
   }
 
-  return (
-    <>
-      <div className="studio-tabs">
-        <button className={`studio-tab${tab === "spec" ? " on" : ""}`} onClick={() => setTab("spec")}>
-          {t("studio.tab.spec")}
-        </button>
-        <button className={`studio-tab${tab === "design" ? " on" : ""}`} onClick={() => setTab("design")}>
-          {t("studio.tab.design")}
-          {activeRun && (
-            <span
-              style={{ marginLeft: 6, width: 7, height: 7, borderRadius: "50%", background: awaitingCount > 0 ? "var(--accent)" : "var(--navy)", display: "inline-block", verticalAlign: "middle" }}
-            />
-          )}
-        </button>
-      </div>
-      {tab === "spec" ? <StudioDocs onOpenPipeline={() => setTab("design")} /> : <StudioView />}
-    </>
-  );
+  return <StudioDocs />;
 }

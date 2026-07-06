@@ -14,6 +14,8 @@ import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
 import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useCreateIterationRun, useActiveDesignRun, useDesignLog } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
+import { DesignPipeline } from "./DesignPipeline";
+import { NewProjectModal } from "./StudioModals";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
 
@@ -106,12 +108,17 @@ function MockupFrame({ content, t }: { content: string; t: (k: string) => string
   );
 }
 
-export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } = {}) {
+export function StudioDocs() {
   const t = useT();
   const { project, isLoading: projLoading } = useActiveProject();
   const projectId = project?.id ?? null;
   const [branch, setBranch] = useState<"design" | "main">("design");
   const { data: docs, isLoading, isError } = useProjectDocs(projectId, branch);
+  // El pipeline (fases/gates) vive INLINE aquí como un estado de la Especificación
+  // (C6b): abierto por defecto mientras hay un run activo, colapsable para quien
+  // solo quiere leer los docs mientras una fase corre en segundo plano.
+  const [pipelineOpen, setPipelineOpen] = useState(true);
+  const [showNewProject, setShowNewProject] = useState(false);
 
   // Subdirectory entries are expanded by the API (one level), so all entries are
   // files. Sort by the logical reading order defined in DOC_META.
@@ -258,14 +265,15 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
             </button>
           ))}
         </div>
-        {activeRun && onOpenPipeline && (
+        {activeRun && (
           <button
             className="btn ghost sm"
-            onClick={onOpenPipeline}
+            onClick={() => setPipelineOpen((v) => !v)}
             style={{ display: "inline-flex", alignItems: "center", gap: 7 }}
           >
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: awaitingCount > 0 ? "var(--accent)" : "var(--navy)" }} />
-            {awaitingCount > 0 ? t("studio.docs.awaitingN", { n: awaitingCount }) : t("studio.docs.runActive")} · {t("studio.docs.openPipeline")}
+            {awaitingCount > 0 ? t("studio.docs.awaitingN", { n: awaitingCount }) : t("studio.docs.runActive")} ·{" "}
+            {pipelineOpen ? t("studio.docs.hidePipeline") : t("studio.docs.openPipeline")}
           </button>
         )}
         <div style={{ flex: 1 }} />
@@ -274,6 +282,9 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
             {t("studio.docs.changelog")}
           </button>
         )}
+        <button className="btn ghost sm" onClick={() => setShowNewProject(true)}>
+          {t("studio.view.newProject")}
+        </button>
         {project.repo && (
           <button className="btn primary sm" onClick={() => setCrOpen(true)}>
             {t("studio.view.newIteration")}
@@ -281,7 +292,7 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
         )}
       </div>
 
-      {awaitingCount > 0 && onOpenPipeline && (
+      {awaitingCount > 0 && !pipelineOpen && (
         <div
           style={{
             display: "flex",
@@ -298,11 +309,18 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
           <span style={{ flex: 1, fontSize: 13, color: "var(--ink2)" }}>
             {t("studio.docs.awaitingBanner", { n: awaitingCount })}
           </span>
-          <button className="btn primary sm" onClick={onOpenPipeline}>
+          <button className="btn primary sm" onClick={() => setPipelineOpen(true)}>
             {t("studio.docs.reviewChanges")}
           </button>
         </div>
       )}
+
+      {activeRun && pipelineOpen && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <DesignPipeline runId={activeRun.id} />
+        </div>
+      )}
+
       <div className="docs-layout">
         {/* Page tree */}
         <aside className="docs-tree">
@@ -491,6 +509,16 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
             </div>
           </div>
         </div>
+      )}
+      <div
+        className={`overlay ${showNewProject ? "on" : ""}`}
+        onClick={() => setShowNewProject(false)}
+      />
+      {showNewProject && (
+        <NewProjectModal
+          onClose={() => setShowNewProject(false)}
+          onCreated={() => setShowNewProject(false)}
+        />
       )}
     </div>
   );
