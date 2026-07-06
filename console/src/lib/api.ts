@@ -541,6 +541,15 @@ export async function getDocHistory(projectId: string, path: string, ref = "desi
   return res.versions ?? [];
 }
 
+/** Recent commits on the design branch — the project's design changelog. */
+export async function getDesignLog(projectId: string, ref = "design"): Promise<DocVersion[]> {
+  if (await isMock()) return [];
+  const res = await http<{ commits: DocVersion[] }>(
+    `/projects/${projectId}/design/log?ref=${encodeURIComponent(ref)}`,
+  );
+  return res.commits ?? [];
+}
+
 // Requeue (R2): resurrect a failed run's stories back to backlog so the
 // orchestrator re-fires them. In sprint mode this requeues the WHOLE sprint.
 // Requeue de UNA story (pivote F2): espejada → backlog + limpia su sesión de

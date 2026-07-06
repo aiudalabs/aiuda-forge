@@ -178,6 +178,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /projects/{id}/docs", s.needProjects(s.listProjectDocs))
 	m.HandleFunc("GET /projects/{id}/docs/file", s.needProjects(s.getProjectDoc))
 	m.HandleFunc("GET /projects/{id}/docs/history", s.needProjects(s.getProjectDocHistory))
+	m.HandleFunc("GET /projects/{id}/design/log", s.needProjects(s.getProjectDesignLog))
 	// Billing: the budget gate the orchestrator consults before firing, and the
 	// workspace billing/health view the dashboard reads.
 	m.HandleFunc("GET /projects/{id}/entitlement", s.needProjects(s.projectEntitlement))

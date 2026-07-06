@@ -479,6 +479,16 @@ export function useDocHistory(projectId: string | null, path: string | null) {
   });
 }
 
+// The project's design changelog (recent commits on the design branch).
+export function useDesignLog(projectId: string | null) {
+  return useQuery({
+    queryKey: ["design-log", projectId],
+    queryFn: () => api.getDesignLog(projectId as string),
+    enabled: !!projectId,
+    staleTime: 30_000,
+  });
+}
+
 export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({

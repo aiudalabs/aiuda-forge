@@ -83,7 +83,10 @@ func (c *Client) ListCommitsForPath(ctx context.Context, repoURL, branch, path s
 	if err != nil {
 		return nil, err
 	}
-	endpoint := fmt.Sprintf("repos/%s/commits?sha=%s&path=%s&per_page=50", slug, branch, path)
+	endpoint := fmt.Sprintf("repos/%s/commits?sha=%s&per_page=50", slug, branch)
+	if path != "" {
+		endpoint += "&path=" + path
+	}
 	out, err := c.runner(ctx, "", "gh", "api", endpoint, "--jq",
 		`[.[] | {sha: .sha, date: .commit.committer.date, message: (.commit.message | split("\n")[0])}]`)
 	if err != nil {
@@ -102,6 +105,12 @@ func (c *Client) ListCommitsForPath(ctx context.Context, repoURL, branch, path s
 		return nil, fmt.Errorf("parse commits %s: %w", path, err)
 	}
 	return commits, nil
+}
+
+// ListCommits returns the recent commits on `branch` (no path filter) — the project's
+// design history, for the project-level changelog. Empty when the branch is absent.
+func (c *Client) ListCommits(ctx context.Context, repoURL, branch string) ([]FileCommit, error) {
+	return c.ListCommitsForPath(ctx, repoURL, branch, "")
 }
 
 // WriteFile commits `content` to repo file `path` on `branch` via the GitHub

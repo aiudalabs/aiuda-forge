@@ -12,7 +12,7 @@ import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
 import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
-import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useCreateIterationRun, useActiveDesignRun } from "@/lib/hooks";
+import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useCreateIterationRun, useActiveDesignRun, useDesignLog } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
@@ -66,6 +66,11 @@ const DOC_STEP: Record<string, string> = {
 function stepForDoc(name: string, path: string): string | null {
   if (isHtml(path)) return "mockups";
   return DOC_STEP[name] ?? null;
+}
+
+// "design: publish docs/mockups/index.html (mockups_gate approved)" → "docs/mockups/index.html"
+function changelogLabel(msg: string): string {
+  return msg.replace(/^design:\s*publish\s*/i, "").replace(/\s*\(\w+_gate approved\)\s*$/i, "");
 }
 
 function isHtml(path: string) {
@@ -144,6 +149,8 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
   const { data: designRuns } = useDesignRuns();
   const activeRun = useActiveDesignRun(projectId);
   const awaitingCount = (activeRun?.phases ?? []).filter((p) => p.gateStatus === "AWAITING").length;
+  const { data: log } = useDesignLog(projectId);
+  const [showLog, setShowLog] = useState(false);
   const rerun = useRerunStep();
   const [refine, setRefine] = useState("");
   const activeFile = files.find((fl) => fl.path === active) ?? null;
@@ -252,6 +259,11 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
           </button>
         )}
         <div style={{ flex: 1 }} />
+        {log && log.length > 0 && (
+          <button className="btn ghost sm" onClick={() => setShowLog((v) => !v)}>
+            {t("studio.docs.changelog")}
+          </button>
+        )}
         {project.repo && (
           <button className="btn primary sm" onClick={() => setCrOpen(true)}>
             {t("studio.view.newIteration")}
@@ -406,6 +418,23 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
           )}
         </section>
       </div>
+      {showLog && log && log.length > 0 && (
+        <div style={{ marginTop: 22, borderTop: "1px solid var(--stroke)", paddingTop: 16 }}>
+          <div style={{ fontFamily: "var(--display)", fontWeight: 800, fontSize: 14, marginBottom: 14 }}>
+            {t("studio.docs.changelog")}
+          </div>
+          <div>
+            {log.map((c) => (
+              <div key={c.sha} style={{ position: "relative", padding: "0 6px 14px 22px" }}>
+                <span style={{ position: "absolute", left: 4, top: 4, width: 8, height: 8, borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 0 3px var(--accent-soft)" }} />
+                <span style={{ position: "absolute", left: 7, top: 14, bottom: 0, width: 1, background: "var(--stroke)" }} />
+                <div style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--ink2)" }}>{changelogLabel(c.message)}</div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink4)" }}>{new Date(c.date).toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {crOpen && (
         <div
           onClick={() => setCrOpen(false)}

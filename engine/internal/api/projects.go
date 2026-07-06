@@ -266,6 +266,32 @@ func (s *Server) getProjectDocHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"path": path, "ref": ref, "versions": commits})
 }
 
+// getProjectDesignLog lists the recent commits on the design branch — the project's
+// design changelog (each = a doc version published on a gate approval).
+func (s *Server) getProjectDesignLog(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ref := docRef(r)
+	p, err := s.Projects.Get(id)
+	if err != nil {
+		if errors.Is(err, projects.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, "project not found: "+id)
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if p.Repo == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ref": ref, "commits": []github.FileCommit{}})
+		return
+	}
+	commits, err := github.New().ListCommits(r.Context(), p.Repo, ref)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ref": ref, "commits": commits})
+}
+
 // listProjectDocs lists the project's repo docs/ tree (U1: Studio = Confluence).
 // Reads from the repo via gh so the specs survive an ephemeral/purged design run.
 // A repo with no docs yet returns an empty list (not an error) so the UI shows an
