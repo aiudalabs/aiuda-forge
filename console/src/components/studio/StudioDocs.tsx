@@ -1,9 +1,11 @@
 "use client";
 
-// StudioDocs (U1: Studio = Confluence) — renders a project's specs straight from
-// its repo docs/ tree, the persistent source of truth that outlives an ephemeral
-// design run. Left: a page tree; right: the rendered markdown. Always available
-// for the active project, so "what we're building" never disappears.
+// StudioDocs — el Studio como WORKSPACE full-height (rediseño 2026-07-06, aprobado por
+// mockup). Shell = topbar fija · cuerpo [riel | main] · el riel lista las FASES del run
+// (stepper vertical) y los DOCUMENTOS del repo; el main muestra el doc seleccionado o,
+// si elegís una fase, su PhasePanel (artefacto + aprobar/rechazar). El live-log vive
+// dentro del PhasePanel (colapsable). Reemplaza el viejo stack vertical (pipeline card
+// arriba + docs abajo). El flujo de gates (PhasePanel/useApprove/useReject) NO cambia.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -12,17 +14,27 @@ import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
 import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
-import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useActiveDesignRun, useDesignLog } from "@/lib/hooks";
+import {
+  useProjectDocs,
+  useProjectDoc,
+  useDocHistory,
+  useDesignRuns,
+  useRerunStep,
+  useActiveDesignRun,
+  useDesignLog,
+  useDesignRun,
+  useDeleteRun,
+  useCreateDesignRun,
+} from "@/lib/hooks";
 import { IterationModal } from "./StudioModals";
 import { useT } from "@/lib/i18n";
-import { DesignPipeline } from "./DesignPipeline";
+import { PhasePanel } from "./PhasePanel";
+import { phaseLabel, phaseState, PHASE_ICON, activePhaseIndex } from "./phaseHelpers";
 import { useRouter } from "next/navigation";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
 
-// Friendly titles + a logical reading order for the known design artifacts. Unknown
-// files fall back to their filename and sort after the known ones. titleKey is an
-// i18n key; null means use the raw filename.
+// Friendly titles + a logical reading order for the known design artifacts.
 const DOC_META: Record<string, { titleKey: string | null; icon: string; order: number }> = {
   "BRIEF.md": { titleKey: "studio.docs.title.brief", icon: "✦", order: 1 },
   "CONSTITUTION.md": { titleKey: "studio.docs.title.constitution", icon: "⬡", order: 1.5 },
@@ -36,17 +48,13 @@ const DOC_META: Record<string, { titleKey: string | null; icon: string; order: n
 };
 
 function meta(name: string, path?: string) {
-  // HTML files are mockup surfaces — show them with the mockup icon regardless
-  // of their filename (index.html, passenger-app.html, driver-app.html, …).
   if (path && isHtml(path)) return { titleKey: null, icon: "▨", order: 5.5 };
   return DOC_META[name] ?? { titleKey: null, icon: "·", order: 99 };
 }
 
-// Resolve a doc's display title: translated for known files, clean filename otherwise.
 function metaTitle(name: string, path: string, t: (k: string) => string): string {
   const m = meta(name, path);
   if (m.titleKey) return t(m.titleKey);
-  // For HTML mockup files: strip extension for a cleaner label ("passenger-app").
   if (isHtml(path)) return name.replace(/\.html?$/i, "");
   return name;
 }
@@ -56,9 +64,7 @@ function isMarkdown(path: string) {
 }
 
 // Which design phase (step) produces each doc — so the refine on a doc re-runs the
-// right phase. Html mockups → the mockups phase. NOTE: this mirrors the phases in
-// registry/workflows/design.yaml — keep in sync if a phase is renamed or added
-// (unlike derivePhaseDefs in api.ts, this mapping is NOT derived from the workflow).
+// right phase. Mirrors registry/workflows/design.yaml — keep in sync.
 const DOC_STEP: Record<string, string> = {
   "BRIEF.md": "discovery",
   "CONSTITUTION.md": "constitution",
@@ -73,7 +79,6 @@ function stepForDoc(name: string, path: string): string | null {
   return DOC_STEP[name] ?? null;
 }
 
-// "design: publish docs/mockups/index.html (mockups_gate approved)" → "docs/mockups/index.html"
 function changelogLabel(msg: string): string {
   return msg.replace(/^design:\s*publish\s*/i, "").replace(/\s*\(\w+_gate approved\)\s*$/i, "");
 }
@@ -83,14 +88,13 @@ function isHtml(path: string) {
   return p.endsWith(".html") || p.endsWith(".htm");
 }
 
-// MockupFrame renders an HTML mockup inline (sandboxed iframe) with a button to
-// open it full-screen in its own tab — "como una UI funcional".
+// MockupFrame renders an HTML mockup inline (sandboxed iframe) with a button to open it
+// full-screen in its own tab — "como una UI funcional".
 function MockupFrame({ content, t }: { content: string; t: (k: string) => string }) {
   function openInTab() {
     const blob = new Blob([content], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     window.open(url, "_blank", "noopener");
-    // Revoke shortly after the tab has had time to load it.
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
   return (
@@ -117,21 +121,14 @@ export function StudioDocs() {
   const projectId = project?.id ?? null;
   const { data: docs, isLoading, isError } = useProjectDocs(projectId);
   const router = useRouter();
-  // El pipeline (stepper de fases, live-log, artefactos, aprobar/rechazar) vive
-  // INLINE aquí como un estado de la Especificación (C6b): siempre visible —
-  // la misma experiencia en vivo que antes tenía su propio tab "Diseño", no una
-  // versión resumida — mientras haya un run activo. Sin toggle: nada que ocultar.
-  const pipelineRef = useRef<HTMLDivElement>(null);
 
-  // Subdirectory entries are expanded by the API (one level), so all entries are
-  // files. Sort by the logical reading order defined in DOC_META.
+  // Subdirectory entries are expanded by the API (one level), so all entries are files.
   const files = useMemo(() => {
     const list = (docs ?? []).filter((d) => d.type === "file");
     return [...list].sort((a, b) => meta(a.name, a.path).order - meta(b.name, b.path).order);
   }, [docs]);
 
-  // Group the html mockups under one collapsible "Mockups" node (order 5.5, between
-  // UI and Backlog) instead of listing each html file loose in the tree.
+  // Group the html mockups under one collapsible "Mockups" node.
   const treeNodes = useMemo(() => {
     const htmls = files.filter((f) => isHtml(f.path));
     type Node = { order: number; doc?: (typeof files)[number]; mockups?: typeof files };
@@ -142,12 +139,23 @@ export function StudioDocs() {
     return nodes.sort((a, b) => a.order - b.order);
   }, [files]);
 
-  // Default selection: PRD if present, else the first file.
+  // Selección del main: un doc (selected) O una fase (selPhase). Excluyentes.
   const [selected, setSelected] = useState<string | null>(null);
+  const [selPhase, setSelPhase] = useState<number | null>(null);
+  const [showLog, setShowLog] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const active = selected ?? files.find((f) => f.name === "PRD.md")?.path ?? files[0]?.path ?? null;
 
-  // Version time-travel: `ver` is a commit sha (null = current/latest). History is
-  // fetched only for markdown/yaml docs, not html mockups.
+  function pickDoc(path: string) {
+    setSelected(path);
+    setSelPhase(null);
+    setShowLog(false);
+  }
+  function pickPhase(i: number) {
+    setSelPhase(i);
+    setShowLog(false);
+  }
+
   const [ver, setVer] = useState<string | null>(null);
   useEffect(() => setVer(null), [active]);
   const [mockOpen, setMockOpen] = useState(false);
@@ -155,19 +163,36 @@ export function StudioDocs() {
     if (active && isHtml(active)) setMockOpen(true);
   }, [active]);
 
-  // Refine (C3): resolve the project's latest design/iterate run — that's the run a
-  // per-doc refine re-runs (D1). The doc maps to its phase; the feedback is injected.
-  const { data: designRuns } = useDesignRuns();
+  // Run de diseño activo + sus fases EN VIVO (useDesignRun refetchea cada 3s).
   const activeRun = useActiveDesignRun(projectId);
-  const awaitingCount = (activeRun?.phases ?? []).filter((p) => p.gateStatus === "AWAITING").length;
+  const { data: liveRun } = useDesignRun(activeRun?.id ?? null);
+  const run = liveRun ?? activeRun ?? null;
+  const phases = run?.phases ?? [];
+  const awaitingCount = phases.filter((p) => p.gateStatus === "AWAITING").length;
+  const isTerminal = run ? run.status === "DONE" || run.status === "FAILED" || run.status === "CANCELLED" : false;
+  const publishedBacklog = phases.some((p) => p.stepId === "handoff" && phaseState(p) === "approved");
+
+  // Al aparecer un run (o cambiar de run), aterrizás en su fase activa — una sola vez
+  // por run.id, para no pisar la selección manual del usuario en cada refetch.
+  const prevRun = useRef<string | null>(null);
+  useEffect(() => {
+    if (!run) return;
+    if (prevRun.current === run.id) return;
+    prevRun.current = run.id;
+    if (phases.length && (run.status === "RUNNING" || run.status === "AWAITING" || run.status === "FAILED")) {
+      setSelPhase(activePhaseIndex(phases));
+      setSelected(null);
+    }
+  }, [run, phases]);
+
+  // Refine (C3/D1): re-corre la fase del doc con el feedback inyectado, sobre el ÚLTIMO
+  // run de este proyecto que CONTIENE esa fase (no el más nuevo a secas).
+  const { data: designRuns } = useDesignRuns();
   const { data: log } = useDesignLog(projectId);
-  const [showLog, setShowLog] = useState(false);
   const rerun = useRerunStep();
   const [refine, setRefine] = useState("");
   const activeFile = files.find((fl) => fl.path === active) ?? null;
   const activeStep = activeFile ? stepForDoc(activeFile.name, activeFile.path) : null;
-  // The refine targets the LATEST run of this project that actually CONTAINS the doc's
-  // phase — not just the newest run (e.g. a "mockups-only" run has no data_model step).
   const refineRun = useMemo(() => {
     if (!activeStep) return null;
     return (
@@ -178,86 +203,100 @@ export function StudioDocs() {
   }, [designRuns, projectId, activeStep]);
   function doRefine() {
     if (!refine.trim() || !refineRun || !activeStep || !activeFile) return;
-    // Mockups are ONE phase that regenerates every surface; name the file the user is
-    // refining so the agent works on THAT screen instead of picking another.
     const fb = isHtml(activeFile.path)
       ? `El usuario está refinando la pantalla "${activeFile.name}" (${activeFile.path}). Concentrate en ESA superficie; no rehagas las otras salvo que sea imprescindible. Petición: ${refine.trim()}`
       : refine.trim();
     rerun.mutate([refineRun.id, activeStep, fb], { onSuccess: () => setRefine("") });
   }
 
-  // Change Request (C4): a PROJECT-level action (may touch several docs) — lives in the
-  // header, not inside a phase. Uses the shared IterationModal (Escape + error display).
+  // Change Request (C4) — acción a nivel proyecto (puede tocar varios docs).
   const [crOpen, setCrOpen] = useState(false);
   const { data: history } = useDocHistory(projectId, active);
-
   const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active, ver ?? "design");
+
+  // Acciones del run (eliminar / relanzar) — antes en DesignPipeline, ahora en la topbar.
+  const deleteRun = useDeleteRun();
+  const createDesignRun = useCreateDesignRun();
+  const [relaunching, setRelaunching] = useState(false);
+  function doDelete() {
+    if (!run) return;
+    if (!window.confirm(t("studio.view.deleteRunConfirm"))) return;
+    deleteRun.mutate([run.id], { onSuccess: () => setSelPhase(null) });
+  }
+  async function doRelaunch() {
+    if (!run) return;
+    setRelaunching(true);
+    try {
+      await createDesignRun.mutateAsync({
+        project_id: run.project_id ?? "",
+        repo: run.repo ?? "",
+        instructions: run.idea ?? "",
+      });
+    } finally {
+      setRelaunching(false);
+    }
+  }
 
   if (projLoading) {
     return (
-      <div className="wrap">
+      <div className="studio-shell">
         <div className="placeholder">
           <span className="spin" /> {t("studio.docs.loadingProject")}
         </div>
       </div>
     );
   }
-
   if (!project) {
     return (
-      <div className="wrap">
+      <div className="studio-shell">
         <div className="placeholder">{t("studio.docs.selectProject")}</div>
       </div>
     );
   }
 
+  const viewPhase = selPhase != null ? phases[selPhase] : null;
+
   return (
-    <div className="wrap">
-      <div className="eyebrow acc">{t("studio.docs.eyebrow")}</div>
-      <h2 className="docs-h1" style={{ marginBottom: 8 }}>
-        {project.name}
+    <div className={`studio-shell${fullscreen ? " doc-full" : ""}`}>
+      {/* ── Topbar ── */}
+      <header className="studio-topbar">
+        <h2 className="studio-proj">{project.name}</h2>
         {project.repo && (
           <a className="docs-repo" href={project.repo} target="_blank" rel="noreferrer">
             {t("studio.docs.repo")}
           </a>
         )}
-      </h2>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "0 0 14px",
-          marginBottom: 20,
-          borderBottom: "1px solid var(--stroke)",
-        }}
-      >
-        <span
-          style={{
-            fontFamily: "var(--mono)",
-            fontSize: 11.5,
-            color: "var(--ink4)",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--emerald)" }} />
-          {t("studio.docs.onBranch")}
+        <span className="studio-branch">
+          <span className="d" /> {t("studio.docs.onBranch")}
         </span>
-        {activeRun && (
+        {run && !isTerminal && (
           <button
-            className="btn ghost sm"
-            onClick={() => pipelineRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            style={{ display: "inline-flex", alignItems: "center", gap: 7 }}
+            className="studio-runchip"
+            onClick={() => pickPhase(activePhaseIndex(phases))}
           >
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: awaitingCount > 0 ? "var(--accent)" : "var(--navy)" }} />
+            <span className="d" style={{ background: awaitingCount > 0 ? "var(--accent)" : "var(--navy)" }} />
             {awaitingCount > 0 ? t("studio.docs.awaitingN", { n: awaitingCount }) : t("studio.docs.runActive")}
           </button>
         )}
-        <div style={{ flex: 1 }} />
+        <div className="sp" />
+        {run && (
+          <button
+            className="btn ghost sm"
+            style={{ color: "var(--danger)" }}
+            onClick={doDelete}
+            disabled={deleteRun.isPending}
+            title={t("studio.view.deleteRunTitle")}
+          >
+            {deleteRun.isPending ? t("studio.view.deletingRun") : t("studio.view.deleteRun")}
+          </button>
+        )}
+        {isTerminal && !publishedBacklog && (
+          <button className="btn ghost sm" onClick={doRelaunch} disabled={relaunching}>
+            {relaunching ? t("studio.view.relaunching") : t("studio.view.relaunchDesign")}
+          </button>
+        )}
         {log && log.length > 0 && (
-          <button className="btn ghost sm" onClick={() => setShowLog((v) => !v)}>
+          <button className={`btn ghost sm${showLog ? " on" : ""}`} onClick={() => { setShowLog((v) => !v); setSelPhase(null); }}>
             {t("studio.docs.changelog")}
           </button>
         )}
@@ -269,211 +308,211 @@ export function StudioDocs() {
             {t("studio.view.newIteration")}
           </button>
         )}
-      </div>
+      </header>
 
-      {awaitingCount > 0 && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            background: "var(--accent-soft)",
-            border: "1px solid var(--accent-line)",
-            borderRadius: "var(--r)",
-            padding: "12px 16px",
-            marginBottom: 18,
-          }}
-        >
-          <span style={{ fontSize: 15 }}>⚠</span>
-          <span style={{ flex: 1, fontSize: 13, color: "var(--ink2)" }}>
-            {t("studio.docs.awaitingBanner", { n: awaitingCount })}
-          </span>
-          <button
-            className="btn primary sm"
-            onClick={() => pipelineRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-          >
-            {t("studio.docs.reviewChanges")}
-          </button>
-        </div>
-      )}
-
-      {/* Pipeline en vivo: stepper + live-log + artefactos + aprobar/rechazar —
-          la MISMA vista que antes tenía su propio tab "Diseño", ahora inline y
-          siempre visible mientras haya un run activo (sin resumir/colapsar). */}
-      {activeRun && (
-        <div ref={pipelineRef} className="card" style={{ marginBottom: 20 }}>
-          <DesignPipeline runId={activeRun.id} />
-        </div>
-      )}
-
-      <div className="docs-layout">
-        {/* Page tree */}
-        <aside className="docs-tree">
-          <div className="docs-tree-head">{t("studio.docs.pages")}</div>
-          {isLoading ? (
-            <div className="docs-tree-empty">
-              <span className="spin" /> {t("studio.docs.loading")}
-            </div>
-          ) : files.length === 0 ? (
-            <div className="docs-tree-empty">
-              {t("studio.docs.empty.line1")}
-              <br />
-              {t("studio.docs.empty.line2")}
-            </div>
-          ) : (
-            <nav>
-              {treeNodes.map((n) =>
-                n.doc ? (
-                  <button
-                    key={n.doc.path}
-                    className={`docs-tree-item${active === n.doc.path ? " on" : ""}`}
-                    onClick={() => setSelected(n.doc!.path)}
-                  >
-                    <span className="docs-tree-ic">{meta(n.doc.name, n.doc.path).icon}</span>
-                    <span className="docs-tree-label">{metaTitle(n.doc.name, n.doc.path, t)}</span>
-                  </button>
-                ) : (
-                  <div key="mockups-group">
-                    <button className="docs-tree-item" onClick={() => setMockOpen((o) => !o)}>
-                      <span className="docs-tree-ic">{mockOpen ? "▾" : "▸"}</span>
-                      <span className="docs-tree-label">{t("studio.docs.title.mockups")}</span>
-                      <span className="docs-tree-badge">{n.mockups!.length}</span>
-                    </button>
-                    {mockOpen &&
-                      n.mockups!.map((h) => (
-                        <button
-                          key={h.path}
-                          className={`docs-tree-item${active === h.path ? " on" : ""}`}
-                          style={{ paddingLeft: 32 }}
-                          onClick={() => setSelected(h.path)}
-                        >
-                          <span className="docs-tree-ic">▨</span>
-                          <span className="docs-tree-label" style={{ fontSize: 12.5 }}>
-                            {h.name.replace(/\.html?$/i, "")}
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                ),
-              )}
-            </nav>
-          )}
-        </aside>
-
-        {/* Reader */}
-        <section className="docs-reader">
-          {active && history && history.length > 1 && (
-            <div className="chips" style={{ marginBottom: 12 }}>
-              {history.map((h, i) => {
-                const vnum = history.length - i;
-                const isLatest = i === 0;
-                const on = isLatest ? ver === null || ver === h.sha : ver === h.sha;
+      {/* ── Cuerpo: riel | main ── */}
+      <div className="studio-body">
+        <aside className="studio-rail">
+          {phases.length > 0 && (
+            <div className="rail-sec">
+              <div className="rail-h">{t("studio.docs.phasesSec")}</div>
+              {phases.map((p, i) => {
+                const st = phaseState(p);
                 return (
                   <button
-                    key={h.sha}
-                    className={`chip${on ? " on" : ""}`}
-                    style={{ fontFamily: "var(--mono)", fontSize: 11.5, padding: "4px 10px" }}
-                    title={`${h.message} · ${new Date(h.date).toLocaleString()}`}
-                    onClick={() => setVer(isLatest ? null : h.sha)}
+                    key={p.stepId}
+                    className={`v-phase v-${st}${selPhase === i ? " on" : ""}`}
+                    onClick={() => pickPhase(i)}
+                    title={phaseLabel(t, p.stepId, p.name)}
                   >
-                    v{vnum}
+                    <span className="v-g">{PHASE_ICON[st]}</span>
+                    <span className="v-lbl">{phaseLabel(t, p.stepId, p.name)}</span>
+                    {i < phases.length - 1 && <span className="v-conn" />}
                   </button>
                 );
               })}
-              {ver !== null && (
-                <span style={{ color: "var(--ink4)", fontSize: 12, alignSelf: "center" }}>
-                  {t("studio.docs.viewingOld")}
-                </span>
-              )}
             </div>
           )}
-          {isError ? (
-            <div className="placeholder err">{t("studio.docs.readError")}</div>
-          ) : !active ? (
-            <div className="placeholder">{t("studio.docs.selectPage")}</div>
-          ) : docLoading ? (
-            <div className="placeholder">
-              <span className="spin" /> {t("studio.docs.loadingDoc")}
-            </div>
-          ) : isHtml(active) ? (
-            <MockupFrame content={content ?? ""} t={t} />
-          ) : isMarkdown(active) ? (
-            <article className="docs-md artifact-md">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content ?? ""}</ReactMarkdown>
-            </article>
-          ) : (
-            <SyntaxHighlighter
-              language="yaml"
-              style={githubGist}
-              customStyle={{
-                background: "var(--bg2)",
-                border: "1px solid var(--stroke)",
-                borderRadius: "var(--r)",
-                fontSize: 12.5,
-                lineHeight: 1.6,
-                margin: 0,
-                padding: "16px 18px",
-                fontFamily: "var(--mono)",
-              }}
-              wrapLongLines={false}
-            >
-              {content ?? ""}
-            </SyntaxHighlighter>
-          )}
-          {active && activeStep && refineRun && ver === null && (
-            <div style={{ marginTop: 16, borderTop: "1px solid var(--stroke)", paddingTop: 14 }}>
-              <div style={{ fontFamily: "var(--display)", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
-                {t("studio.docs.refine.label")}
+
+          <div className="rail-sec">
+            <div className="rail-h">{t("studio.docs.pages")}</div>
+            {isLoading ? (
+              <div className="docs-tree-empty">
+                <span className="spin" /> {t("studio.docs.loading")}
               </div>
-              <form
-                className="brain-form"
-                style={{ borderTop: "none", paddingTop: 0 }}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  doRefine();
-                }}
-              >
-                <textarea
-                  value={refine}
-                  onChange={(e) => setRefine(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
+            ) : files.length === 0 ? (
+              <div className="docs-tree-empty">
+                {t("studio.docs.empty.line1")}
+                <br />
+                {t("studio.docs.empty.line2")}
+              </div>
+            ) : (
+              <nav>
+                {treeNodes.map((n) =>
+                  n.doc ? (
+                    <button
+                      key={n.doc.path}
+                      className={`docs-tree-item${!showLog && selPhase == null && active === n.doc.path ? " on" : ""}`}
+                      onClick={() => pickDoc(n.doc!.path)}
+                    >
+                      <span className="docs-tree-ic">{meta(n.doc.name, n.doc.path).icon}</span>
+                      <span className="docs-tree-label">{metaTitle(n.doc.name, n.doc.path, t)}</span>
+                    </button>
+                  ) : (
+                    <div key="mockups-group">
+                      <button className="docs-tree-item" onClick={() => setMockOpen((o) => !o)}>
+                        <span className="docs-tree-ic">{mockOpen ? "▾" : "▸"}</span>
+                        <span className="docs-tree-label">{t("studio.docs.title.mockups")}</span>
+                        <span className="docs-tree-badge">{n.mockups!.length}</span>
+                      </button>
+                      {mockOpen &&
+                        n.mockups!.map((h) => (
+                          <button
+                            key={h.path}
+                            className={`docs-tree-item${!showLog && selPhase == null && active === h.path ? " on" : ""}`}
+                            style={{ paddingLeft: 32 }}
+                            onClick={() => pickDoc(h.path)}
+                          >
+                            <span className="docs-tree-ic">▨</span>
+                            <span className="docs-tree-label" style={{ fontSize: 12.5 }}>
+                              {h.name.replace(/\.html?$/i, "")}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  ),
+                )}
+              </nav>
+            )}
+          </div>
+        </aside>
+
+        {/* ── Main ── */}
+        <main className="studio-main">
+          {showLog && log ? (
+            <div className="studio-doc-scroll">
+              <div className="studio-doc-inner">
+                <div style={{ fontFamily: "var(--display)", fontWeight: 800, fontSize: 16, marginBottom: 16 }}>
+                  {t("studio.docs.changelog")}
+                </div>
+                {log.map((c) => (
+                  <div key={c.sha} style={{ position: "relative", padding: "0 6px 14px 22px" }}>
+                    <span style={{ position: "absolute", left: 4, top: 4, width: 8, height: 8, borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 0 3px var(--accent-soft)" }} />
+                    <span style={{ position: "absolute", left: 7, top: 14, bottom: 0, width: 1, background: "var(--stroke)" }} />
+                    <div style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--ink2)" }}>{changelogLabel(c.message)}</div>
+                    <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink4)" }}>{new Date(c.date).toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : viewPhase ? (
+            // Vista de FASE: el PhasePanel intacto (artefacto + live-log colapsable + gate).
+            <div className="studio-doc-scroll">
+              <div className="studio-doc-inner">
+                <PhasePanel runId={run!.id} phase={viewPhase} state={phaseState(viewPhase)} />
+              </div>
+            </div>
+          ) : (
+            // Vista de DOCUMENTO: header + reader + refine.
+            <>
+              <div className="studio-doc-head">
+                <span className="eyebrow acc">{active ? metaTitle(activeFile?.name ?? active, active, t) : t("studio.docs.eyebrow")}</span>
+                <div className="sp" />
+                {active && !isHtml(active) && (
+                  <button className="btn ghost sm" onClick={() => setFullscreen((f) => !f)}>
+                    {fullscreen ? t("studio.docs.exitFull") : t("studio.docs.fullscreen")}
+                  </button>
+                )}
+              </div>
+              <div className="studio-doc-scroll">
+                <div className="studio-doc-inner">
+                  {active && history && history.length > 1 && (
+                    <div className="chips" style={{ marginBottom: 14 }}>
+                      {history.map((h, i) => {
+                        const vnum = history.length - i;
+                        const isLatest = i === 0;
+                        const on = isLatest ? ver === null || ver === h.sha : ver === h.sha;
+                        return (
+                          <button
+                            key={h.sha}
+                            className={`chip${on ? " on" : ""}`}
+                            style={{ fontFamily: "var(--mono)", fontSize: 11.5, padding: "4px 10px" }}
+                            title={`${h.message} · ${new Date(h.date).toLocaleString()}`}
+                            onClick={() => setVer(isLatest ? null : h.sha)}
+                          >
+                            v{vnum}
+                          </button>
+                        );
+                      })}
+                      {ver !== null && (
+                        <span style={{ color: "var(--ink4)", fontSize: 12, alignSelf: "center" }}>
+                          {t("studio.docs.viewingOld")}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {isError ? (
+                    <div className="placeholder err">{t("studio.docs.readError")}</div>
+                  ) : !active ? (
+                    <div className="placeholder">{t("studio.docs.selectPage")}</div>
+                  ) : docLoading ? (
+                    <div className="placeholder">
+                      <span className="spin" /> {t("studio.docs.loadingDoc")}
+                    </div>
+                  ) : isHtml(active) ? (
+                    <MockupFrame content={content ?? ""} t={t} />
+                  ) : isMarkdown(active) ? (
+                    <article className="docs-md artifact-md">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content ?? ""}</ReactMarkdown>
+                    </article>
+                  ) : (
+                    <SyntaxHighlighter
+                      language="yaml"
+                      style={githubGist}
+                      customStyle={{
+                        background: "var(--bg2)",
+                        border: "1px solid var(--stroke)",
+                        borderRadius: "var(--r)",
+                        fontSize: 12.5,
+                        lineHeight: 1.6,
+                        margin: 0,
+                        padding: "16px 18px",
+                        fontFamily: "var(--mono)",
+                      }}
+                      wrapLongLines={false}
+                    >
+                      {content ?? ""}
+                    </SyntaxHighlighter>
+                  )}
+                </div>
+              </div>
+              {/* Refine unificado: mismo chat bajo cada doc. */}
+              {active && activeStep && refineRun && ver === null && !isHtml(active) && (
+                <div className="studio-refine">
+                  <form
+                    className="studio-refine-in"
+                    onSubmit={(e) => {
                       e.preventDefault();
                       doRefine();
-                    }
-                  }}
-                  placeholder={t("studio.docs.refine.placeholder")}
-                  rows={2}
-                />
-                <button type="submit" className="btn primary" disabled={!refine.trim() || rerun.isPending}>
-                  {rerun.isPending ? t("studio.docs.refine.sending") : t("studio.docs.refine.send")}
-                </button>
-              </form>
-            </div>
+                    }}
+                  >
+                    <input
+                      value={refine}
+                      onChange={(e) => setRefine(e.target.value)}
+                      placeholder={t("studio.docs.refine.placeholder")}
+                    />
+                    <button type="submit" className="btn primary sm" disabled={!refine.trim() || rerun.isPending}>
+                      {rerun.isPending ? t("studio.docs.refine.sending") : t("studio.docs.refine.send")}
+                    </button>
+                  </form>
+                </div>
+              )}
+            </>
           )}
-        </section>
+        </main>
       </div>
-      {showLog && log && log.length > 0 && (
-        <div style={{ marginTop: 22, borderTop: "1px solid var(--stroke)", paddingTop: 16 }}>
-          <div style={{ fontFamily: "var(--display)", fontWeight: 800, fontSize: 14, marginBottom: 14 }}>
-            {t("studio.docs.changelog")}
-          </div>
-          <div>
-            {log.map((c) => (
-              <div key={c.sha} style={{ position: "relative", padding: "0 6px 14px 22px" }}>
-                <span style={{ position: "absolute", left: 4, top: 4, width: 8, height: 8, borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 0 3px var(--accent-soft)" }} />
-                <span style={{ position: "absolute", left: 7, top: 14, bottom: 0, width: 1, background: "var(--stroke)" }} />
-                <div style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--ink2)" }}>{changelogLabel(c.message)}</div>
-                <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink4)" }}>{new Date(c.date).toLocaleString()}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <div
-        className={`overlay ${crOpen ? "on" : ""}`}
-        onClick={() => setCrOpen(false)}
-      />
+
+      <div className={`overlay ${crOpen ? "on" : ""}`} onClick={() => setCrOpen(false)} />
       {crOpen && projectId && project.repo && (
         <IterationModal
           projectId={projectId}

@@ -3527,3 +3527,224 @@ details.log-row[open] > summary::before {
 .chan-name { font-weight: 700; }
 .chan-state { margin-left: auto; }
 .chan-why { flex-basis: 100%; font-size: 11px; color: var(--muted, #8a857c); }
+
+/* ── Studio workspace (rediseño 2026-07-06): shell full-height = topbar / [riel | main].
+   El riel lista fases (stepper vertical) + documentos; el main muestra el doc o el
+   PhasePanel de la fase. Reemplaza el viejo stack .wrap. Patrón de altura = Tickets. ── */
+.studio-shell {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 70px);
+  min-height: 0;
+}
+.studio-topbar {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex: none;
+  padding: 13px clamp(18px, 2vw, 30px);
+  border-bottom: 1px solid var(--stroke);
+}
+.studio-proj {
+  font-family: var(--serif);
+  font-size: 25px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  font-weight: 400;
+}
+.studio-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink4);
+}
+.studio-branch .d,
+.studio-runchip .d {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--emerald);
+}
+.studio-runchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink2);
+  background: var(--bg2);
+  border: 1px solid var(--stroke);
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: 0.15s var(--ease);
+}
+.studio-runchip:hover {
+  background: var(--bg3);
+}
+.studio-topbar .sp {
+  flex: 1;
+}
+.studio-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 262px 1fr;
+  transition: grid-template-columns 0.28s var(--ease);
+}
+.studio-shell.doc-full .studio-body {
+  grid-template-columns: 0 1fr;
+}
+.studio-shell.doc-full .studio-rail {
+  opacity: 0;
+  pointer-events: none;
+}
+.studio-rail {
+  border-right: 1px solid var(--stroke);
+  background: var(--bg2);
+  overflow-y: auto;
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.rail-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rail-h {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink4);
+  padding: 0 8px 4px;
+}
+.v-phase {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--ink3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  transition: 0.14s var(--ease);
+}
+.v-phase:hover {
+  background: var(--bg);
+}
+.v-phase.on {
+  background: var(--bg);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.v-phase .v-g {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  border: 1.5px solid var(--stroke-strong);
+  color: var(--ink4);
+}
+.v-phase .v-lbl {
+  flex: 1;
+}
+.v-phase.v-approved {
+  color: var(--ink2);
+}
+.v-phase.v-approved .v-g {
+  background: var(--emerald);
+  border-color: var(--emerald);
+  color: #fff;
+}
+.v-phase.v-running .v-g,
+.v-phase.v-awaiting .v-g {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.v-phase.v-failed .v-g {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.v-phase .v-conn {
+  position: absolute;
+  left: 16.5px;
+  top: 25px;
+  width: 1.5px;
+  height: 12px;
+  background: var(--stroke-strong);
+}
+.v-phase.v-approved .v-conn {
+  background: var(--emerald);
+}
+.studio-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+.studio-doc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 13px clamp(18px, 2vw, 26px);
+  border-bottom: 1px solid var(--stroke);
+}
+.studio-doc-head .sp {
+  flex: 1;
+}
+.studio-doc-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px clamp(18px, 2vw, 26px);
+}
+.studio-doc-inner {
+  max-width: 78ch;
+  margin: 0 auto;
+}
+.studio-shell.doc-full .studio-doc-inner {
+  max-width: 92ch;
+}
+.studio-refine {
+  flex: none;
+  border-top: 1px solid var(--stroke);
+  padding: 12px clamp(18px, 2vw, 26px);
+}
+.studio-refine-in {
+  max-width: 78ch;
+  margin: 0 auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--bg2);
+  border: 1px solid var(--stroke-strong);
+  border-radius: 12px;
+  padding: 6px 6px 6px 14px;
+}
+.studio-refine-in input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  outline: none;
+}
+.studio-refine-in input::placeholder {
+  color: var(--ink4);
+}
