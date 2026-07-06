@@ -61,10 +61,23 @@ services:
       BRAIN_MODEL: ${BRAIN_MODEL:-claude-opus-4-8}
       GH_TOKEN: ${GH_TOKEN:-}
       TARGET_REMOTE: ${TARGET_REMOTE:-}
+      # Operability (audit A3/A5): cap every gh/git shell-out so a hung call can't stall
+      # the conductor for all tenants; GC events + terminal-run workdirs older than N days
+      # (0 disables) so disk doesn't grow without bound.
+      VIBEFORGE_GH_TIMEOUT_SEC: ${VIBEFORGE_GH_TIMEOUT_SEC:-90}
+      VIBEFORGE_RETENTION_DAYS: ${VIBEFORGE_RETENTION_DAYS:-30}
     networks:
       - forge-internal
     depends_on:
       - egress-proxy
+    # Resource cap: the design-phase agents (`claude -p`) run INSIDE this container, so a
+    # burst of concurrent design steps could otherwise starve the host. Sized for a
+    # 4 vCPU / 8 GB VPS (leaves room for console + egress + OS); tune to your box.
+    deploy:
+      resources:
+        limits:
+          cpus: "3.0"
+          memory: 4G
 
   # ── Native orchestrator (polls control, fires factory runs) ─────────────────
   orchestrator:
