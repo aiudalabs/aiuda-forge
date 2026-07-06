@@ -142,17 +142,23 @@ export function StudioDocs() {
   // Refine (C3): resolve the project's latest design/iterate run — that's the run a
   // per-doc refine re-runs (D1). The doc maps to its phase; the feedback is injected.
   const { data: designRuns } = useDesignRuns();
-  const projectRun = useMemo(() => {
-    const rs = (designRuns ?? []).filter((r) => r.project_id === projectId);
-    return [...rs].sort((a, b) => b.created_at - a.created_at)[0] ?? null;
-  }, [designRuns, projectId]);
   const rerun = useRerunStep();
   const [refine, setRefine] = useState("");
   const activeFile = files.find((fl) => fl.path === active) ?? null;
   const activeStep = activeFile ? stepForDoc(activeFile.name, activeFile.path) : null;
+  // The refine targets the LATEST run of this project that actually CONTAINS the doc's
+  // phase — not just the newest run (e.g. a "mockups-only" run has no data_model step).
+  const refineRun = useMemo(() => {
+    if (!activeStep) return null;
+    return (
+      (designRuns ?? [])
+        .filter((r) => r.project_id === projectId && (r.phases ?? []).some((p) => p.stepId === activeStep))
+        .sort((a, b) => b.created_at - a.created_at)[0] ?? null
+    );
+  }, [designRuns, projectId, activeStep]);
   function doRefine() {
-    if (!refine.trim() || !projectRun || !activeStep) return;
-    rerun.mutate([projectRun.id, activeStep, refine.trim()], { onSuccess: () => setRefine("") });
+    if (!refine.trim() || !refineRun || !activeStep) return;
+    rerun.mutate([refineRun.id, activeStep, refine.trim()], { onSuccess: () => setRefine("") });
   }
 
   // Change Request (C4): a PROJECT-level action (may touch several docs) — lives in
@@ -328,7 +334,7 @@ export function StudioDocs() {
               {content ?? ""}
             </SyntaxHighlighter>
           )}
-          {active && activeStep && projectRun && ver === null && (
+          {active && activeStep && refineRun && ver === null && (
             <div style={{ marginTop: 14, borderTop: "1px solid var(--stroke)", paddingTop: 14 }}>
               <div style={{ fontFamily: "var(--display)", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
                 {t("studio.docs.refine.label")}
