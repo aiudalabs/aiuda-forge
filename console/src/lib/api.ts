@@ -510,7 +510,7 @@ export async function listSprints(): Promise<import("./types").Sprint[]> {
 
 // Project docs (Studio = Confluence, U1): read the project's specs straight from
 // its repo docs/ tree — the persistent source of truth.
-export async function listProjectDocs(projectId: string, ref = "dev"): Promise<import("./types").DocEntry[]> {
+export async function listProjectDocs(projectId: string, ref = "design"): Promise<import("./types").DocEntry[]> {
   if (await isMock()) return [];
   const res = await http<{ docs: import("./types").DocEntry[] }>(
     `/projects/${projectId}/docs?ref=${encodeURIComponent(ref)}`,
@@ -518,12 +518,27 @@ export async function listProjectDocs(projectId: string, ref = "dev"): Promise<i
   return res.docs ?? [];
 }
 
-export async function getProjectDoc(projectId: string, path: string, ref = "dev"): Promise<string> {
+export async function getProjectDoc(projectId: string, path: string, ref = "design"): Promise<string> {
   if (await isMock()) return "";
   const res = await http<{ content: string }>(
     `/projects/${projectId}/docs/file?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`,
   );
   return res.content ?? "";
+}
+
+export interface DocVersion {
+  sha: string;
+  date: string;
+  message: string;
+}
+
+/** Version history (commits) of one design doc on the `design` branch — newest first. */
+export async function getDocHistory(projectId: string, path: string, ref = "design"): Promise<DocVersion[]> {
+  if (await isMock()) return [];
+  const res = await http<{ versions: DocVersion[] }>(
+    `/projects/${projectId}/docs/history?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`,
+  );
+  return res.versions ?? [];
 }
 
 // Requeue (R2): resurrect a failed run's stories back to backlog so the

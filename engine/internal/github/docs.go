@@ -68,6 +68,42 @@ func (c *Client) ReadFile(ctx context.Context, repoURL, path, ref string) (strin
 	return string(dec), nil
 }
 
+// FileCommit is one entry in a design doc's version history on the `design` branch.
+type FileCommit struct {
+	SHA     string `json:"sha"`
+	Date    string `json:"date"`
+	Message string `json:"message"`
+}
+
+// ListCommitsForPath returns the commits that touched `path` on `branch`, newest
+// first — the version history of a design doc. Empty (not an error) when the branch
+// or path does not exist yet.
+func (c *Client) ListCommitsForPath(ctx context.Context, repoURL, branch, path string) ([]FileCommit, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("repos/%s/commits?sha=%s&path=%s&per_page=50", slug, branch, path)
+	out, err := c.runner(ctx, "", "gh", "api", endpoint, "--jq",
+		`[.[] | {sha: .sha, date: .commit.committer.date, message: (.commit.message | split("\n")[0])}]`)
+	if err != nil {
+		lo := strings.ToLower(out)
+		if strings.Contains(out, "404") || strings.Contains(lo, "not found") || strings.Contains(lo, "no commit") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("gh api commits %s: %w: %s", path, err, strings.TrimSpace(out))
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return nil, nil
+	}
+	var commits []FileCommit
+	if err := json.Unmarshal([]byte(out), &commits); err != nil {
+		return nil, fmt.Errorf("parse commits %s: %w", path, err)
+	}
+	return commits, nil
+}
+
 // WriteFile commits `content` to repo file `path` on `branch` via the GitHub
 // contents API (PUT), creating the file or updating it in place. It is a no-op
 // (changed=false, nil err) when the file already holds identical content, so a doc

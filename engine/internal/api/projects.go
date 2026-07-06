@@ -232,7 +232,38 @@ func docRef(r *http.Request) string {
 	if ref := r.URL.Query().Get("ref"); ref != "" {
 		return ref
 	}
-	return "dev"
+	return "design" // the per-project design branch = the approved design history
+}
+
+// getProjectDocHistory lists the version history (commits) of one design doc on the
+// ref (default `design`) — powers the per-doc version chips/timeline.
+func (s *Server) getProjectDocHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ref := docRef(r)
+	path := r.URL.Query().Get("path")
+	if !strings.HasPrefix(path, "docs/") || strings.Contains(path, "..") {
+		httpErr(w, http.StatusBadRequest, "path must be under docs/")
+		return
+	}
+	p, err := s.Projects.Get(id)
+	if err != nil {
+		if errors.Is(err, projects.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, "project not found: "+id)
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if p.Repo == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"path": path, "ref": ref, "versions": []github.FileCommit{}})
+		return
+	}
+	commits, err := github.New().ListCommitsForPath(r.Context(), p.Repo, ref, path)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": path, "ref": ref, "versions": commits})
 }
 
 // listProjectDocs lists the project's repo docs/ tree (U1: Studio = Confluence).
