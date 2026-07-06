@@ -156,12 +156,14 @@ func TestSyncProjectLinksPRByStoryIDMention(t *testing.T) {
 func TestSyncProjectSessionPinsRunning(t *testing.T) {
 	st := newStore(t)
 	seed(t, st)
-	// S-02 fue despachada (sesión activa) pero su task aún no asignó el issue ni
-	// abrió PR: la proyección NO debe degradarla a backlog (doble-despacho en auto).
+	// S-02 fue despachada a Copilot (sesión task activa) pero su task aún no asignó
+	// el issue ni abrió PR: la proyección NO debe degradarla a backlog (doble-despacho
+	// en auto). Solo las sesiones task (…/tasks/<id>, que el barrido puede soltar)
+	// anclan — una URL de runs de claude_action NO (ver TestSyncProjectClaudeActionNoAnchorFlap).
 	if _, err := st.SyncExternalStatus("S-02", tickets.StatusRunning, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetStorySession("S-02", "https://github.com/o/r/tasks/t1"); err != nil {
+	if err := st.SetStorySession("S-02", "https://github.com/o/r/tasks/ac083fa2-89ad-4a88-a44d-86cadd1cfad8"); err != nil {
 		t.Fatal(err)
 	}
 	p := NewProjector(st, &fakeGH{issues: []github.IssueState{{Number: 2, State: "open"}}})
@@ -169,7 +171,48 @@ func TestSyncProjectSessionPinsRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusRunning {
-		t.Fatalf("S-02 = %s, want running (sesión activa ancla)", s.Status)
+		t.Fatalf("S-02 = %s, want running (sesión task activa ancla)", s.Status)
+	}
+}
+
+// TestSyncProjectClaudeActionRunningLabel: un issue con el label agent:running (que
+// el workflow claude.yml pone mientras corre) deriva running aunque no tenga
+// assignee ni PR — la señal de "corriendo" observable en GitHub del canal claude_action.
+func TestSyncProjectClaudeActionRunningLabel(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	gh := &fakeGH{issues: []github.IssueState{{Number: 2, State: "open", Labels: []string{"agent:running"}}}}
+	p := NewProjector(st, gh)
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusRunning {
+		t.Fatalf("S-02 = %s, want running (label agent:running)", s.Status)
+	}
+}
+
+// TestSyncProjectClaudeActionNoAnchorFlap es el test de regresión del flap: una
+// story de claude_action cuyo run TERMINÓ sin PR (label ya quitado por el paso
+// if:always()) debe caer a backlog, NO quedar anclada a running por su sesión
+// (página de runs, sin id que el barrido pueda soltar). Antes, esa sesión anclaba
+// para siempre → la proyección re-tocaba la story cada tick → flap ready/running.
+func TestSyncProjectClaudeActionNoAnchorFlap(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	// Despachada a claude_action: running + sesión = página de runs (sin /tasks/<id>).
+	if _, err := st.SyncExternalStatus("S-02", tickets.StatusRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetStorySession("S-02", "https://github.com/o/r/actions/workflows/claude.yml"); err != nil {
+		t.Fatal(err)
+	}
+	// El run terminó sin PR y sin label (el issue ya no lleva agent:running).
+	p := NewProjector(st, &fakeGH{issues: []github.IssueState{{Number: 2, State: "open"}}})
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusBacklog {
+		t.Fatalf("S-02 = %s, want backlog (run claude_action terminado sin PR, sin ancla)", s.Status)
 	}
 }
 

@@ -262,8 +262,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 
 	res := DispatchResult{Dispatched: storyIDs, Channel: cand.Executor, Model: cand.Model}
 	ghd := d.ghFor(ctx, projectID)
+	issues := d.issueNumbers(storyIDs)
 	fire := func(executor string) (string, error) {
-		return d.fireChannel(ctx, ghd, repoURL, executor, prompt, cand.Model)
+		return d.fireChannel(ctx, ghd, repoURL, executor, prompt, cand.Model, issues)
 	}
 	url, err := fire(cand.Executor)
 	if err != nil {
@@ -297,7 +298,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 
 // fireChannel dispara el prompt por un canal concreto y devuelve la URL de la
 // sesión. Es la unidad que el fallback automático reintenta por el canal alterno.
-func (d *Dispatcher) fireChannel(ctx context.Context, gh GitHubDispatcher, repoURL, executor, prompt, model string) (string, error) {
+// issues son los números de issue del despacho (coma-separados): el workflow
+// claude.yml los marca agent:running mientras corre — la señal de "corriendo"
+// observable en GitHub que la proyección lee (projection.go runningLabel).
+func (d *Dispatcher) fireChannel(ctx context.Context, gh GitHubDispatcher, repoURL, executor, prompt, model, issues string) (string, error) {
 	switch executor {
 	case "claude_action":
 		// Disciplina de checkpoint para el runner efímero (R1 GitHub-edition +
@@ -309,7 +313,11 @@ func (d *Dispatcher) fireChannel(ctx context.Context, gh GitHubDispatcher, repoU
 			"draft with a checklist of what remains. NEVER spawn background workers and end your turn waiting " +
 			"for them — when your turn ends the session ENDS and unpushed work is lost. Open the PR BEFORE any " +
 			"optional self-review pass.\n\n" + prompt
-		if err := gh.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", map[string]string{"prompt": prompt}); err != nil {
+		inputs := map[string]string{"prompt": prompt}
+		if issues != "" {
+			inputs["issues"] = issues
+		}
+		if err := gh.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", inputs); err != nil {
 			return "", err
 		}
 		// El run concreto tarda en materializarse; el link estable es la página
@@ -378,6 +386,26 @@ func (d *Dispatcher) buildPrompt(projectID, repoURL, kind string, storyIDs []str
 	fmt.Fprintf(&b, "The pull request description MUST include: %s.\n", strings.Join(closes, ", "))
 	b.WriteString("Every story's acceptance criteria must pass together; write honest tests per criterion.\n")
 	return b.String(), nil
+}
+
+// issueNumbers devuelve los números de issue (del external_ref de cada story),
+// coma-separados y en orden. El workflow claude.yml los recibe como input para
+// marcarlos agent:running mientras corre (projection.go runningLabel). Una story
+// sin external_ref resoluble se omite sin error.
+func (d *Dispatcher) issueNumbers(storyIDs []string) string {
+	var nums []string
+	for _, id := range storyIDs {
+		st, err := d.Tickets.GetStory(id)
+		if err != nil {
+			continue
+		}
+		if i := strings.LastIndex(st.ExternalRef, "#"); i >= 0 {
+			if n, err := strconv.Atoi(st.ExternalRef[i+1:]); err == nil {
+				nums = append(nums, strconv.Itoa(n))
+			}
+		}
+	}
+	return strings.Join(nums, ",")
 }
 
 // projectContext renderiza un mapa compacto de los módulos ya construidos en el

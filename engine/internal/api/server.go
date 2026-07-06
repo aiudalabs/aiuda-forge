@@ -512,12 +512,13 @@ func (s *Server) requeueStoryUnit(st tickets.Story) (requeueVerdict, string, err
 // driving it actually revived). Requeueing then would race a live run and orphan its PR.
 //
 // LIMIT: a GitHub-native story (external_ref, empty run_id) dispatched to a
-// claude_action workflow has NO cheap local liveness signal — its story_sessions URL is
-// an Actions run page whose state needs a GitHub call, and it lingers after the session
-// dies. The claude_action dead-session sweep is still pending (CLAUDE.md "Pila
-// pendiente" #4); the Copilot-task sweep already returns dead-session stories to backlog
-// on its own. Until claude_action is swept, a `failed` GH-native story is requeued on
-// the operator's judgement (requeue clears its session, so no re-anchor to running).
+// claude_action workflow has NO cheap local liveness signal on THIS request path — its
+// state lives on GitHub. But it self-corrects via the projection: the claude.yml workflow
+// carries an `agent:running` label for the run's whole life (put at start, removed in its
+// if:always() step), so a wrongly-requeued but still-live story is re-derived to running
+// on the next projection tick, and a genuinely-dead one stays in backlog. Requeue here is
+// thus safe on operator judgement (it clears the session; the label — not the session —
+// is now what anchors a live claude_action run). The Copilot-task sweep is unchanged.
 func (s *Server) liveExecutionReason(st tickets.Story) string {
 	if st.RunID == "" || s.Store == nil {
 		return ""

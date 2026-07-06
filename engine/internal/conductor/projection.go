@@ -128,6 +128,32 @@ func prNum(url string) int {
 // (…/tasks/<uuid>); las sesiones claude_action no matchean (página de runs).
 var taskIDRe = regexp.MustCompile(`/tasks/([0-9a-f-]{8,})`)
 
+// runningLabel es la señal, observable en GitHub, de que un agente está
+// trabajando un issue AHORA. La pone el workflow claude.yml al arrancar y la
+// quita en su paso if:always() al terminar (registry/templates … claude.yml).
+// Reemplaza el ancla local de story_sessions para el canal claude_action, que
+// no asigna el issue ni abre PR mientras corre y cuya sesión (página de runs,
+// sin id consultable) el barrido no podía soltar → el ancla nunca se soltaba y
+// la story flapeaba ready/running.
+const runningLabel = "agent:running"
+
+// isTaskSession reporta si la URL de sesión es una task de Copilot (…/tasks/<id>),
+// la ÚNICA que el barrido de sesiones muertas puede consultar y por tanto soltar.
+// Las sesiones claude_action no lo son: su liveness es runningLabel, no esta tabla.
+func isTaskSession(url string) bool {
+	return url != "" && taskIDRe.MatchString(url)
+}
+
+// hasLabel reporta si el issue lleva el label name.
+func hasLabel(iss github.IssueState, name string) bool {
+	for _, l := range iss.Labels {
+		if l == name {
+			return true
+		}
+	}
+	return false
+}
+
 // closesRefs extracts the issue numbers a PR body claims to close
 // ("Closes #7, fixes #12, resolves #3" — GitHub's closing keywords).
 var closesRe = regexp.MustCompile(`(?i)(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)`)
@@ -345,8 +371,19 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 						break
 					}
 				}
-				if target == tickets.StatusBacklog && sessions[st.ID] != "" && !deadSession[st.ID] {
-					target = tickets.StatusRunning // sesión despachada aún sin PR
+				// Señal de "corriendo" de claude_action: el label agent:running que
+				// el workflow pone al arrancar y quita al terminar. GitHub = verdad:
+				// presente ⟺ hay un run vivo; ausente tras terminar → la story cae a
+				// backlog (o a in_review si dejó PR) sin ancla local que la trabe.
+				if target == tickets.StatusBacklog && hasLabel(iss, runningLabel) {
+					target = tickets.StatusRunning
+				}
+				// Ancla de sesión SOLO para tasks de Copilot: una task recién creada
+				// aún no asignó el issue ni abrió PR, y el barrido de sesiones muertas
+				// puede soltarla. Las sesiones claude_action NO anclan aquí (su liveness
+				// es el label de arriba) — es lo que causaba el flap ready/running.
+				if target == tickets.StatusBacklog && isTaskSession(sessions[st.ID]) && !deadSession[st.ID] {
+					target = tickets.StatusRunning // task despachada aún sin PR
 				}
 			}
 		}

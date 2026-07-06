@@ -12,6 +12,7 @@ type fakeDispatchGH struct {
 	tasks     []string // prompts de agent tasks
 	models    []string
 	workflows []string // prompts vía workflow_dispatch
+	wfIssues  []string // input "issues" de cada workflow_dispatch
 }
 
 func (f *fakeDispatchGH) CreateAgentTask(_ context.Context, _, prompt, model string) (string, error) {
@@ -22,6 +23,7 @@ func (f *fakeDispatchGH) CreateAgentTask(_ context.Context, _, prompt, model str
 
 func (f *fakeDispatchGH) DispatchWorkflow(_ context.Context, _, _, _ string, inputs map[string]string) error {
 	f.workflows = append(f.workflows, inputs["prompt"])
+	f.wfIssues = append(f.wfIssues, inputs["issues"])
 	return nil
 }
 
@@ -136,5 +138,9 @@ func TestDispatchStoryViaClaudeAction(t *testing.T) {
 	}
 	if !strings.Contains(gh.workflows[0], "Resolve issue #1") || !strings.Contains(gh.workflows[0], "Closes #1") {
 		t.Fatalf("prompt = %s", gh.workflows[0])
+	}
+	// El nº de issue viaja como input para que el workflow lo marque agent:running.
+	if gh.wfIssues[0] != "1" {
+		t.Fatalf("issues input = %q, want \"1\"", gh.wfIssues[0])
 	}
 }

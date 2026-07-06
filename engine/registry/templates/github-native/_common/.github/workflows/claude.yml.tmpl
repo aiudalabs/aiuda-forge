@@ -10,6 +10,10 @@ on:
       prompt:
         description: "Tarea para Claude"
         required: true
+      issues:
+        description: "Issues del despacho (coma-separados) — se marcan agent:running mientras corre este run"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -21,6 +25,27 @@ jobs:
   claude:
     runs-on: ubuntu-latest
     steps:
+      # Señal de "corriendo" observable en GitHub (la lee el conductor de
+      # aiuda-forge para no degradar la story a backlog mientras este run trabaja):
+      # el canal claude_action no asigna el issue ni abre PR mientras corre, así
+      # que marcamos agent:running al arrancar y lo quitamos en el paso final
+      # (if: always()). Sin issues en el input (p.ej. run manual) es un no-op.
+      - name: Mark issues running
+        if: ${{ inputs.issues != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUES: ${{ inputs.issues }}
+        run: |
+          gh label create "agent:running" -c FBCA04 \
+            -d "Un agente está trabajando este issue AHORA (aiuda-forge conductor)" \
+            -R "${{ github.repository }}" --force || true
+          IFS=',' read -ra NUMS <<< "$ISSUES"
+          for n in "${NUMS[@]}"; do
+            n="${n// /}"
+            [ -z "$n" ] && continue
+            gh issue edit "$n" --add-label "agent:running" -R "${{ github.repository }}" || true
+          done
+
       - uses: actions/checkout@v4
       - uses: anthropics/claude-code-action@v1
         with:
@@ -71,3 +96,19 @@ jobs:
               --title "[WIP] rescate de sesión — $BR" \
               --body "Trabajo rescatado automáticamente al terminar la sesión del agente (Rescue checkpoint). Revisar y completar." || true
           fi
+
+      # Soltar el candado de "corriendo": el run terminó (éxito, fallo o cancelación
+      # limpia). La proyección del conductor ve el label ausente y deriva el estado
+      # real del issue (backlog si no dejó PR, in_review si sí) — sin ancla trabada.
+      - name: Clear running label
+        if: ${{ always() && inputs.issues != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUES: ${{ inputs.issues }}
+        run: |
+          IFS=',' read -ra NUMS <<< "$ISSUES"
+          for n in "${NUMS[@]}"; do
+            n="${n// /}"
+            [ -z "$n" ] && continue
+            gh issue edit "$n" --remove-label "agent:running" -R "${{ github.repository }}" || true
+          done

@@ -16,6 +16,7 @@ type IssueState struct {
 	Number    int      `json:"number"`
 	State     string   `json:"state"` // "open" | "closed"
 	Assignees []string `json:"-"`
+	Labels    []string `json:"-"` // label names (the conductor's agent:running lives here)
 }
 
 // issueRaw matches the REST issues list; entries carrying pull_request are PRs
@@ -29,6 +30,9 @@ type issueRaw struct {
 	Assignees []struct {
 		Login string `json:"login"`
 	} `json:"assignees"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
 }
 
 // ListIssueStates returns the state of ALL issues (open+closed, PRs excluded) of
@@ -61,6 +65,9 @@ func (c *Client) ListIssueStates(ctx context.Context, repoURL string) ([]IssueSt
 		st := IssueState{Number: r.Number, State: r.State}
 		for _, a := range r.Assignees {
 			st.Assignees = append(st.Assignees, a.Login)
+		}
+		for _, l := range r.Labels {
+			st.Labels = append(st.Labels, l.Name)
 		}
 		states = append(states, st)
 	}

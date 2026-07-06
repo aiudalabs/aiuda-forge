@@ -240,7 +240,10 @@ docs/GTM-2026-07-03-onboarding-monetizacion.md, docs/UI-AUDIT-2026-07-03.md. Doc
    capacidades (Copilot/Claude-secret) → org+preset autonomía → primer proyecto. Todo el backend ya existe.
 3. **Despliegue público** fluxo.aiudalabs.com: webhooks activos (receptor F1 listo; la App ya apunta ahí con
    active:false), TLS, y el manifest deja de omitir hooks.
-4. Menores acumulados: barrido de sesiones muertas para claude_action (mirar conclusión del run);
-   gatear/avisar dispatch si docs/ no está en main; quitar EnsureDevBranch (rama dev vestigial);
+4. Menores acumulados: ✅ barrido de sesiones muertas para claude_action — RESUELTO 2026-07-06 vía label
+   `agent:running` GitHub-observable (workflow claude.yml lo pone al arrancar y lo quita en step if:always();
+   la proyección lo lee como running; el ancla story_sessions se restringe a tasks de Copilot). Los repos YA
+   scaffoldeados necesitan re-aplicar el claude.yml para tener los steps del label.
+   Pendientes menores: gatear/avisar dispatch si docs/ no está en main; quitar EnsureDevBranch (rama dev vestigial);
    live-log del design run (#13); editor per-proyecto de .github/ del repo; conversational gates (#3);
    hardening tenantToken (verificar usabilidad del token antes de devolverlo).
