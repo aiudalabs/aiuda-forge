@@ -130,7 +130,7 @@ button {
 .brand {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 .brand-name {
   font-family: var(--mono);
@@ -155,7 +155,7 @@ button {
 .brand-by {
   display: inline-flex;
   align-items: baseline;
-  gap: 5px;
+  gap: 4px;
   font-family: var(--display);
   font-size: 11.5px;
   color: var(--ink4);
@@ -169,6 +169,7 @@ button {
   font-size: inherit;
   font-weight: 900;
   letter-spacing: -0.04em;
+  gap: 1.5px;
 }
 .brand-by .logo .labs {
   font-size: inherit;
