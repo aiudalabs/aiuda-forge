@@ -134,12 +134,19 @@ function GitHubSection({ projectId }: { projectId: string | null }) {
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <a className="btn primary sm" href={`${API_URL}/auth/github/start`}>
-          {status?.connected ? t("settings.github.reconnect") : t("settings.github.connect")}
-        </a>
-        <a className="btn ghost sm" href={`${API_URL}/setup/github-app`} target="_blank" rel="noreferrer">
-          {t("settings.github.installApp")}
-        </a>
+        {status?.app_configured ? (
+          // The instance App exists → users connect their own GitHub via OAuth.
+          <a className="btn primary sm" href={`${API_URL}/auth/github/start`}>
+            {status?.connected ? t("settings.github.reconnect") : t("settings.github.connect")}
+          </a>
+        ) : (
+          // No instance App yet → the ONLY valid action is to create/configure it (the
+          // manifest flow). "Connect GitHub" (OAuth) can't work without the App, so we
+          // don't show it — it was the confusing dead button.
+          <a className="btn primary sm" href={`${API_URL}/setup/github-app`} target="_blank" rel="noreferrer">
+            {t("settings.github.setupApp")}
+          </a>
+        )}
       </div>
       <div style={{ fontSize: 11.5, color: "var(--ink4)", margin: "8px 0 0" }}>
         {status?.app_configured ? `✓ ${t("settings.github.appConfigured")}` : `⚠ ${t("settings.github.appMissing")}`}
