@@ -2,10 +2,12 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
-COPY vendor/ ./vendor/
+# Fetch modules over the network (vendor/ is gitignored, so a clean clone has no vendor
+# dir — a vendored COPY would fail the build from a fresh checkout).
+RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags="-s -w" -o /out/control ./cmd/control && \
-    CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags="-s -w" -o /out/orchestrator ./cmd/orchestrator
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/control ./cmd/control && \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/orchestrator ./cmd/orchestrator
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 # node:20-bookworm-slim as base because design-phase agents invoke `claude`
