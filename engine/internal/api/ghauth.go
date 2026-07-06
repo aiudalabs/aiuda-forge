@@ -263,10 +263,17 @@ func (s *Server) githubAuthStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	creds, _ := ghapp.LoadCredentials(s.ghAppCredsPath())
+	// Direct one-click URL to install the Fluxo App on an account/org (e.g. aiudalabs) —
+	// so the UI offers a button instead of "go navigate GitHub yourself".
+	installURL := ""
+	if creds.Configured() && creds.Slug != "" {
+		installURL = "https://github.com/apps/" + creds.Slug + "/installations/new"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"connected":      ok,
 		"login":          t.Login,
 		"app_configured": creds.Configured(),
 		"app_url":        creds.HTMLURL,
+		"install_url":    installURL,
 	})
 }

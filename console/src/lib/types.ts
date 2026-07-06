@@ -425,4 +425,5 @@ export interface GitHubStatus {
   login?: string;
   app_configured?: boolean;
   app_url?: string;
+  install_url?: string;
 }

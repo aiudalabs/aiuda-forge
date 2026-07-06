@@ -135,10 +135,18 @@ function GitHubSection({ projectId }: { projectId: string | null }) {
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {status?.app_configured ? (
-          // The instance App exists → users connect their own GitHub via OAuth.
-          <a className="btn primary sm" href={`${API_URL}/auth/github/start`}>
-            {status?.connected ? t("settings.github.reconnect") : t("settings.github.connect")}
-          </a>
+          // The instance App exists → users connect their own GitHub via OAuth, and can
+          // install the App on another account/org (e.g. aiudalabs) with one click.
+          <>
+            <a className="btn primary sm" href={`${API_URL}/auth/github/start`}>
+              {status?.connected ? t("settings.github.reconnect") : t("settings.github.connect")}
+            </a>
+            {status?.install_url && (
+              <a className="btn ghost sm" href={status.install_url} target="_blank" rel="noreferrer">
+                {t("settings.github.installOnOrg")}
+              </a>
+            )}
+          </>
         ) : (
           // No instance App yet → the ONLY valid action is to create/configure it (the
           // manifest flow). "Connect GitHub" (OAuth) can't work without the App, so we
