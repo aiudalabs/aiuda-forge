@@ -9,7 +9,9 @@ export const studio = {
     "studio.entry.sub": "Describe tu idea en una o dos frases. La fábrica la convierte en un PRD, una arquitectura, mockups y un backlog — y los aprueba contigo, fase por fase.",
     "studio.entry.ideaPlaceholder": "Ej: un marketplace que conecta clientes con proveedores de servicios locales…",
     "studio.entry.repoPre": "repo /",
-    "studio.entry.namePlaceholder": "nombre-del-proyecto",
+    "studio.entry.namePlaceholder": "nombre-del-repo",
+    "studio.entry.projectNamePlaceholder": "Nombre del proyecto (ej: TeleSalud LATAM)",
+    "studio.entry.orgTitle": "¿Dónde crear el repositorio?",
     "studio.entry.launching": "Lanzando…",
     "studio.entry.start": "✦ Empezar el diseño →",
 
@@ -134,7 +136,9 @@ export const studio = {
     "studio.entry.sub": "Describe your idea in one or two sentences. The factory turns it into a PRD, an architecture, mockups and a backlog — and approves them with you, phase by phase.",
     "studio.entry.ideaPlaceholder": "E.g.: a marketplace connecting customers with local service providers…",
     "studio.entry.repoPre": "repo /",
-    "studio.entry.namePlaceholder": "project-name",
+    "studio.entry.namePlaceholder": "repo-name",
+    "studio.entry.projectNamePlaceholder": "Project name (e.g. TeleSalud LATAM)",
+    "studio.entry.orgTitle": "Where to create the repository?",
     "studio.entry.launching": "Launching…",
     "studio.entry.start": "✦ Start the design →",
 
@@ -259,7 +263,9 @@ export const studio = {
     "studio.entry.sub": "Descreva sua ideia em uma ou duas frases. A fábrica a converte em um PRD, uma arquitetura, mockups e um backlog — e os aprova com você, fase por fase.",
     "studio.entry.ideaPlaceholder": "Ex.: um marketplace que conecta clientes a prestadores de serviços locais…",
     "studio.entry.repoPre": "repo /",
-    "studio.entry.namePlaceholder": "nome-do-projeto",
+    "studio.entry.namePlaceholder": "nome-do-repo",
+    "studio.entry.projectNamePlaceholder": "Nome do projeto (ex: TeleSalud LATAM)",
+    "studio.entry.orgTitle": "Onde criar o repositório?",
     "studio.entry.launching": "Iniciando…",
     "studio.entry.start": "✦ Começar o design →",
 

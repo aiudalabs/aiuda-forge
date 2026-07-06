@@ -68,6 +68,10 @@ type createProjectReq struct {
 	// Repo is optional: when supplied, the project adopts that existing GitHub
 	// repo (validated) instead of creating a new one.
 	Repo string `json:"repo"`
+	// Org is the owner (user or org) to create the repo under; defaults to the
+	// server's GH org. RepoName overrides the repo slug (defaults to slug(Name)).
+	Org      string `json:"org"`
+	RepoName string `json:"repo_name"`
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +85,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug := toSlug(req.Name)
+	if req.RepoName != "" {
+		slug = toSlug(req.RepoName)
+	}
 
 	// Adopt the supplied repo (validated at the boundary, audit C5) or create a
 	// fresh GitHub repo under the org.
@@ -92,6 +99,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		org := s.ghOrg()
+		if req.Org != "" {
+			org = req.Org
+		}
 		gh := github.New()
 		// GitHub caps a repo description at 350 chars (a longer one fails the create
 		// with HTTP 422). Truncate for the repo; the full description is stored on the
@@ -406,4 +416,45 @@ func ghCLIUser() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(buf.String()), nil
+}
+
+// ghCLIOrgs returns the orgs the gh-authenticated user belongs to.
+func ghCLIOrgs() ([]string, error) {
+	cmd := exec.Command("gh", "api", "user/orgs", "--paginate", "--jq", ".[].login")
+	var buf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, l := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out, nil
+}
+
+// githubOrgs lists the owners (the gh user + their orgs) a repo can be created under —
+// powers the org picker on project creation. Best-effort: a gh error still returns the
+// configured default org so the picker is never empty.
+func (s *Server) githubOrgs(w http.ResponseWriter, r *http.Request) {
+	seen := map[string]bool{}
+	var owners []string
+	add := func(o string) {
+		if o != "" && !seen[o] {
+			seen[o] = true
+			owners = append(owners, o)
+		}
+	}
+	if user, err := ghCLIUser(); err == nil {
+		add(user)
+	}
+	add(s.ghOrg())
+	if orgs, err := ghCLIOrgs(); err == nil {
+		for _, o := range orgs {
+			add(o)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"owners": owners})
 }

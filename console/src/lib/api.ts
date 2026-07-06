@@ -1028,7 +1028,11 @@ export async function createStory(input: CreateStoryInput): Promise<Orchestrator
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Crea un proyecto (y su repo en GitHub). Devuelve el proyecto con la URL del repo. */
-export async function createProject(name: string, description: string): Promise<Project> {
+export async function createProject(
+  name: string,
+  description: string,
+  opts?: { org?: string; repoName?: string },
+): Promise<Project> {
   if (await isMock()) {
     // Verificar nombre duplicado en el mock.
     const exists = mockProjects.find((p) => p.name === name);
@@ -1044,8 +1048,15 @@ export async function createProject(name: string, description: string): Promise<
   }
   return http<Project>(`/projects`, {
     method: "POST",
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({ name, description, org: opts?.org, repo_name: opts?.repoName }),
   });
+}
+
+/** Los owners (usuario + orgs) bajo los que se puede crear un repo. */
+export async function listGithubOrgs(): Promise<string[]> {
+  if (await isMock()) return ["vibeforge-demo"];
+  const res = await http<{ owners: string[] }>(`/github/orgs`);
+  return res.owners ?? [];
 }
 
 /** Lista todos los proyectos del control-plane. */

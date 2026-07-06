@@ -5,10 +5,10 @@
 // describe the idea, name the repo, and one button creates the project AND kicks
 // off the design run — then the app drops you straight into the design flow.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { useActiveProject } from "@/lib/activeProject";
-import { useCreateDesignRun, useCreateProject } from "@/lib/hooks";
+import { useCreateDesignRun, useCreateProject, useGithubOrgs } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 
 // Slugify an idea/name into a valid repo name (lowercase, dashes).
@@ -30,34 +30,42 @@ const EXAMPLES = [
 
 export function StudioEntry({ onLaunched }: { onLaunched?: () => void }) {
   const [idea, setIdea] = useState("");
-  const [name, setName] = useState("");
-  const [touchedName, setTouchedName] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [repoInput, setRepoInput] = useState("");
+  const [touchedRepo, setTouchedRepo] = useState(false);
+  const [org, setOrg] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const createProject = useCreateProject();
   const createDesignRun = useCreateDesignRun();
   const { setActiveId } = useActiveProject();
+  const { data: orgs = [] } = useGithubOrgs();
   const t = useT();
 
-  // Auto-suggest the repo name from the idea until the user edits it themselves.
-  const repoName = touchedName ? name : slugify(name || idea.split(/[.\n]/)[0] || "");
+  // Repo name auto-derives from the project name (slugified) until the user edits it.
+  const repoName = touchedRepo ? repoInput : slugify(projectName);
+  // Default the owner to the first available once the list loads.
+  useEffect(() => {
+    if (!org && orgs.length) setOrg(orgs[0]);
+  }, [org, orgs]);
 
   async function launch(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     const trimmedIdea = idea.trim();
-    const finalName = slugify(repoName);
+    const finalProjectName = projectName.trim();
+    const finalRepo = slugify(repoName);
     if (!trimmedIdea) {
       setError(t("studio.entry.validation.idea"));
       return;
     }
-    if (!finalName) {
+    if (!finalProjectName || !finalRepo) {
       setError(t("studio.entry.validation.name"));
       return;
     }
     setBusy(true);
     try {
-      const proj = await createProject.mutateAsync({ name: finalName, description: trimmedIdea });
+      const proj = await createProject.mutateAsync({ name: finalProjectName, description: trimmedIdea, org, repoName: finalRepo });
       setActiveId(proj.id);
       await createDesignRun.mutateAsync({
         project_id: proj.id,
@@ -67,7 +75,7 @@ export function StudioEntry({ onLaunched }: { onLaunched?: () => void }) {
       onLaunched?.();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
-        setError(t("studio.entry.repoExists", { name: finalName }));
+        setError(t("studio.entry.repoExists", { name: finalRepo }));
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -110,15 +118,36 @@ export function StudioEntry({ onLaunched }: { onLaunched?: () => void }) {
             ))}
           </div>
 
+          <input
+            className="entry-name-inp"
+            style={{ width: "100%", padding: "12px 14px", border: "1px solid var(--stroke-strong)", borderRadius: 12, fontFamily: "var(--display)", fontSize: 14, background: "#fff", color: "var(--ink)" }}
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            placeholder={t("studio.entry.projectNamePlaceholder")}
+            spellCheck={false}
+          />
+
           <div className="entry-row">
             <div className="entry-name">
-              <span className="entry-name-pre">{t("studio.entry.repoPre")}</span>
+              <select
+                value={org}
+                onChange={(e) => setOrg(e.target.value)}
+                title={t("studio.entry.orgTitle")}
+                style={{ border: "none", background: "transparent", fontFamily: "var(--mono)", fontSize: 13, color: "var(--ink2)", cursor: "pointer", outline: "none", maxWidth: 140 }}
+              >
+                {orgs.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+              <span className="entry-name-pre" style={{ padding: "0 2px" }}>/</span>
               <input
                 className="entry-name-inp"
                 value={repoName}
                 onChange={(e) => {
-                  setTouchedName(true);
-                  setName(e.target.value);
+                  setTouchedRepo(true);
+                  setRepoInput(e.target.value);
                 }}
                 placeholder={t("studio.entry.namePlaceholder")}
                 spellCheck={false}

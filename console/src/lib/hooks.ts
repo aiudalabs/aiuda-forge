@@ -492,11 +492,29 @@ export function useDesignLog(projectId: string | null) {
 export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, description }: { name: string; description: string }) =>
-      api.createProject(name, description),
+    mutationFn: ({
+      name,
+      description,
+      org,
+      repoName,
+    }: {
+      name: string;
+      description: string;
+      org?: string;
+      repoName?: string;
+    }) => api.createProject(name, description, { org, repoName }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.projects });
     },
+  });
+}
+
+// Owners (user + orgs) a repo can be created under — for the project-creation picker.
+export function useGithubOrgs() {
+  return useQuery({
+    queryKey: ["github-orgs"],
+    queryFn: () => api.listGithubOrgs(),
+    staleTime: 5 * 60_000,
   });
 }
 
