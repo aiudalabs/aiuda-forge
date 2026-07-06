@@ -86,12 +86,15 @@ export function LiveLog({ events, style }: { events: RunEvent[]; style?: React.C
   const t = useT();
   const [filter, setFilter] = useState("");
   const [newestFirst, setNewestFirst] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll al final cuando llegan nuevos eventos (solo en oldest-first).
+  // Scrollea el PROPIO contenedor (scrollTop), NO scrollIntoView: este último sube
+  // por los ancestros y arrastra la página entera hasta el log (el "me tira abajo"
+  // que reportó el usuario). Así solo se mueve la caja del terminal.
   useEffect(() => {
-    if (!newestFirst) {
-      endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!newestFirst && boxRef.current) {
+      boxRef.current.scrollTop = boxRef.current.scrollHeight;
     }
   }, [events, newestFirst]);
 
@@ -111,7 +114,7 @@ export function LiveLog({ events, style }: { events: RunEvent[]; style?: React.C
   })();
 
   return (
-    <div className="livelog" style={style}>
+    <div className="livelog" style={style} ref={boxRef}>
       {/* Toolbar: filtro + sort. Ocupa una línea compacta dentro del terminal. */}
       <div className="log-controls">
         <select
@@ -163,8 +166,6 @@ export function LiveLog({ events, style }: { events: RunEvent[]; style?: React.C
           </div>
         );
       })}
-
-      <div ref={endRef} />
     </div>
   );
 }
