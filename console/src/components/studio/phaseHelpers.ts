@@ -26,6 +26,9 @@ export function phaseState(p: DesignPhase): PhaseState {
   if (p.gateStatus === "DONE") return "approved";
   if (p.gateStatus === "FAILED") return "failed";
   if (p.gateStatus === "AWAITING") return "awaiting";
+  // The phase STEP itself died (agent error / timeout): no gate was ever created, so
+  // gateStatus stays QUEUED — surface it as failed instead of falling through to pending.
+  if (p.designStatus === "FAILED") return "failed";
   if (p.designStatus === "RUNNING") return "running";
   if (p.designStatus === "DONE" && p.gateStatus === "QUEUED") return "running"; // gate pendiente
   return "pending";

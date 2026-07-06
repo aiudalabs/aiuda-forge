@@ -85,6 +85,8 @@ export const studio = {
     "studio.view.sendFeedback": "Enviar feedback",
     "studio.view.phaseApproved": "Fase aprobada",
     "studio.view.phaseRejected": "Fase rechazada — el agente está revisando el feedback.",
+    "studio.view.phaseFailed": "Esta fase falló. Podés reintentarla sin rehacer todo el diseño.",
+    "studio.view.retryPhase": "↻ Reintentar fase",
 
     // Phase status badge labels
     "studio.view.status.pending": "pendiente",
@@ -212,6 +214,8 @@ export const studio = {
     "studio.view.sendFeedback": "Send feedback",
     "studio.view.phaseApproved": "Phase approved",
     "studio.view.phaseRejected": "Phase rejected — the agent is reviewing the feedback.",
+    "studio.view.phaseFailed": "This phase failed. You can retry it without redoing the whole design.",
+    "studio.view.retryPhase": "↻ Retry phase",
 
     // Phase status badge labels
     "studio.view.status.pending": "pending",
@@ -339,6 +343,8 @@ export const studio = {
     "studio.view.sendFeedback": "Enviar feedback",
     "studio.view.phaseApproved": "Fase aprovada",
     "studio.view.phaseRejected": "Fase rejeitada — o agente está revisando o feedback.",
+    "studio.view.phaseFailed": "Esta fase falhou. Você pode repeti-la sem refazer todo o design.",
+    "studio.view.retryPhase": "↻ Repetir fase",
 
     // Phase status badge labels
     "studio.view.status.pending": "pendente",

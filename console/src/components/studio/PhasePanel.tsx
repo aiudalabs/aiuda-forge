@@ -187,9 +187,16 @@ export function PhasePanel({
         </div>
       )}
       {state === "failed" && (
-        <div className="phase-banner fail">
-          {t("studio.view.phaseRejected")}
-        </div>
+        <>
+          <div className="phase-banner fail">{t("studio.view.phaseFailed")}</div>
+          {phase.gateId && (
+            <div className="phase-actions">
+              <button className="btn ghost sm" onClick={doRerun} disabled={rerun.isPending}>
+                {rerun.isPending ? t("studio.view.regenerating") : t("studio.view.retryPhase")}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

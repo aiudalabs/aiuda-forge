@@ -135,7 +135,11 @@ func (s *Store) LastRetryAt(runID string) (int64, error) {
 		}
 		var d map[string]any
 		if json.Unmarshal([]byte(data), &d) == nil {
-			if reason, _ := d["reason"].(string); reason == "retry" {
+			// A run-level retry OR a single-phase re-run both open a fresh failure
+			// budget: countFailures only counts failures after this watermark, so a
+			// deliberate manual "Regenerate" isn't penalized by the exhausted on_fail
+			// budget of the automatic attempts that preceded it.
+			if reason, _ := d["reason"].(string); reason == "retry" || reason == "rerun" {
 				return createdAt, nil
 			}
 		}
