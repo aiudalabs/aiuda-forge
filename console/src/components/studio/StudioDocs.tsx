@@ -15,7 +15,7 @@ import { useActiveProject } from "@/lib/activeProject";
 import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useCreateIterationRun, useActiveDesignRun, useDesignLog } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 import { DesignPipeline } from "./DesignPipeline";
-import { NewProjectModal } from "./StudioModals";
+import { useRouter } from "next/navigation";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
 
@@ -113,7 +113,7 @@ export function StudioDocs() {
   const { project, isLoading: projLoading } = useActiveProject();
   const projectId = project?.id ?? null;
   const { data: docs, isLoading, isError } = useProjectDocs(projectId);
-  const [showNewProject, setShowNewProject] = useState(false);
+  const router = useRouter();
   // El pipeline (stepper de fases, live-log, artefactos, aprobar/rechazar) vive
   // INLINE aquí como un estado de la Especificación (C6b): siempre visible —
   // la misma experiencia en vivo que antes tenía su propio tab "Diseño", no una
@@ -272,7 +272,7 @@ export function StudioDocs() {
             {t("studio.docs.changelog")}
           </button>
         )}
-        <button className="btn ghost sm" onClick={() => setShowNewProject(true)}>
+        <button className="btn ghost sm" onClick={() => router.push("/")}>
           {t("studio.view.newProject")}
         </button>
         {project.repo && (
@@ -505,16 +505,6 @@ export function StudioDocs() {
             </div>
           </div>
         </div>
-      )}
-      <div
-        className={`overlay ${showNewProject ? "on" : ""}`}
-        onClick={() => setShowNewProject(false)}
-      />
-      {showNewProject && (
-        <NewProjectModal
-          onClose={() => setShowNewProject(false)}
-          onCreated={() => setShowNewProject(false)}
-        />
       )}
     </div>
   );
