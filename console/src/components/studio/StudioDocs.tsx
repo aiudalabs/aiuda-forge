@@ -369,24 +369,34 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
             </SyntaxHighlighter>
           )}
           {active && activeStep && refineRun && ver === null && (
-            <div style={{ marginTop: 14, borderTop: "1px solid var(--stroke)", paddingTop: 14 }}>
+            <div style={{ marginTop: 16, borderTop: "1px solid var(--stroke)", paddingTop: 14 }}>
               <div style={{ fontFamily: "var(--display)", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
                 {t("studio.docs.refine.label")}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  style={{ flex: 1, background: "#fff", border: "1px solid var(--stroke-strong)", borderRadius: 10, padding: "10px 12px", font: "inherit", color: "var(--ink)" }}
-                  placeholder={t("studio.docs.refine.placeholder")}
+              <form
+                className="brain-form"
+                style={{ borderTop: "none", paddingTop: 0 }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  doRefine();
+                }}
+              >
+                <textarea
                   value={refine}
                   onChange={(e) => setRefine(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") doRefine();
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      doRefine();
+                    }
                   }}
+                  placeholder={t("studio.docs.refine.placeholder")}
+                  rows={2}
                 />
-                <button className="btn primary sm" disabled={!refine.trim() || rerun.isPending} onClick={doRefine}>
+                <button type="submit" className="btn primary" disabled={!refine.trim() || rerun.isPending}>
                   {rerun.isPending ? t("studio.docs.refine.sending") : t("studio.docs.refine.send")}
                 </button>
-              </div>
+              </form>
             </div>
           )}
         </section>
