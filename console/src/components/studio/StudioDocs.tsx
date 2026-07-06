@@ -180,7 +180,7 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
       },
     );
   }
-  const { data: history } = useDocHistory(projectId, active && !isHtml(active) ? active : null);
+  const { data: history } = useDocHistory(projectId, active);
 
   const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active, ver ?? "design");
 
@@ -310,7 +310,7 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
 
         {/* Reader */}
         <section className="docs-reader">
-          {active && !isHtml(active) && history && history.length > 1 && (
+          {active && history && history.length > 1 && (
             <div className="chips" style={{ marginBottom: 12 }}>
               {history.map((h, i) => {
                 const vnum = history.length - i;
