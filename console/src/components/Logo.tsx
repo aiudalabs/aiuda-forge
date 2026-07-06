@@ -25,7 +25,8 @@ export function Logo({ size = "sm" }: { size?: "sm" | "lg" }) {
         <span className="brace">{"}"}</span>
       </div>
       <div className="brand-by">
-        by <AiudaLogo />
+        <span>by</span>
+        <AiudaLogo />
       </div>
     </div>
   );
