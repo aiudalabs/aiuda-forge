@@ -112,8 +112,7 @@ export function StudioDocs() {
   const t = useT();
   const { project, isLoading: projLoading } = useActiveProject();
   const projectId = project?.id ?? null;
-  const [branch, setBranch] = useState<"design" | "main">("design");
-  const { data: docs, isLoading, isError } = useProjectDocs(projectId, branch);
+  const { data: docs, isLoading, isError } = useProjectDocs(projectId);
   const [showNewProject, setShowNewProject] = useState(false);
   // El pipeline (stepper de fases, live-log, artefactos, aprobar/rechazar) vive
   // INLINE aquí como un estado de la Especificación (C6b): siempre visible —
@@ -201,9 +200,9 @@ export function StudioDocs() {
       },
     );
   }
-  const { data: history } = useDocHistory(projectId, active, branch);
+  const { data: history } = useDocHistory(projectId, active);
 
-  const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active, ver ?? branch);
+  const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active, ver ?? "design");
 
   if (projLoading) {
     return (
@@ -244,28 +243,19 @@ export function StudioDocs() {
           borderBottom: "1px solid var(--stroke)",
         }}
       >
-        <div style={{ display: "inline-flex", gap: 2, background: "var(--bg2)", borderRadius: 9, padding: 3 }}>
-          {(["design", "main"] as const).map((b) => (
-            <button
-              key={b}
-              onClick={() => setBranch(b)}
-              style={{
-                border: "none",
-                background: branch === b ? "#fff" : "transparent",
-                boxShadow: branch === b ? "var(--shadow-soft)" : "none",
-                color: branch === b ? "var(--ink)" : "var(--ink4)",
-                fontFamily: "var(--display)",
-                fontWeight: 600,
-                fontSize: 11.5,
-                padding: "4px 11px",
-                borderRadius: 7,
-                cursor: "pointer",
-              }}
-            >
-              {b === "design" ? t("studio.docs.work") : t("studio.docs.published")}
-            </button>
-          ))}
-        </div>
+        <span
+          style={{
+            fontFamily: "var(--mono)",
+            fontSize: 11.5,
+            color: "var(--ink4)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--emerald)" }} />
+          {t("studio.docs.onBranch")}
+        </span>
         {activeRun && (
           <button
             className="btn ghost sm"
@@ -441,7 +431,7 @@ export function StudioDocs() {
               {content ?? ""}
             </SyntaxHighlighter>
           )}
-          {active && activeStep && refineRun && ver === null && branch === "design" && (
+          {active && activeStep && refineRun && ver === null && (
             <div style={{ marginTop: 16, borderTop: "1px solid var(--stroke)", paddingTop: 14 }}>
               <div style={{ fontFamily: "var(--display)", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
                 {t("studio.docs.refine.label")}
