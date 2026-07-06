@@ -12,7 +12,7 @@ import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
 import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
-import { useProjectDocs, useProjectDoc, useDocHistory } from "@/lib/hooks";
+import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
@@ -50,6 +50,22 @@ function metaTitle(name: string, path: string, t: (k: string) => string): string
 
 function isMarkdown(path: string) {
   return path.toLowerCase().endsWith(".md");
+}
+
+// Which design phase (step) produces each doc — so the refine on a doc re-runs the
+// right phase. Html mockups → the mockups phase.
+const DOC_STEP: Record<string, string> = {
+  "BRIEF.md": "discovery",
+  "CONSTITUTION.md": "constitution",
+  "PRD.md": "prd",
+  "DATA_MODEL.md": "data_model",
+  "ARCHITECTURE.md": "architecture",
+  "UI_SCREENS.md": "ui",
+  "backlog.yaml": "backlog",
+};
+function stepForDoc(name: string, path: string): string | null {
+  if (isHtml(path)) return "mockups";
+  return DOC_STEP[name] ?? null;
 }
 
 function isHtml(path: string) {
@@ -122,6 +138,22 @@ export function StudioDocs() {
   useEffect(() => {
     if (active && isHtml(active)) setMockOpen(true);
   }, [active]);
+
+  // Refine (C3): resolve the project's latest design/iterate run — that's the run a
+  // per-doc refine re-runs (D1). The doc maps to its phase; the feedback is injected.
+  const { data: designRuns } = useDesignRuns();
+  const projectRun = useMemo(() => {
+    const rs = (designRuns ?? []).filter((r) => r.project_id === projectId);
+    return [...rs].sort((a, b) => b.created_at - a.created_at)[0] ?? null;
+  }, [designRuns, projectId]);
+  const rerun = useRerunStep();
+  const [refine, setRefine] = useState("");
+  const activeFile = files.find((fl) => fl.path === active) ?? null;
+  const activeStep = activeFile ? stepForDoc(activeFile.name, activeFile.path) : null;
+  function doRefine() {
+    if (!refine.trim() || !projectRun || !activeStep) return;
+    rerun.mutate([projectRun.id, activeStep, refine.trim()], { onSuccess: () => setRefine("") });
+  }
   const { data: history } = useDocHistory(projectId, active && !isHtml(active) ? active : null);
 
   const { data: content, isLoading: docLoading } = useProjectDoc(projectId, active, ver ?? "design");
@@ -269,6 +301,27 @@ export function StudioDocs() {
             >
               {content ?? ""}
             </SyntaxHighlighter>
+          )}
+          {active && activeStep && projectRun && ver === null && (
+            <div style={{ marginTop: 14, borderTop: "1px solid var(--stroke)", paddingTop: 14 }}>
+              <div style={{ fontFamily: "var(--display)", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                {t("studio.docs.refine.label")}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  style={{ flex: 1, background: "#fff", border: "1px solid var(--stroke-strong)", borderRadius: 10, padding: "10px 12px", font: "inherit", color: "var(--ink)" }}
+                  placeholder={t("studio.docs.refine.placeholder")}
+                  value={refine}
+                  onChange={(e) => setRefine(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") doRefine();
+                  }}
+                />
+                <button className="btn primary sm" disabled={!refine.trim() || rerun.isPending} onClick={doRefine}>
+                  {rerun.isPending ? t("studio.docs.refine.sending") : t("studio.docs.refine.send")}
+                </button>
+              </div>
+            </div>
           )}
         </section>
       </div>
