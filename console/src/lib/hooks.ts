@@ -8,11 +8,11 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as api from "./api";
 import type { ApiMode, CreateDesignRunInput, CreateIterationRunInput, CreateStoryInput } from "./api";
 import { subscribe } from "./ws";
-import type { ProjectSettings, RegistryKind, RunEvent } from "./types";
+import type { DesignRun, ProjectSettings, RegistryKind, RunEvent } from "./types";
 
 export const qk = {
   mode: ["mode"] as const,
@@ -491,6 +491,23 @@ export function useCreateProject() {
 }
 
 // ── Studio / Design runs hooks ────────────────────────────────────────────────
+
+// The project's currently-active design/iterate run (RUNNING, AWAITING, or with a
+// gate awaiting / a phase running) — surfaces the pipeline as a STATE in the spec view.
+export function useActiveDesignRun(projectId: string | null) {
+  const { data: runs } = useDesignRuns();
+  return useMemo(() => {
+    const isActive = (r: DesignRun) =>
+      r.status === "RUNNING" ||
+      r.status === "AWAITING" ||
+      (r.phases ?? []).some((p) => p.gateStatus === "AWAITING" || p.designStatus === "RUNNING");
+    return (
+      (runs ?? [])
+        .filter((r) => r.project_id === projectId && isActive(r))
+        .sort((a, b) => b.created_at - a.created_at)[0] ?? null
+    );
+  }, [runs, projectId]);
+}
 
 export function useDesignRuns() {
   return useQuery({

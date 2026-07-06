@@ -9,6 +9,7 @@
 
 import { useState } from "react";
 import { useActiveProject } from "@/lib/activeProject";
+import { useActiveDesignRun } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 import { StudioDocs } from "./StudioDocs";
 import { StudioEntry } from "./StudioEntry";
@@ -20,6 +21,8 @@ export function Studio() {
   const { project, isLoading } = useActiveProject();
   const [tab, setTab] = useState<Tab>("spec");
   const t = useT();
+  const activeRun = useActiveDesignRun(project?.id ?? null);
+  const awaitingCount = (activeRun?.phases ?? []).filter((p) => p.gateStatus === "AWAITING").length;
 
   // No project → the conversational entry. Launching a design auto-routes to the
   // Diseño tab so the user lands on the live flow instead of hunting for it.
@@ -35,9 +38,14 @@ export function Studio() {
         </button>
         <button className={`studio-tab${tab === "design" ? " on" : ""}`} onClick={() => setTab("design")}>
           {t("studio.tab.design")}
+          {activeRun && (
+            <span
+              style={{ marginLeft: 6, width: 7, height: 7, borderRadius: "50%", background: awaitingCount > 0 ? "var(--accent)" : "var(--navy)", display: "inline-block", verticalAlign: "middle" }}
+            />
+          )}
         </button>
       </div>
-      {tab === "spec" ? <StudioDocs /> : <StudioView />}
+      {tab === "spec" ? <StudioDocs onOpenPipeline={() => setTab("design")} /> : <StudioView />}
     </>
   );
 }

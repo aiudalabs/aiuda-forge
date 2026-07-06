@@ -12,7 +12,7 @@ import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import yaml from "react-syntax-highlighter/dist/esm/languages/hljs/yaml";
 import { githubGist } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { useActiveProject } from "@/lib/activeProject";
-import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useCreateIterationRun } from "@/lib/hooks";
+import { useProjectDocs, useProjectDoc, useDocHistory, useDesignRuns, useRerunStep, useCreateIterationRun, useActiveDesignRun } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 
 SyntaxHighlighter.registerLanguage("yaml", yaml);
@@ -101,7 +101,7 @@ function MockupFrame({ content, t }: { content: string; t: (k: string) => string
   );
 }
 
-export function StudioDocs() {
+export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } = {}) {
   const t = useT();
   const { project, isLoading: projLoading } = useActiveProject();
   const projectId = project?.id ?? null;
@@ -142,6 +142,8 @@ export function StudioDocs() {
   // Refine (C3): resolve the project's latest design/iterate run — that's the run a
   // per-doc refine re-runs (D1). The doc maps to its phase; the feedback is injected.
   const { data: designRuns } = useDesignRuns();
+  const activeRun = useActiveDesignRun(projectId);
+  const awaitingCount = (activeRun?.phases ?? []).filter((p) => p.gateStatus === "AWAITING").length;
   const rerun = useRerunStep();
   const [refine, setRefine] = useState("");
   const activeFile = files.find((fl) => fl.path === active) ?? null;
@@ -234,6 +236,16 @@ export function StudioDocs() {
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--emerald)" }} />
           {t("studio.docs.onBranch")}
         </span>
+        {activeRun && onOpenPipeline && (
+          <button
+            className="btn ghost sm"
+            onClick={onOpenPipeline}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7 }}
+          >
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: awaitingCount > 0 ? "var(--accent)" : "var(--navy)" }} />
+            {awaitingCount > 0 ? t("studio.docs.awaitingN", { n: awaitingCount }) : t("studio.docs.runActive")} · {t("studio.docs.openPipeline")}
+          </button>
+        )}
         <div style={{ flex: 1 }} />
         {project.repo && (
           <button className="btn primary sm" onClick={() => setCrOpen(true)}>
