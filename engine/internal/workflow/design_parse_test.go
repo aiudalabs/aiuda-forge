@@ -23,8 +23,26 @@ func TestDesignYAMLParses(t *testing.T) {
 			t.Logf("  %s (%s)", s.ID, s.Type)
 		}
 	}
+	// Invariant (reservas-belleza fix 2026-07-06): docs_pr (merge docs to main) must run
+	// BEFORE handoff (publish backlog), so a story is NEVER dispatchable before its docs are
+	// on main. Assert the ordering, not just the terminal step.
+	idxOf := func(id string) int {
+		for i, s := range wf.Steps {
+			if s.ID == id {
+				return i
+			}
+		}
+		return -1
+	}
+	docsPR, handoff := idxOf("docs_pr"), idxOf("handoff")
+	if docsPR < 0 || handoff < 0 {
+		t.Fatalf("missing steps: docs_pr=%d handoff=%d", docsPR, handoff)
+	}
+	if docsPR >= handoff {
+		t.Errorf("order: docs_pr (%d) must come BEFORE handoff (%d) — docs must reach main before the backlog is published", docsPR, handoff)
+	}
 	last := wf.Steps[len(wf.Steps)-1]
-	if last.ID != "docs_pr" || last.Type != "pr" {
-		t.Errorf("last step: got id=%s type=%s, want id=docs_pr type=pr", last.ID, last.Type)
+	if last.ID != "handoff" || last.Type != "ticket_publish" {
+		t.Errorf("last step: got id=%s type=%s, want id=handoff type=ticket_publish", last.ID, last.Type)
 	}
 }

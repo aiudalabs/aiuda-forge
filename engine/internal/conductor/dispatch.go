@@ -94,6 +94,38 @@ func (d *Dispatcher) ghFor(ctx context.Context, projectID string) GitHubDispatch
 	return d.GH
 }
 
+// docsOnMain reports whether the project's canonical spec is on `main` — the invariant a
+// sprint depends on (the agents read docs/ from main). Fail-OPEN on a missing tenant client
+// or a transient API error: the design flow (docs_pr auto-merges before handoff) is the
+// PRIMARY guard, so this conductor gate is defense-in-depth and must not deadlock dispatch
+// on a GitHub blip.
+func (d *Dispatcher) docsOnMain(ctx context.Context, projectID, repoURL string) bool {
+	if d.ClientFor == nil {
+		return true
+	}
+	c := d.ClientFor(ctx, projectID)
+	if c == nil {
+		return true
+	}
+	ok, err := c.FileOnBranch(ctx, repoURL, "main", "docs/PRD.md")
+	if err != nil {
+		return true
+	}
+	return ok
+}
+
+// gateOnDocs enforces the invariant "a story is dispatchable ⟺ its project's docs are on
+// `main`". If there is work but the docs aren't merged yet, hold EVERYTHING (return no
+// candidates) so no sprint runs against a docs-less main — the reservas-belleza incident,
+// where a sprint fired before the design docs reached main and the agent worked blind.
+func (d *Dispatcher) gateOnDocs(ctx context.Context, projectID, repoURL string, out []Candidate) []Candidate {
+	if len(out) == 0 || d.docsOnMain(ctx, projectID, repoURL) {
+		return out
+	}
+	log.Printf("conductor(%s): %d candidate(s) HELD — docs/ not on main yet; merge the design docs PR to unblock", projectID, len(out))
+	return nil
+}
+
 // claudeWorkflowFile is the conductor-dispatch workflow the scaffold bakes into
 // each repo (templates github-native).
 const claudeWorkflowFile = "claude.yml"
@@ -153,7 +185,7 @@ func (d *Dispatcher) Candidates(ctx context.Context, projectID, repoURL string, 
 			}
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-		return out, nil
+		return d.gateOnDocs(ctx, projectID, repoURL, out), nil
 	}
 
 	// Sprint mode: a sprint is dispatchable when it still has backlog work, nothing
@@ -199,7 +231,7 @@ func (d *Dispatcher) Candidates(ctx context.Context, projectID, repoURL string, 
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return sprintNum(out[i].ID) < sprintNum(out[j].ID) })
-	return out, nil
+	return d.gateOnDocs(ctx, projectID, repoURL, out), nil
 }
 
 // Dispatch fires one candidate (story or sprint id) after re-validating it.

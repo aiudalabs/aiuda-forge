@@ -61,6 +61,11 @@ services:
       BRAIN_MODEL: ${BRAIN_MODEL:-claude-opus-4-8}
       GH_TOKEN: ${GH_TOKEN:-}
       TARGET_REMOTE: ${TARGET_REMOTE:-}
+      # PR mode for the `pr` step type. The DESIGN docs_pr runs HERE (design phase runs in the
+      # control), so this MUST default to github in prod — else docs_pr commits+pushes a branch
+      # but never opens/merges the PR, docs never reach `main`, and sprints dispatch blind
+      # (reservas-belleza incident 2026-07-06). local = offline dev/tests only.
+      PR_MODE: ${PR_MODE:-github}
       # Operability (audit A3/A5): cap every gh/git shell-out so a hung call can't stall
       # the conductor for all tenants; GC events + terminal-run workdirs older than N days
       # (0 disables) so disk doesn't grow without bound.

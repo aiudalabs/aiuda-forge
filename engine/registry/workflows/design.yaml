@@ -4,7 +4,7 @@
 # paso de la fase con el feedback del revisor inyectado como $<gate>.detail.
 #
 # Orden de fases (SDLC): discovery → constitution → PRD → data-model → architecture →
-#                        UI → mockups → backlog → handoff → docs_pr
+#                        UI → mockups → backlog → docs_pr (merge a main) → handoff
 #
 # `label:` es el nombre display de la fase (dato). La UI DERIVA las fases de estos steps
 # (type: design = fase; el human_gate siguiente = su gate) — no hay lista hardcodeada.
@@ -194,7 +194,23 @@ steps:
       max: 100
       feedback: $backlog_gate.detail
 
-  # ── Fase 9: Handoff — publicar el backlog en el ticket store nativo ───────
+  # ── Fase 9: Docs PR — commitear docs/ y MERGEAR a main ANTES de publicar el
+  #    backlog. INVARIANTE: una story solo se publica (handoff) cuando los docs ya
+  #    están en `main` — la spec canónica que leerán los agentes de sprint. El
+  #    auto-merge (merge: true) es legítimo: cada fase pasó su human_gate, así que
+  #    la PR es solo la agregación de lo ya aprobado (sin decisión humana nueva).
+  #    Si el create/merge falla, docs_pr FALLA (terminal, reintentable) y handoff NO
+  #    corre → nunca hay tickets sobre un main sin docs (incidente reservas-belleza
+  #    2026-07-06: PR_MODE=local dejó los docs fuera de main y el sprint arrancó ciego).
+  - id: docs_pr
+    type: pr
+    label: Docs → PR
+    inputs:
+      base: main
+      merge: true
+      ticket: "design: publish docs for review"
+
+  # ── Fase 10: Handoff — publicar el backlog en el ticket store (docs YA en main) ─
   - id: handoff
     type: ticket_publish
     label: Handoff → stories
@@ -202,11 +218,3 @@ steps:
       backlog: docs/backlog.yaml
       repo: $trigger.repo
       project_id: $trigger.project_id   # scope de cada story/sprint al proyecto (A1)
-
-  # ── Fase 10: Docs PR — commitear docs/ y abrir PR a main (= apply del delta)
-  - id: docs_pr
-    type: pr
-    label: Docs → PR
-    inputs:
-      base: main
-      ticket: "design: publish docs for review"
