@@ -1,0 +1,21 @@
+# Forja — single-domain reverse proxy with automatic HTTPS (Let's Encrypt).
+# One public domain serves BOTH the console (UI) and the control plane (API + WebSocket):
+#   https://<domain>/            -> console  (Next.js)
+#   https://<domain>/forge-api/* -> control  (API; the /forge-api prefix is stripped)
+#   https://<domain>/forge-api/ws -> control WebSocket (Caddy upgrades it automatically)
+# The browser talks only to <domain> (same origin → no CORS), so the console must be built
+# with NEXT_PUBLIC_VIBEFORGE_API_URL=https://<domain>/forge-api (the prod override does this).
+
+{$FORJA_DOMAIN} {
+	encode gzip
+
+	# Control plane. handle_path strips "/forge-api" so control sees /auth/login, /ws, etc.
+	handle_path /forge-api/* {
+		reverse_proxy control:8080
+	}
+
+	# Everything else → the console.
+	handle {
+		reverse_proxy console:3000
+	}
+}

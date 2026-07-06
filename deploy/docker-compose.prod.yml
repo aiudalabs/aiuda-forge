@@ -1,0 +1,52 @@
+# Production override — layer on top of the base docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#
+# It adds Caddy (automatic HTTPS + reverse proxy on ONE domain), bakes the public API URL
+# into the console build, and points the control's public/callback URLs at the domain.
+#
+# Requires FORJA_DOMAIN in .env (e.g. FORJA_DOMAIN=forja.aiudalabs.com) and DNS: an A record
+# for FORJA_DOMAIN → this VPS's public IP, before first boot (Caddy needs it to issue TLS).
+#
+# The control (8080) and console (3000) host ports from the base file stay bound to the
+# host — close them at the firewall so only 80/443 (Caddy) are public (see DEPLOY.md).
+
+name: aiuda-forge
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      FORJA_DOMAIN: ${FORJA_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - forge-internal
+    depends_on:
+      - console
+      - control
+
+  control:
+    environment:
+      # Same origin as the console → CORS isn't triggered, but set it explicitly anyway.
+      VIBEFORGE_CORS_ORIGIN: https://${FORJA_DOMAIN}
+      # Public base of the control plane (GitHub App manifest + OAuth callbacks): behind
+      # Caddy the control lives under /forge-api.
+      VIBEFORGE_PUBLIC_URL: https://${FORJA_DOMAIN}/forge-api
+      VIBEFORGE_CONSOLE_URL: https://${FORJA_DOMAIN}
+
+  console:
+    build:
+      args:
+        # Baked into the JS the browser runs (see console/Dockerfile). Same-origin path.
+        NEXT_PUBLIC_VIBEFORGE_API_URL: https://${FORJA_DOMAIN}/forge-api
+
+volumes:
+  caddy-data:
+  caddy-config:
