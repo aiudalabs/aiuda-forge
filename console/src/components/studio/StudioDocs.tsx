@@ -159,8 +159,13 @@ export function StudioDocs({ onOpenPipeline }: { onOpenPipeline?: () => void } =
     );
   }, [designRuns, projectId, activeStep]);
   function doRefine() {
-    if (!refine.trim() || !refineRun || !activeStep) return;
-    rerun.mutate([refineRun.id, activeStep, refine.trim()], { onSuccess: () => setRefine("") });
+    if (!refine.trim() || !refineRun || !activeStep || !activeFile) return;
+    // Mockups are ONE phase that regenerates every surface; name the file the user is
+    // refining so the agent works on THAT screen instead of picking another.
+    const fb = isHtml(activeFile.path)
+      ? `El usuario está refinando la pantalla "${activeFile.name}" (${activeFile.path}). Concentrate en ESA superficie; no rehagas las otras salvo que sea imprescindible. Petición: ${refine.trim()}`
+      : refine.trim();
+    rerun.mutate([refineRun.id, activeStep, fb], { onSuccess: () => setRefine("") });
   }
 
   // Change Request (C4): a PROJECT-level action (may touch several docs) — lives in
