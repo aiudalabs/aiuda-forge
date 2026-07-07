@@ -66,6 +66,53 @@ func TestRenderRealPythonStack(t *testing.T) {
 	}
 }
 
+func TestRenderRealReactSupabaseStack(t *testing.T) {
+	vars := Vars{"project_name": "Acme", "language": "es"}
+	files, missing, err := Render(realTemplates, "react-supabase", vars)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	byPath := pathsOf(files)
+
+	// _common file present (shared across every stack).
+	if _, ok := byPath["AGENTS.md"]; !ok {
+		t.Errorf("expected _common AGENTS.md in result; got paths %v", keys(byPath))
+	}
+	// both stack lanes present, .tmpl suffix stripped.
+	for _, want := range []string{
+		".github/agents/react-dev.agent.md",
+		".github/agents/supabase-dev.agent.md",
+		".github/instructions/frontend.instructions.md",
+		".github/instructions/database.instructions.md",
+		".github/workflows/copilot-setup-steps.yml",
+		".github/workflows/ui-verify.yml",
+		"CLAUDE.md",
+	} {
+		if _, ok := byPath[want]; !ok {
+			t.Errorf("expected %s in result; got paths %v", want, keys(byPath))
+		}
+	}
+
+	// passed variable substituted, and no {{project_name}} remains anywhere.
+	if persona := byPath[".github/agents/supabase-dev.agent.md"]; !strings.Contains(persona, "Acme") {
+		t.Errorf("expected {{project_name}} -> Acme in persona, not found")
+	}
+	for _, f := range files {
+		if strings.Contains(f.Content, "{{project_name}}") {
+			t.Errorf("%s still contains unsubstituted {{project_name}}", f.Path)
+		}
+	}
+
+	// missing reports variables that were NOT passed, and not the ones that were.
+	if !contains(missing, "stack") {
+		t.Errorf("expected 'stack' in missing (not passed); got %v", missing)
+	}
+	if contains(missing, "project_name") {
+		t.Errorf("did not expect 'project_name' in missing (it was passed); got %v", missing)
+	}
+}
+
 func TestRenderUnknownStack(t *testing.T) {
 	_, _, err := Render(realTemplates, "cobol-mainframe", nil)
 	if err == nil {

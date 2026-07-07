@@ -1,0 +1,49 @@
+name: "Copilot Setup Steps"
+
+# Provisions the toolchain the Copilot coding agent (and any Actions-based agent)
+# needs before it starts working on an issue in this repo: Node + pnpm for the
+# React/Vite app, and the Supabase CLI so the backend lane can run migrations,
+# regenerate types, and reset a local stack. GitHub runs the job named
+# `copilot-setup-steps` to prepare the agent's environment. It can also be run
+# manually to validate the setup.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+
+    steps:
+      # SIN actions/checkout: el harness de Copilot clona él mismo — un checkout
+      # explícito aquí 404ea con su token y mata la sesión entera (bisect 2026-07-03).
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # SIN cache: pnpm — el cache resuelve rutas de lockfile en el workspace,
+          # que en las sesiones de agente puede estar VACÍO en esta fase (el harness
+          # clona después). Mismo patrón defensivo que el stack python.
+
+      # El app vive en la raíz del repo (Vite). Instala deps solo cuando ya hay un
+      # package.json en el árbol (los primeros sprints pueden ser backend-only).
+      - name: Install app deps
+        if: ${{ hashFiles('package.json') != '' }}
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      # La CLI de Supabase da al backend lane `supabase db reset`, `gen types`, y el
+      # stack local. Es toolchain, no un gate de verificación (eso llega en sprints
+      # posteriores). El binario se cachea; no arranca ningún servicio aquí.
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest

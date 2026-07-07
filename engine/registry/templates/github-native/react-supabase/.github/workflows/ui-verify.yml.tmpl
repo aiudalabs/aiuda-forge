@@ -1,0 +1,178 @@
+name: ui-verify
+
+# Verificacion FUNCIONAL de UI (Wave V3). Arranca la app de verdad en un
+# navegador headless y comprueba que la home RENDERIZA y clickea — una senal
+# mucho mas fuerte que "los tests pasan". Ataca el reward-hack del frontend que
+# compila y da verde en unit-tests pero en runtime sale en blanco, no monta el
+# root, o revienta con errores JS en consola. Es un GATE: si la app no arranca o
+# la home no pinta, el check FALLA. Solo corre cuando el PR toca el frontend.
+#
+# El app Vite vive en la RAIZ del repo (a diferencia del stack python, que lo
+# anida en frontend/). Por eso el path filter y el working-directory son la raiz.
+
+on:
+  pull_request:
+    paths:
+      - src/**
+      - index.html
+      - vite.config.ts
+      - package.json
+
+permissions:
+  contents: read
+
+env:
+  PORT: "4173"
+  SMOKE_URL: "http://127.0.0.1:4173/"
+
+jobs:
+  ui-verify:
+    runs-on: ubuntu-latest
+    steps:
+      # Este SI lleva checkout normal: es un workflow corriente, no
+      # copilot-setup-steps (que NO debe clonar, el harness de Copilot lo hace).
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Guard hashFiles (patron de copilot-setup-steps): si no hay app real en el
+      # arbol, cada paso se salta y el job pasa en verde. El filtro de paths ya
+      # acota el disparo; esto es defensa en profundidad por si el layout cambia.
+      - name: Set up pnpm
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install app deps
+        if: ${{ hashFiles('package.json') != '' }}
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build app
+        if: ${{ hashFiles('package.json') != '' }}
+        # Placeholder env: el smoke no toca Supabase, pero el bundle puede leer
+        # import.meta.env al arrancar. Valores dummy para que el build/boot no
+        # reviente por env ausente; NUNCA credenciales reales aqui.
+        env:
+          VITE_SUPABASE_URL: "http://127.0.0.1:54321"
+          VITE_SUPABASE_ANON_KEY: "anon-placeholder"
+        run: pnpm build
+
+      - name: Serve the built app
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          set -euo pipefail
+          # Preferimos servir el BUILD de produccion (fiel a lo que se despliega).
+          # Vite -> `preview` sirve dist/; si no hay script `preview` caemos a un
+          # http-server estatico sobre dist/ o build/; ultimo recurso, el dev server.
+          # El proceso queda en background (& / nohup) y sobrevive al paso.
+          if pnpm run 2>/dev/null | grep -qiE '(^|[[:space:]])preview([[:space:]]|$)'; then
+            nohup pnpm preview -- --host 127.0.0.1 --port "$PORT" --strictPort >/tmp/ui-verify-server.log 2>&1 &
+          elif [ -d dist ]; then
+            nohup npx --yes http-server dist -a 127.0.0.1 -p "$PORT" -s >/tmp/ui-verify-server.log 2>&1 &
+          elif [ -d build ]; then
+            nohup npx --yes http-server build -a 127.0.0.1 -p "$PORT" -s >/tmp/ui-verify-server.log 2>&1 &
+          else
+            nohup pnpm dev -- --host 127.0.0.1 --port "$PORT" --strictPort >/tmp/ui-verify-server.log 2>&1 &
+          fi
+          echo "Servidor lanzado en background (PORT=$PORT)."
+
+      - name: Wait for the app to answer
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          set -euo pipefail
+          # until-curl con timeout ~120s (60 x 2s). Si la app no arranca, el gate
+          # FALLA aqui mismo — es funcional, no decorativo.
+          for i in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+              echo "App arriba en http://127.0.0.1:${PORT}/ (intento $i)."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::La app no respondio en http://127.0.0.1:${PORT}/ tras 120s."
+          echo "----- log del servidor -----"
+          cat /tmp/ui-verify-server.log || true
+          exit 1
+
+      - name: Playwright smoke (home renderiza, sin errores JS)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/pw-smoke"
+          mkdir -p "$WORK"
+          cd "$WORK"
+          npm init -y >/dev/null 2>&1
+          # Playwright SIN depender de tests del repo: instalamos el paquete y el
+          # navegador aqui y corremos un script inline contra la app ya servida.
+          npm i playwright@latest >/dev/null 2>&1
+          npx playwright install --with-deps chromium
+          cat > smoke.js <<'SMOKE'
+          // Smoke funcional generico (SPA React/Vite). Verifica que la app arranca
+          // y PINTA algo, y falla si: la home no da 200, sale en blanco, o hay
+          // errores JS. El screenshot se sube como artifact para revisar.
+          const { chromium } = require('playwright');
+          const URL = process.env.SMOKE_URL || 'http://127.0.0.1:4173/';
+          const SHOT = process.env.SHOT_PATH || 'ui-verify-home.png';
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            const consoleErrors = [];
+            const pageErrors = [];
+            page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+            page.on('pageerror', (e) => { pageErrors.push(e.message || String(e)); });
+            let status = 0;
+            try {
+              const resp = await page.goto(URL, { waitUntil: 'load', timeout: 60000 });
+              status = resp ? resp.status() : 0;
+            } catch (e) {
+              console.error('SMOKE FAIL: no se pudo navegar a ' + URL + ' -- ' + (e.message || e));
+              await browser.close();
+              process.exit(1);
+            }
+            // Margen para que la SPA hidrate y pinte.
+            let info = { bodyLen: 0, surfaceFilled: false };
+            const deadline = Date.now() + 20000;
+            do {
+              info = await page.evaluate(() => {
+                const bodyText = ((document.body && document.body.innerText) || '').trim();
+                const el = document.querySelector('#root, #app, main');
+                const filled = !!el && (
+                  el.children.length > 0 ||
+                  ((el.innerText || '').trim().length > 0)
+                );
+                return { bodyLen: bodyText.length, surfaceFilled: filled };
+              });
+              if (info.bodyLen > 0 || info.surfaceFilled) break;
+              await page.waitForTimeout(1000);
+            } while (Date.now() < deadline);
+            try { await page.screenshot({ path: SHOT, fullPage: true }); } catch (_) {}
+            await browser.close();
+            const problems = [];
+            if (status !== 200) problems.push('HTTP status ' + status + ' (esperado 200)');
+            if (info.bodyLen < 1 && !info.surfaceFilled) {
+              problems.push('La home renderizo en blanco (ni texto ni superficie de render detectada)');
+            }
+            if (pageErrors.length) problems.push('Excepciones JS no capturadas: ' + pageErrors.join(' | '));
+            if (consoleErrors.length) problems.push('Errores de consola: ' + consoleErrors.join(' | '));
+            if (problems.length) {
+              console.error('SMOKE FAIL:\n- ' + problems.join('\n- '));
+              process.exit(1);
+            }
+            console.log('SMOKE OK: status ' + status + ', texto=' + info.bodyLen + ' chars, superficie=' + info.surfaceFilled + '.');
+          })().catch((e) => { console.error('SMOKE CRASH: ' + ((e && e.stack) || e)); process.exit(1); });
+          SMOKE
+          SHOT_PATH="$RUNNER_TEMP/ui-verify-home.png" node smoke.js
+
+      - name: Upload home screenshot
+        if: ${{ always() && hashFiles('package.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-verify-home
+          path: ${{ runner.temp }}/ui-verify-home.png
+          if-no-files-found: ignore

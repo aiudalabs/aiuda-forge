@@ -1,0 +1,51 @@
+---
+applyTo: "supabase/**"
+---
+
+# Backend path rules — {{project_name}}
+
+These rules apply to every change under `supabase/**` — migrations, RLS policies,
+Edge Functions, `config.toml`, and `seed.sql`. They are the supabase-dev lane's
+contract with the rest of the repo.
+
+## Migrations
+- Every schema change is a **new, forward migration** under
+  `supabase/migrations/` (timestamp-prefixed). Never edit a migration that has
+  already been applied — add another one on top.
+- A migration is self-contained: the table, its constraints, its indexes, and its
+  RLS policies land together. Do not deploy code that assumes a column a migration
+  hasn't added.
+- Let Postgres enforce invariants where it can — `CHECK`, partial `UNIQUE`,
+  foreign keys, `NOT NULL`, valid-status checks. App/Edge-Function validation
+  exists for the error message, not to replace the constraint. Constraints are
+  truth.
+
+## Row-Level Security (the security boundary)
+- `ENABLE ROW LEVEL SECURITY` on every table the client can reach. A table with
+  RLS enabled and no policy denies all access — if that is the intent, state it;
+  do not leave a table world-open by forgetting to enable RLS.
+- Write explicit `select` / `insert` / `update` / `delete` policies scoped to the
+  authenticated user (`auth.uid()`), naming the role each policy is `to`. The
+  client SDK is assumed hostile: never rely on the frontend to filter rows it
+  should not receive.
+- Server-owned columns (`status`, `owner_id`, computed totals) are set by a
+  trigger, a `DEFAULT`, or an Edge Function — never accepted from the client. A
+  `WITH CHECK` clause or `BEFORE` trigger enforces this.
+
+## Edge Functions
+- Edge Functions (Deno/TypeScript, `supabase/functions/<name>/index.ts`) are the
+  only place the `service_role` key is used, and they run server-side. Validate
+  inputs; write the failure modes (unauthorized caller, retried request) before
+  the happy path. Keep them idempotent where the caller may retry.
+
+## Types and contract
+- After any schema change, regenerate `src/lib/database.types.ts`
+  (`supabase gen types typescript --local`) in the **same diff** so the frontend
+  contract stays truthful. That file is generated output — do not hand-edit it.
+
+## Secrets and stay in lane
+- No secrets in code or committed env files; `service_role` and other keys come
+  from the environment / Supabase secrets, never a literal in the tree.
+- Do NOT touch `src/**` app code (that is the react-dev lane), except to
+  regenerate `database.types.ts`. If a change appears to need a frontend edit, that
+  is a separate issue — say so instead of crossing the boundary.

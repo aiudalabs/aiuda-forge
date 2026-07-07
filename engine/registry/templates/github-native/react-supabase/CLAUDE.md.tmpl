@@ -1,0 +1,75 @@
+# {{project_name}} — repo constitution
+
+Autonomous-agent-developed product. Stack: **{{stack}}** — a React + Vite +
+TypeScript web app on the frontend, and Supabase (Postgres + Row-Level Security,
+Auth, Storage, and Deno/TypeScript Edge Functions) on the backend. Server state
+via TanStack Query; forms via React Hook Form + Zod. Primary product language:
+`{{language}}`.
+
+This file is the repo-wide constitution every agent obeys. Lane personas are in
+`.github/agents/`, per-path rules in `.github/instructions/`, and the tool-neutral
+roster in `AGENTS.md`.
+
+## Repo layout
+
+- `src/**` — the Vite React app (react-dev lane): components, pages, routing,
+  hooks, forms, styling.
+- `supabase/**` — the backend (supabase-dev lane): `migrations/**` (SQL: tables,
+  constraints, RLS policies), `functions/**` (Deno/TS Edge Functions),
+  `config.toml`, `seed.sql`.
+- `src/lib/database.types.ts` — generated from the schema by supabase-dev
+  (`supabase gen types typescript`); consumed **read-only** by react-dev.
+
+## Lanes and ownership
+
+Each issue is owned by one lane; an agent works only inside its lane's paths.
+
+{{lanes}}
+
+Backend (Supabase) paths:
+
+{{path_map_backend}}
+
+Frontend (React app) paths:
+
+{{path_map_frontend}}
+
+`src/lib/database.types.ts` is owned by the supabase-dev lane (regenerated from the
+schema) and consumed read-only by the react-dev lane; the frontend never hand-edits
+it to make the UI compile.
+
+## Global rules (apply to every lane)
+
+1. **Read the issue in full before writing code.** Its acceptance criteria are the
+   contract. Implement them precisely and minimally — not beyond them.
+2. **Acceptance self-audit is mandatory.** Before opening a PR, verify EACH
+   acceptance criterion against its exact wording (measurable thresholds,
+   enumerated items, named states) and end the PR description with the audit. Most
+   rejections are a criterion you read but never mechanically verified.
+3. **Honest tests only.** Every criterion maps to a test that actually exercises
+   the new behavior; removing the production behavior must make the test fail. No
+   vacuous asserts, no tests hard-coded to pass.
+4. **Error paths before happy path**; early returns; nesting ≤2 levels.
+5. **The database is the security boundary.** RLS is authoritative: every table the
+   client reads or writes has explicit policies, and the client SDK is assumed
+   hostile. Client code never sets server-owned columns (`status`, `owner_id`,
+   computed totals); a policy or trigger denies it. `service_role` is used only
+   from Edge Functions / migrations, never shipped to the browser. Any schema change
+   ships its migration (with the RLS policy) in the same diff.
+6. **Stay in your lane and in your stack.** Do not touch another lane's paths, do
+   not add unallowed dependencies (pin exact versions), do not reformat unrelated
+   files. An Edge Function or migration that changes a shape regenerates
+   `database.types.ts` in the same diff.
+7. **The agent commits and opens the PR.** Work on a branch, commit, push, open a
+   PR that links the issue (`Closes #<n>`). Never edit `.github/workflows/**` to
+   make a check pass — that is tampering and is reviewed as such.
+
+## Validation (the gate)
+
+CI runs these on every PR; run them locally and get them green before opening it.
+
+{{validation_commands}}
+
+CI additionally runs `suite-integrity` (fails if the PR reduces the test count), a
+cross-model `claude-review` against the acceptance criteria, and Copilot review. A
+blocking finding comes back as requested changes on the PR.

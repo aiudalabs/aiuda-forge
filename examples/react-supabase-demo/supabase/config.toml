@@ -1,0 +1,17 @@
+# Minimal Supabase local config for the demo. `supabase start` reads this to boot
+# the local stack (Postgres + Auth + Storage + Edge runtime). Full projects get a
+# richer config; this is the floor the stack needs.
+project_id = "react-supabase-demo"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+
+[db]
+port = 54322
+major_version = 15
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:5173"
