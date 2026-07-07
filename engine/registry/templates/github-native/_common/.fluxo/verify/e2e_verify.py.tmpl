@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Fluxo e2e-verify — generic, contract-driven, stack-agnostic.
+
+The behavior floor of Fluxo's verification layer (§2B of the E2E verification plan).
+Where provisioning-lint (§2A) is a STATIC read of files, this ORCHESTRATES the real
+integrated system: it boots the REAL backend (emulated), seeds world state, runs the
+app's flow, and checks universal invariants — catching the bugs that live at the
+code<->system boundary and that unit tests mock away (backend security rules that deny
+the client, a server function that fails on cold start with no mocked database, a
+query that needs a missing index, a session that does not persist across restart).
+
+GOLDEN RULE (do not break, §1-bis): NO stack vocabulary lives in this file. Every
+stack-specific thing — the boot command, the ready probe, the flow runner, the seed
+loader — comes from the per-stack contract `stack.verify.yaml`. Adding a stack is a
+contract change (DATA), never an edit here. If you type a framework, backend product,
+SDK, or emulator name in this file, it is a leak: move it to the contract.
+
+What it does, in order (all parameterized by stack.verify.yaml):
+  1. boot        — run `backend.boot` (the emulator / local dev-stack command),
+                   wait until `backend.ready_probe` succeeds (or time out visibly).
+  2. seed        — load `e2e.seed/` fixtures = WORLD STATE ONLY. Never seed what the app
+                   creates at runtime (a user profile the signup flow makes) — that would
+                   hide the exact class of bug we are hunting. Seeding is world (catalog,
+                   availability), the flow is behavior (signup -> login -> core).
+  3. run flow    — invoke the stack's `e2e.runner` over the flow specs in `e2e.flows/`,
+                   each derived from a story's acceptance criteria (authored upstream).
+  4. invariants  — assert the universal `e2e.invariants` (session_persists,
+                   no_client_over_read, ...) — stack-agnostic truths every app must hold.
+  5. teardown    — run `backend.teardown` (best-effort; some backends self-tear).
+
+This file is the ORCHESTRATOR. The stack-specific runners (a native integration test, a
+browser-automation script) live as DATA/assets under the stack's `e2e.flows/` and are
+invoked by the command the contract names. Invariant *checks* that need stack knowledge
+are themselves runner scripts named by the contract, not branches here.
+
+Exit code: 1 if boot fails, any flow fails, or any invariant fails; else 0. A flow that
+cannot be decided (no flow specs yet) reports a visible WARNING and does not pass in
+silence — same honesty rule as provisioning-lint.
+"""
+import argparse
+import os
+import shlex
+import subprocess
+import sys
+import time
+
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("::error::PyYAML not installed. Run: pip install pyyaml\n")
+    sys.exit(2)
+
+FAIL = "FAIL"
+WARN = "WARN"
+OK = "OK"
+
+
+def gh_error(msg):
+    print(f"::error::{msg}")
+
+
+def gh_warning(msg):
+    print(f"::warning::{msg}")
+
+
+def load_contract(repo_root):
+    """Read the per-stack contract. Absent contract = no-op (the stack has not opted in
+    to the verify layer yet) — same guard as provisioning-lint, so old/unmigrated repos
+    and stacks pass untouched."""
+    path = os.path.join(repo_root, ".fluxo", "verify", "stack.verify.yaml")
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
+
+
+def run(cmd, cwd, env=None, timeout=None, capture=False):
+    """Run a shell command. Returns (rc, output). Never raises on non-zero."""
+    try:
+        proc = subprocess.run(
+            cmd, cwd=cwd, env=env, shell=True, timeout=timeout,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.STDOUT if capture else None,
+            text=True,
+        )
+        return proc.returncode, (proc.stdout or "" if capture else "")
+    except subprocess.TimeoutExpired:
+        return 124, "timed out"
+
+
+def wait_ready(probe, cwd, deadline_s):
+    """Poll backend.ready_probe until it exits 0 or we time out."""
+    if not probe:
+        return True
+    end = time.time() + deadline_s
+    while time.time() < end:
+        rc, _ = run(probe, cwd, capture=True)
+        if rc == 0:
+            return True
+        time.sleep(2)
+    return False
+
+
+class Findings:
+    def __init__(self):
+        self.rows = []
+
+    def add(self, level, phase, msg, detail=""):
+        self.rows.append((level, phase, msg, detail))
+        if level == FAIL:
+            gh_error(f"[{phase}] {msg}" + (f" — {detail}" if detail else ""))
+        elif level == WARN:
+            gh_warning(f"[{phase}] {msg}" + (f" — {detail}" if detail else ""))
+
+    def failed(self):
+        return any(r[0] == FAIL for r in self.rows)
+
+    def report(self, stack):
+        icon = {FAIL: "❌ FAIL", WARN: "⚠️ WARN", OK: "✅ OK"}
+        print(f"# e2e-verify — stack `{stack}`\n")
+        print("| level | phase | result | detail |")
+        print("|---|---|---|---|")
+        for level, phase, msg, detail in self.rows:
+            print(f"| {icon[level]} | {phase} | {msg} | {detail} |")
+        nf = sum(1 for r in self.rows if r[0] == FAIL)
+        nw = sum(1 for r in self.rows if r[0] == WARN)
+        print(f"\n**{nf} FAIL, {nw} WARN**")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", default=".", help="repo root")
+    ap.add_argument("--boot-timeout", type=int, default=180)
+    ap.add_argument("--no-boot", action="store_true",
+                    help="assume the backend is already running (CI may boot it in a service step)")
+    args = ap.parse_args()
+    repo = os.path.abspath(args.repo)
+
+    contract = load_contract(repo)
+    if contract is None:
+        print("e2e-verify: no .fluxo/verify/stack.verify.yaml — stack not opted in, skipping (no-op).")
+        return 0
+
+    stack = contract.get("stack", "unknown")
+    backend = contract.get("backend", {}) or {}
+    e2e = contract.get("e2e", {}) or {}
+    f = Findings()
+
+    boot_cmd = backend.get("boot", "")
+    probe = backend.get("ready_probe", "")
+    teardown = backend.get("teardown", "")
+    runner = e2e.get("runner", "")
+    flows_dir = os.path.join(repo, e2e.get("flows", ".fluxo/verify/flows/"))
+    seed_dir = os.path.join(repo, e2e.get("seed", ".fluxo/verify/seed/"))
+    invariants = e2e.get("invariants", []) or []
+
+    boot_proc = None
+    try:
+        # ── 1. boot backend ──────────────────────────────────────────────────
+        if boot_cmd and not args.no_boot:
+            # For a self-tearing exec wrapper the boot command also runs the flow;
+            # for a persistent backend we start it detached and probe. The contract's
+            # `backend.persistent: true|false` decides. Default: persistent + probe.
+            persistent = backend.get("persistent", True)
+            if persistent:
+                boot_proc = subprocess.Popen(boot_cmd, cwd=repo, shell=True)
+                if not wait_ready(probe, repo, args.boot_timeout):
+                    f.add(FAIL, "boot", "backend did not become ready",
+                          f"probe `{probe}` never succeeded within {args.boot_timeout}s")
+                    f.report(stack)
+                    return 1
+                f.add(OK, "boot", "backend ready", boot_cmd)
+        else:
+            f.add(OK, "boot", "backend assumed running (--no-boot)", "")
+
+        # ── 2. seed world state ──────────────────────────────────────────────
+        seed_cmd = e2e.get("seed_cmd", "")
+        if seed_cmd:
+            rc, out = run(seed_cmd, repo, capture=True, timeout=120)
+            if rc != 0:
+                f.add(FAIL, "seed", "world-state seeding failed", out.strip()[:300])
+                return 1
+            f.add(OK, "seed", "world state seeded", seed_cmd)
+        elif os.path.isdir(seed_dir) and os.listdir(seed_dir):
+            f.add(WARN, "seed", "seed fixtures present but no seed_cmd to load them",
+                  f"add e2e.seed_cmd to stack.verify.yaml to apply {e2e.get('seed')}")
+
+        # ── 3. run flows (each derived from an AC) ───────────────────────────
+        run_cmd = e2e.get("run_cmd", "")
+        has_flows = os.path.isdir(flows_dir) and any(
+            os.scandir(flows_dir)) if os.path.isdir(flows_dir) else False
+        if not run_cmd:
+            f.add(WARN, "flow", "no e2e.run_cmd in contract — nothing to exercise yet",
+                  "the runner command that drives the flow is not declared")
+        elif not has_flows:
+            f.add(WARN, "flow", f"no flow specs under {e2e.get('flows')}",
+                  "stories should emit flow specs derived from their ACs; none found")
+        else:
+            rc, out = run(run_cmd, repo, capture=True, timeout=900)
+            if rc != 0:
+                f.add(FAIL, "flow", f"e2e flow ({runner}) failed", out.strip()[-600:])
+            else:
+                f.add(OK, "flow", f"e2e flow ({runner}) passed", run_cmd)
+
+        # ── 4. universal invariants ──────────────────────────────────────────
+        # Each invariant maps to a checker command the contract names under
+        # e2e.invariant_cmds; a universal invariant with no checker is a visible WARN
+        # (declared-but-unimplemented), never a silent pass.
+        inv_cmds = e2e.get("invariant_cmds", {}) or {}
+        for inv in invariants:
+            cmd = inv_cmds.get(inv, "")
+            if not cmd:
+                f.add(WARN, "invariant", f"'{inv}' declared but no checker command",
+                      f"add e2e.invariant_cmds.{inv} to stack.verify.yaml")
+                continue
+            rc, out = run(cmd, repo, capture=True, timeout=300)
+            if rc != 0:
+                f.add(FAIL, "invariant", f"invariant '{inv}' violated", out.strip()[-400:])
+            else:
+                f.add(OK, "invariant", f"invariant '{inv}' holds", "")
+
+        f.report(stack)
+        return 1 if f.failed() else 0
+    finally:
+        if teardown:
+            run(teardown, repo, capture=True, timeout=60)
+        if boot_proc and boot_proc.poll() is None:
+            boot_proc.terminate()
+            try:
+                boot_proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                boot_proc.kill()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

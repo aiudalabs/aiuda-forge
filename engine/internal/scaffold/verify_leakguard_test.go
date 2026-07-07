@@ -23,6 +23,8 @@ var forbiddenStackTokens = []string{
 var genericVerifyFiles = []string{
 	"_common/.fluxo/verify/provisioning_lint.py.tmpl",
 	"_common/.github/workflows/provisioning-lint.yml.tmpl",
+	"_common/.fluxo/verify/e2e_verify.py.tmpl",       // S3 orchestrator (generic)
+	"_common/.github/workflows/e2e-verify.yml.tmpl",  // S3 workflow (generic)
 }
 
 func TestCommonVerifyHasNoStackLeak(t *testing.T) {
@@ -47,8 +49,10 @@ func TestCommonVerifyHasNoStackLeak(t *testing.T) {
 func TestBothStacksRenderVerifyLayer(t *testing.T) {
 	stacks := []string{"aiuda-flutter-firebase", "react-supabase"}
 	want := []string{
-		".fluxo/verify/provisioning_lint.py",   // generic engine (from _common)
-		".github/workflows/provisioning-lint.yml", // generic workflow (from _common)
+		".fluxo/verify/provisioning_lint.py",   // generic engine (from _common, S2)
+		".github/workflows/provisioning-lint.yml", // generic workflow (from _common, S2)
+		".fluxo/verify/e2e_verify.py",          // generic orchestrator (from _common, S3)
+		".github/workflows/e2e-verify.yml",     // generic workflow (from _common, S3)
 		".fluxo/verify/provisioning.rules.yaml", // stack DATA
 		".fluxo/verify/stack.verify.yaml",       // stack contract
 	}

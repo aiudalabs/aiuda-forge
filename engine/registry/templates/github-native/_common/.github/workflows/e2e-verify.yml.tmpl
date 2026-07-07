@@ -1,0 +1,72 @@
+name: e2e-verify
+
+# Behavior verification (§2B) — the layer that RUNS the integrated system instead of
+# reading files. It runs the GENERIC orchestrator (.fluxo/verify/e2e_verify.py), which
+# boots the REAL backend (emulated), seeds world state, exercises the app's flow, and
+# checks universal invariants. This catches the class of bug that unit tests mock and
+# never see: security rules that deny the client, a server function that fails on cold
+# start with no mocked database, a query that needs an index, a session that does not
+# persist.
+#
+# STACK-AGNOSTIC on purpose: this workflow names no framework, no product, no emulator.
+# The toolchain setup and the boot/run commands all come from the per-stack contract
+# (.fluxo/verify/stack.verify.yaml, DATA). Do not add framework strings here. When the
+# pre-baked images land (S4) this can pin `container:` from the contract's `image`.
+#
+# ROLLOUT: continue-on-error is true — it RUNS and REPORTS but does NOT block the merge
+# yet. Promoted to a required, blocking check per-project only after going green on a
+# real PR (S5).
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-verify:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Guard: only run when this repo has opted into the verify layer (contract +
+      # orchestrator present). Unmigrated/older repos skip cleanly — additive by design.
+      - name: Detect verify config
+        id: cfg
+        run: |
+          if [ -f .fluxo/verify/stack.verify.yaml ] && [ -f .fluxo/verify/e2e_verify.py ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "e2e-verify: no .fluxo/verify contract in this repo — skipping."
+          fi
+
+      - name: Set up Python
+        if: steps.cfg.outputs.present == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install orchestrator deps
+        if: steps.cfg.outputs.present == 'true'
+        run: python -m pip install --quiet pyyaml
+
+      # The stack-specific toolchain (backend emulator, app runner, browser) is installed
+      # by a command the CONTRACT declares — kept out of this file to honor §1-bis. Absent
+      # setup_cmd = the orchestrator assumes tooling is preinstalled (e.g. a baked image, S4).
+      - name: Set up stack toolchain (from contract)
+        if: steps.cfg.outputs.present == 'true'
+        run: |
+          SETUP=$(python -c "import yaml;print((yaml.safe_load(open('.fluxo/verify/stack.verify.yaml')) or {}).get('e2e',{}).get('setup_cmd',''))")
+          if [ -n "$SETUP" ]; then
+            echo "running contract setup: $SETUP"
+            bash -lc "$SETUP"
+          else
+            echo "no e2e.setup_cmd in contract — assuming toolchain preinstalled."
+          fi
+
+      - name: Run e2e-verify (boot backend + flow + invariants)
+        if: steps.cfg.outputs.present == 'true'
+        run: python .fluxo/verify/e2e_verify.py --repo .
