@@ -74,6 +74,10 @@ var ErrNotCandidate = errors.New("not a dispatchable candidate")
 type GitHubDispatcher interface {
 	CreateAgentTask(ctx context.Context, repoURL, prompt, model string) (string, error)
 	DispatchWorkflow(ctx context.Context, repoURL, workflowFile, ref string, inputs map[string]string) error
+	// SetIssueRunning marca los issues agent:running al despachar claude_action, para
+	// que la señal de "corriendo" sea observable en GitHub desde el t0 (cierra el hueco
+	// dispatch→arranque del workflow que causaba el flap ready/running).
+	SetIssueRunning(ctx context.Context, repoURL string, numbers []int) error
 }
 
 // Dispatcher computes candidates and fires them.
@@ -320,6 +324,17 @@ func (d *Dispatcher) fireChannel(ctx context.Context, gh GitHubDispatcher, repoU
 		if err := gh.DispatchWorkflow(ctx, repoURL, claudeWorkflowFile, "main", inputs); err != nil {
 			return "", err
 		}
+		// Marca los issues agent:running YA (no esperar a que el workflow arranque y
+		// lo haga en su primer step): cierra el hueco dispatch→arranque en el que la
+		// proyección, sin señal, degradaba la story a backlog y —en auto— la
+		// re-despachaba en bucle (el flap). El paso if:always() del workflow sigue
+		// siendo quien QUITA el label al terminar. Best-effort: es el workflow el
+		// respaldo si esto falla, así que no abortamos el dispatch por un error acá.
+		if nums := parseIssueNumbers(issues); len(nums) > 0 {
+			if err := gh.SetIssueRunning(ctx, repoURL, nums); err != nil {
+				log.Printf("conductor: pre-marcar agent:running en %v: %v", nums, err)
+			}
+		}
 		// El run concreto tarda en materializarse; el link estable es la página
 		// de runs del workflow.
 		return fmt.Sprintf("https://github.com/%s/actions/workflows/%s", repoSlug(repoURL), claudeWorkflowFile), nil
@@ -406,6 +421,22 @@ func (d *Dispatcher) issueNumbers(storyIDs []string) string {
 		}
 	}
 	return strings.Join(nums, ",")
+}
+
+// parseIssueNumbers es la inversa de issueNumbers: "12,13,14" → [12,13,14]. Los
+// tokens no numéricos se ignoran (defensivo).
+func parseIssueNumbers(csv string) []int {
+	var out []int
+	for _, tok := range strings.Split(csv, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(tok); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // projectContext renderiza un mapa compacto de los módulos ya construidos en el

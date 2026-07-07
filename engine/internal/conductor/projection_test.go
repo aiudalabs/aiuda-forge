@@ -247,6 +247,55 @@ func TestSyncProjectDeadSessionUnpins(t *testing.T) {
 	}
 }
 
+// TestSyncProjectDependentStoryLabelStaysRunning es el test de regresión del flap de
+// stories con DEPENDENCIAS (la pista del usuario: los dependientes flapeaban). Una
+// story dependiente (dep NO done) cuyo issue lleva agent:running debe quedar RUNNING
+// por el label — la proyección NO gatea por deps — y NO flapear a backlog entre ticks.
+func TestSyncProjectDependentStoryLabelStaysRunning(t *testing.T) {
+	st := newStore(t)
+	// S-A (dep, sigue en backlog) y S-B que depende de S-A (dep NO done).
+	for _, s := range []tickets.Story{
+		{ID: "S-A", Title: "dep", ProjectID: "p1", ExternalRef: "github:o/r#1"},
+		{ID: "S-B", Title: "dependiente", ProjectID: "p1", ExternalRef: "github:o/r#2", Deps: []string{"S-A"}},
+	} {
+		if err := st.CreateStory(s); err != nil {
+			t.Fatalf("seed %s: %v", s.ID, err)
+		}
+	}
+	// S-B fue despachada por claude_action: running + sesión = página de runs.
+	if _, err := st.SyncExternalStatus("S-B", tickets.StatusRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetStorySession("S-B", "https://github.com/o/r/actions/workflows/claude.yml"); err != nil {
+		t.Fatal(err)
+	}
+	// GitHub: #1 abierto sin label (dep no done); #2 abierto CON agent:running.
+	gh := &fakeGH{issues: []github.IssueState{
+		{Number: 1, State: "open"},
+		{Number: 2, State: "open", Labels: []string{"agent:running"}},
+	}}
+
+	// Dos pases seguidos con el MISMO estado de GitHub: S-B debe quedar running en
+	// ambos, y el segundo NO debe reportar cambios (si flapeara, Changed>0 eterno).
+	p := NewProjector(st, gh)
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.GetStory("S-B"); s.Status != tickets.StatusRunning {
+		t.Fatalf("tras sync 1: S-B = %s, want running (label agent:running, dep no-done NO gatea la proyección)", s.Status)
+	}
+	res2, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.GetStory("S-B"); s.Status != tickets.StatusRunning {
+		t.Fatalf("tras sync 2: S-B = %s, want running (estable, sin flap)", s.Status)
+	}
+	if res2.Changed != 0 {
+		t.Fatalf("sync 2 Changed = %d, want 0 (sin re-escritura = sin flap)", res2.Changed)
+	}
+}
+
 func TestClosesRefs(t *testing.T) {
 	body := "Does stuff.\n\nCloses #7, fixes #12; Resolved #3. See #99 (unrelated)."
 	got := closesRefs(body)

@@ -144,6 +144,41 @@ func (c *Client) CloseIssue(ctx context.Context, repoURL string, number int, com
 	return nil
 }
 
+// SetIssueRunning marca los issues dados con el label `agent:running` al DESPACHAR
+// por el canal claude_action. Es lo que cierra la ventana entre el dispatch y el
+// arranque del workflow (que es quien normalmente pone el label en su primer step):
+// sin esta marca inmediata, durante ese hueco la proyección no ve señal de "corriendo"
+// (claude_action no asigna el issue ni abre PR y su sesión no ancla) → degrada la story
+// a backlog y, en auto, la re-despacha en bucle = el flap ready/running. El paso
+// if:always() del workflow sigue siendo quien LO QUITA al terminar. Best-effort:
+// asegura el label (idempotente, mismo color/desc que claude.yml) y lo añade a cada
+// issue; el step del workflow es el respaldo si algún add falla.
+func (c *Client) SetIssueRunning(ctx context.Context, repoURL string, numbers []int) error {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return err
+	}
+	// Asegura que el label exista (upsert); si esto fallara, el add por-issue lo
+	// auto-crea igual con color por defecto — la proyección sólo mira el NOMBRE.
+	_, _ = c.runner(ctx, "", "gh", "label", "create", runningLabelName, "-R", slug,
+		"-c", "FBCA04", "-d", "Un agente trabaja este issue AHORA (aiuda-forge)", "--force")
+	var firstErr error
+	for _, n := range numbers {
+		if out, err := c.runner(ctx, "", "gh", "api", "-X", "POST",
+			fmt.Sprintf("repos/%s/issues/%d/labels", slug, n),
+			"-f", "labels[]="+runningLabelName); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("gh api add %s to #%d: %w: %s", runningLabelName, n, err, strings.TrimSpace(out))
+			}
+		}
+	}
+	return firstErr
+}
+
+// runningLabelName es el nombre del label observable en GitHub que señala "un agente
+// está corriendo AHORA" (debe coincidir con projection.runningLabel y con claude.yml).
+const runningLabelName = "agent:running"
+
 // RepoSecretExists verifica si un Actions secret existe en el repo.
 func (c *Client) RepoSecretExists(ctx context.Context, repoURL, name string) (bool, error) {
 	slug, err := slugFromURL(repoURL)

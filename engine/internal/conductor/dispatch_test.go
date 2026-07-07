@@ -13,6 +13,7 @@ type fakeDispatchGH struct {
 	models    []string
 	workflows []string // prompts vía workflow_dispatch
 	wfIssues  []string // input "issues" de cada workflow_dispatch
+	labeled   []int    // issues marcados agent:running al despachar (SetIssueRunning)
 }
 
 func (f *fakeDispatchGH) CreateAgentTask(_ context.Context, _, prompt, model string) (string, error) {
@@ -24,6 +25,11 @@ func (f *fakeDispatchGH) CreateAgentTask(_ context.Context, _, prompt, model str
 func (f *fakeDispatchGH) DispatchWorkflow(_ context.Context, _, _, _ string, inputs map[string]string) error {
 	f.workflows = append(f.workflows, inputs["prompt"])
 	f.wfIssues = append(f.wfIssues, inputs["issues"])
+	return nil
+}
+
+func (f *fakeDispatchGH) SetIssueRunning(_ context.Context, _ string, numbers []int) error {
+	f.labeled = append(f.labeled, numbers...)
 	return nil
 }
 
@@ -142,5 +148,49 @@ func TestDispatchStoryViaClaudeAction(t *testing.T) {
 	// El nº de issue viaja como input para que el workflow lo marque agent:running.
 	if gh.wfIssues[0] != "1" {
 		t.Fatalf("issues input = %q, want \"1\"", gh.wfIssues[0])
+	}
+	// Y el conductor lo pre-marca agent:running en el t0 (cierra el hueco
+	// dispatch→arranque que causaba el flap): el issue #1 quedó etiquetado.
+	if len(gh.labeled) != 1 || gh.labeled[0] != 1 {
+		t.Fatalf("labeled = %v, want [1]", gh.labeled)
+	}
+}
+
+// TestDispatchSprintPreLabelsAllIssues: al despachar un sprint por claude_action, el
+// conductor marca agent:running TODOS los issues del sprint en el t0 — no sólo el
+// primero. Es la clave del fix del flap: la señal de "corriendo" existe en GitHub
+// desde el dispatch, sin esperar a que el workflow arranque.
+func TestDispatchSprintPreLabelsAllIssues(t *testing.T) {
+	st := newStore(t)
+	seedDispatch(t, st) // SP1 = S-01 (issue #1) + S-02 (issue #2)
+	gh := &fakeDispatchGH{}
+	d := &Dispatcher{Tickets: st, GH: gh}
+	pol := Policy{ExecutionUnit: "sprint", DispatchMode: "approve", Executor: "claude_action"}
+
+	if _, err := d.Dispatch(context.Background(), "p1", "https://github.com/o/r", pol, "SP1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(gh.labeled) != 2 || gh.labeled[0] != 1 || gh.labeled[1] != 2 {
+		t.Fatalf("labeled = %v, want [1 2] (todos los issues del sprint)", gh.labeled)
+	}
+	if gh.wfIssues[0] != "1,2" {
+		t.Fatalf("issues input = %q, want \"1,2\"", gh.wfIssues[0])
+	}
+}
+
+// TestDispatchCopilotDoesNotPreLabel: el canal copilot se auto-asigna el issue, así
+// que NO usa el label agent:running — el conductor no debe pre-marcarlo.
+func TestDispatchCopilotDoesNotPreLabel(t *testing.T) {
+	st := newStore(t)
+	seedDispatch(t, st)
+	gh := &fakeDispatchGH{}
+	d := &Dispatcher{Tickets: st, GH: gh}
+	pol := Policy{ExecutionUnit: "story", DispatchMode: "approve", Executor: "copilot"}
+
+	if _, err := d.Dispatch(context.Background(), "p1", "https://github.com/o/r", pol, "S-01"); err != nil {
+		t.Fatal(err)
+	}
+	if len(gh.labeled) != 0 {
+		t.Fatalf("labeled = %v, want [] (copilot no usa agent:running)", gh.labeled)
 	}
 }
