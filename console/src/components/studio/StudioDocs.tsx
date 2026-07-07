@@ -1,11 +1,12 @@
 "use client";
 
 // StudioDocs — el Studio como WORKSPACE full-height (rediseño 2026-07-06, aprobado por
-// mockup). Shell = topbar fija · cuerpo [riel | main] · el riel lista las FASES del run
-// (stepper vertical) y los DOCUMENTOS del repo; el main muestra el doc seleccionado o,
-// si elegís una fase, su PhasePanel (artefacto + aprobar/rechazar). El live-log vive
-// dentro del PhasePanel (colapsable). Reemplaza el viejo stack vertical (pipeline card
-// arriba + docs abajo). El flujo de gates (PhasePanel/useApprove/useReject) NO cambia.
+// mockup). Shell = topbar fija · cuerpo [riel | main] · drawer de ACTIVIDAD al pie.
+// El riel lista las FASES del run (stepper vertical) y los DOCUMENTOS del repo; el main
+// muestra el doc seleccionado o, si elegís una fase, su PhasePanel (artefacto +
+// aprobar/rechazar). El live-log ya NO vive dentro del PhasePanel: es el terminal del
+// drawer de Actividad al pie (colapsable), alimentado por useLiveEvents(run, isRunning).
+// El flujo de gates (PhasePanel/useApprove/useReject) NO cambia.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -25,8 +26,10 @@ import {
   useDesignRun,
   useDeleteRun,
   useCreateDesignRun,
+  useLiveEvents,
 } from "@/lib/hooks";
 import { IterationModal } from "./StudioModals";
+import { LiveLog } from "@/components/board/LiveLog";
 import { useT } from "@/lib/i18n";
 import { PhasePanel } from "./PhasePanel";
 import { phaseLabel, phaseState, PHASE_ICON, activePhaseIndex } from "./phaseHelpers";
@@ -35,14 +38,16 @@ import { useRouter } from "next/navigation";
 SyntaxHighlighter.registerLanguage("yaml", yaml);
 
 // Friendly titles + a logical reading order for the known design artifacts.
+// Iconos calcados del mockup para los docs que muestra (◈ discovery, § constitution,
+// ◇ prd); el resto conserva glifos coherentes. order = orden de lectura del riel.
 const DOC_META: Record<string, { titleKey: string | null; icon: string; order: number }> = {
-  "BRIEF.md": { titleKey: "studio.docs.title.brief", icon: "✦", order: 1 },
-  "CONSTITUTION.md": { titleKey: "studio.docs.title.constitution", icon: "⬡", order: 1.5 },
-  "PRD.md": { titleKey: "studio.docs.title.prd", icon: "▤", order: 2 },
+  "BRIEF.md": { titleKey: "studio.docs.title.brief", icon: "◈", order: 1 },
+  "CONSTITUTION.md": { titleKey: "studio.docs.title.constitution", icon: "§", order: 1.5 },
+  "PRD.md": { titleKey: "studio.docs.title.prd", icon: "◇", order: 2 },
   "DATA_MODEL.md": { titleKey: "studio.docs.title.dataModel", icon: "▦", order: 2.5 },
   "ARCHITECTURE.md": { titleKey: "studio.docs.title.architecture", icon: "◫", order: 3 },
   "UI_SCREENS.md": { titleKey: "studio.docs.title.uiScreens", icon: "▢", order: 4 },
-  "DESIGN_SYSTEM.md": { titleKey: "studio.docs.title.designSystem", icon: "◈", order: 5 },
+  "DESIGN_SYSTEM.md": { titleKey: "studio.docs.title.designSystem", icon: "❖", order: 5 },
   "backlog.yaml": { titleKey: "studio.docs.title.backlog", icon: "☰", order: 6 },
   "SESSION.md": { titleKey: "studio.docs.title.session", icon: "◷", order: 7 },
 };
@@ -72,6 +77,9 @@ const DOC_STEP: Record<string, string> = {
   "DATA_MODEL.md": "data_model",
   "ARCHITECTURE.md": "architecture",
   "UI_SCREENS.md": "ui",
+  // DESIGN_SYSTEM.md lo escribe el agente `designer` en la fase `mockups`
+  // (registry/agents/designer.md) — refinarlo re-corre esa fase.
+  "DESIGN_SYSTEM.md": "mockups",
   "backlog.yaml": "backlog",
 };
 function stepForDoc(name: string, path: string): string | null {
@@ -144,6 +152,8 @@ export function StudioDocs() {
   const [selPhase, setSelPhase] = useState<number | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [railOpen, setRailOpen] = useState(true);
+  const [actOpen, setActOpen] = useState(true);
   const active = selected ?? files.find((f) => f.name === "PRD.md")?.path ?? files[0]?.path ?? null;
 
   function pickDoc(path: string) {
@@ -171,6 +181,25 @@ export function StudioDocs() {
   const awaitingCount = phases.filter((p) => p.gateStatus === "AWAITING").length;
   const isTerminal = run ? run.status === "DONE" || run.status === "FAILED" || run.status === "CANCELLED" : false;
   const publishedBacklog = phases.some((p) => p.stepId === "handoff" && phaseState(p) === "approved");
+
+  // Actividad en vivo: el terminal del drawer al pie (divergencia #1). Se alimenta
+  // del run activo mientras GENERA; misma fuente WS que el board (useLiveEvents).
+  const isRunning = run?.status === "RUNNING";
+  const liveEvents = useLiveEvents(run?.id ?? null, !!isRunning);
+  const runningPhase = phases.find((p) => phaseState(p) === "running") ?? null;
+  const runningPhaseLabel = runningPhase
+    ? phaseLabel(t, runningPhase.stepId, runningPhase.name)
+    : t("studio.activity.working");
+  const lastMsg = liveEvents.length ? liveEvents[liveEvents.length - 1].message : "";
+
+  // Estado del doc para su badge en el riel (mockup: ✓ generado / spinner generando):
+  // deriva de la fase que lo produce. Sin fase (o no en curso) → ✓ (el archivo existe).
+  function docGenerating(name: string, path: string): boolean {
+    const step = stepForDoc(name, path);
+    if (!step) return false;
+    const ph = phases.find((p) => p.stepId === step);
+    return ph ? phaseState(ph) === "running" : false;
+  }
 
   // Al aparecer un run (o cambiar de run), aterrizás en su fase activa — una sola vez
   // por run.id, para no pisar la selección manual del usuario en cada refetch.
@@ -257,7 +286,7 @@ export function StudioDocs() {
   const viewPhase = selPhase != null ? phases[selPhase] : null;
 
   return (
-    <div className={`studio-shell${fullscreen ? " doc-full" : ""}`}>
+    <div className={`studio-shell${fullscreen ? " doc-full" : ""}${!railOpen ? " rail-collapsed" : ""}`}>
       {/* ── Topbar ── */}
       <header className="studio-topbar">
         <h2 className="studio-proj">{project.name}</h2>
@@ -279,6 +308,15 @@ export function StudioDocs() {
           </button>
         )}
         <div className="sp" />
+        {(phases.length > 0 || files.length > 0) && !fullscreen && (
+          <button
+            className={`btn ghost sm${!railOpen ? " on" : ""}`}
+            onClick={() => setRailOpen((v) => !v)}
+            title={t("studio.docs.railToggle")}
+          >
+            ⇤ {t("studio.docs.railToggle")}
+          </button>
+        )}
         {run && (
           <button
             className="btn ghost sm"
@@ -325,7 +363,8 @@ export function StudioDocs() {
                     onClick={() => pickPhase(i)}
                     title={phaseLabel(t, p.stepId, p.name)}
                   >
-                    <span className="v-g">{PHASE_ICON[st]}</span>
+                    {/* pending = círculo vacío (mockup); done ✓ / current ● lo pone el glyph */}
+                    <span className="v-g">{st === "pending" ? "" : PHASE_ICON[st]}</span>
                     <span className="v-lbl">{phaseLabel(t, p.stepId, p.name)}</span>
                     {i < phases.length - 1 && <span className="v-conn" />}
                   </button>
@@ -350,35 +389,45 @@ export function StudioDocs() {
               <nav>
                 {treeNodes.map((n) =>
                   n.doc ? (
-                    <button
-                      key={n.doc.path}
-                      className={`docs-tree-item${!showLog && selPhase == null && active === n.doc.path ? " on" : ""}`}
-                      onClick={() => pickDoc(n.doc!.path)}
-                    >
-                      <span className="docs-tree-ic">{meta(n.doc.name, n.doc.path).icon}</span>
-                      <span className="docs-tree-label">{metaTitle(n.doc.name, n.doc.path, t)}</span>
-                    </button>
+                    (() => {
+                      const gen = docGenerating(n.doc.name, n.doc.path);
+                      const sel = !showLog && selPhase == null && active === n.doc.path;
+                      return (
+                        <button
+                          key={n.doc.path}
+                          className={`rail-doc${gen ? " gen" : ""}${sel ? " on" : ""}`}
+                          onClick={() => pickDoc(n.doc!.path)}
+                        >
+                          <span className="pi">{meta(n.doc.name, n.doc.path).icon}</span>
+                          <span className="lbl">{n.doc.name}</span>
+                          <span className="badge">{gen ? <span className="spin" /> : "✓"}</span>
+                        </button>
+                      );
+                    })()
                   ) : (
                     <div key="mockups-group">
-                      <button className="docs-tree-item" onClick={() => setMockOpen((o) => !o)}>
-                        <span className="docs-tree-ic">{mockOpen ? "▾" : "▸"}</span>
-                        <span className="docs-tree-label">{t("studio.docs.title.mockups")}</span>
-                        <span className="docs-tree-badge">{n.mockups!.length}</span>
+                      <button className="rail-doc" onClick={() => setMockOpen((o) => !o)}>
+                        <span className="pi">{mockOpen ? "▾" : "▸"}</span>
+                        <span className="lbl">{t("studio.docs.title.mockups")}</span>
+                        <span className="rail-doc-count">{n.mockups!.length}</span>
                       </button>
                       {mockOpen &&
-                        n.mockups!.map((h) => (
-                          <button
-                            key={h.path}
-                            className={`docs-tree-item${!showLog && selPhase == null && active === h.path ? " on" : ""}`}
-                            style={{ paddingLeft: 32 }}
-                            onClick={() => pickDoc(h.path)}
-                          >
-                            <span className="docs-tree-ic">▨</span>
-                            <span className="docs-tree-label" style={{ fontSize: 12.5 }}>
-                              {h.name.replace(/\.html?$/i, "")}
-                            </span>
-                          </button>
-                        ))}
+                        n.mockups!.map((h) => {
+                          const gen = docGenerating(h.name, h.path);
+                          const sel = !showLog && selPhase == null && active === h.path;
+                          return (
+                            <button
+                              key={h.path}
+                              className={`rail-doc${gen ? " gen" : ""}${sel ? " on" : ""}`}
+                              style={{ paddingLeft: 26 }}
+                              onClick={() => pickDoc(h.path)}
+                            >
+                              <span className="pi">▨</span>
+                              <span className="lbl">{h.name}</span>
+                              <span className="badge">{gen ? <span className="spin" /> : "✓"}</span>
+                            </button>
+                          );
+                        })}
                     </div>
                   ),
                 )}
@@ -416,11 +465,22 @@ export function StudioDocs() {
             // Vista de DOCUMENTO: header + reader + refine.
             <>
               <div className="studio-doc-head">
-                <span className="eyebrow acc">{active ? metaTitle(activeFile?.name ?? active, active, t) : t("studio.docs.eyebrow")}</span>
+                <span className="eyebrow">{active ? metaTitle(activeFile?.name ?? active, active, t) : t("studio.docs.eyebrow")}</span>
+                {(() => {
+                  const hp = activeStep ? phases.find((p) => p.stepId === activeStep) : null;
+                  return hp && phaseState(hp) === "approved" ? (
+                    <span className="doc-okchip">{t("studio.docs.approved")}</span>
+                  ) : null;
+                })()}
+                {history && history.length > 0 && (
+                  <span className="doc-verchip">
+                    v{ver === null ? history.length : history.length - history.findIndex((h) => h.sha === ver)}
+                  </span>
+                )}
                 <div className="sp" />
                 {active && !isHtml(active) && (
                   <button className="btn ghost sm" onClick={() => setFullscreen((f) => !f)}>
-                    {fullscreen ? t("studio.docs.exitFull") : t("studio.docs.fullscreen")}
+                    ⛶ {fullscreen ? t("studio.docs.exitFull") : t("studio.docs.fullscreen")}
                   </button>
                 )}
               </div>
@@ -486,8 +546,10 @@ export function StudioDocs() {
                   )}
                 </div>
               </div>
-              {/* Refine unificado: mismo chat bajo cada doc. */}
-              {active && activeStep && refineRun && ver === null && !isHtml(active) && (
+              {/* Refine unificado: mismo chat bajo CADA doc — sin excepción (incluye
+                  Design System y los Mockups HTML; doRefine ya nombra la superficie
+                  cuando es un .html para que el agente refine ESA pantalla). */}
+              {active && activeStep && refineRun && ver === null && (
                 <div className="studio-refine">
                   <form
                     className="studio-refine-in"
@@ -511,6 +573,25 @@ export function StudioDocs() {
           )}
         </main>
       </div>
+
+      {/* ── Actividad en vivo: drawer colapsable al pie del workspace ── */}
+      {run && isRunning && (
+        <section className={`studio-activity${actOpen ? " on" : ""}`}>
+          <button className="studio-act-bar" onClick={() => setActOpen((v) => !v)} aria-expanded={actOpen}>
+            <span className="studio-act-live" />
+            <span className="studio-act-label">
+              <b>{runningPhaseLabel}</b> · {t("studio.activity.generating")}
+            </span>
+            <span className="studio-act-sub">{lastMsg || t("studio.activity.starting")}</span>
+            <span className="studio-act-chev">▾</span>
+          </button>
+          {actOpen && (
+            <div className="studio-act-term">
+              <LiveLog events={liveEvents} />
+            </div>
+          )}
+        </section>
+      )}
 
       <div className={`overlay ${crOpen ? "on" : ""}`} onClick={() => setCrOpen(false)} />
       {crOpen && projectId && project.repo && (

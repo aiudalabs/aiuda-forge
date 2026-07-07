@@ -22,13 +22,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // ActiveProjectProvider va dentro del gate (carga GET /projects solo autenticado)
   // y dentro de QueryClientProvider (layout) — useProjects necesita ambos. Scopea
   // toda la consola al proyecto activo (Wave 2).
+  // Studio es una vista full-workspace calcada del mockup aprobado, que NO lleva la
+  // topbar global (su propia studio-topbar es la única barra). En el resto de la
+  // consola la topbar global se mantiene.
+  const hideTopbar = pathname === "/studio";
+
   return (
     <AuthGate>
       <ActiveProjectProvider>
         <div className="app">
           <Sidebar />
           <main>
-            <Topbar />
+            {!hideTopbar && <Topbar />}
             {children}
           </main>
         </div>
