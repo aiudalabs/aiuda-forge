@@ -109,6 +109,10 @@ func manifestBase(name, baseURL, consoleURL string) map[string]any {
 			"checks":         "read",
 			"metadata":       "read",
 			"secrets":        "write", // CLAUDE_CODE_OAUTH_TOKEN por repo/org
+			// Copilot cloud agent (Agent tasks API): sin este permiso el token
+			// user-to-server recibe 403 al crear tasks y Copilot cae a claude_action.
+			// Clave exacta verificada contra GET /apps/{slug} tras habilitarlo en la App.
+			"copilot_agent_settings": "write",
 		},
 		"default_events": []string{
 			"issues", "pull_request", "workflow_run", "check_run", "issue_comment",
