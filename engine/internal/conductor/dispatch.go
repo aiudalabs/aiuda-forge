@@ -61,14 +61,25 @@ type Candidate struct {
 // DispatchResult reports one dispatch.
 type DispatchResult struct {
 	Dispatched []string `json:"dispatched"` // story ids now running
-	Channel    string   `json:"channel"`
+	Channel    string   `json:"channel"`    // el canal que se USÓ de verdad
 	Model      string   `json:"model"`
 	TaskURL    string   `json:"task_url,omitempty"`
+	// RequestedChannel + FallbackReason: cuando el canal pedido FALLÓ y se cayó al
+	// alterno, quedan seteados para que la UI AVISE (no cambiar de canal en silencio).
+	// Vacíos cuando se usó el canal pedido sin incidentes.
+	RequestedChannel string `json:"requested_channel,omitempty"`
+	FallbackReason   string `json:"fallback_reason,omitempty"`
 }
 
 // ErrNotCandidate: the requested unit isn't dispatchable anymore (raced by a
 // merge/sync or never was). The API maps it to 409 so the console reloads.
 var ErrNotCandidate = errors.New("not a dispatchable candidate")
+
+// ErrNoCapacity: el canal pedido no puede ejecutar AHORA por un motivo consultable
+// (p.ej. claude_action sin el secret CLAUDE_CODE_OAUTH_TOKEN → la sesión moriría al
+// arrancar). Se bloquea el dispatch con el motivo visible en vez de lanzar un run que
+// falla al final. La API lo mapea a 409 con la razón.
+var ErrNoCapacity = errors.New("channel has no capacity to dispatch")
 
 // GitHubDispatcher is the write surface (implemented by *github.Client).
 type GitHubDispatcher interface {
@@ -78,6 +89,9 @@ type GitHubDispatcher interface {
 	// que la señal de "corriendo" sea observable en GitHub desde el t0 (cierra el hueco
 	// dispatch→arranque del workflow que causaba el flap ready/running).
 	SetIssueRunning(ctx context.Context, repoURL string, numbers []int) error
+	// RepoSecretExists alimenta el pre-check de capacidad de claude_action (el secret
+	// CLAUDE_CODE_OAUTH_TOKEN debe existir o la sesión muere al arrancar).
+	RepoSecretExists(ctx context.Context, repoURL, name string) (bool, error)
 }
 
 // Dispatcher computes candidates and fires them.
@@ -270,17 +284,37 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 	fire := func(executor string) (string, error) {
 		return d.fireChannel(ctx, ghd, repoURL, executor, prompt, cand.Model, issues)
 	}
+
+	// Pre-check de CAPACIDAD del canal pedido (Bug B): si no puede ejecutar por un
+	// motivo consultable (claude_action sin el secret), NO se lanza — se devuelve el
+	// motivo visible en vez de arrancar un run que muere al final. copilot no tiene
+	// señal de cuota consultable → no se bloquea (ver capacityBlock).
+	if reason := d.capacityBlock(ctx, ghd, repoURL, cand.Executor); reason != "" {
+		return DispatchResult{}, fmt.Errorf("%w: %s", ErrNoCapacity, reason)
+	}
+
 	url, err := fire(cand.Executor)
 	if err != nil {
 		// Fallback automático de canal (F4 — la lección del outage de Copilot):
-		// si el canal primario falla al DESPACHAR, se intenta el alterno.
+		// si el canal primario falla al DESPACHAR, se intenta el alterno. YA NO ES
+		// SILENCIOSO: el resultado marca RequestedChannel + FallbackReason para que
+		// la UI avise que se cambió de canal (el usuario pidió X, se usó Y).
 		alt := otherExecutor(cand.Executor)
 		log.Printf("conductor: canal %s falló (%v) — fallback a %s", cand.Executor, err, alt)
+		primaryErr := err
+		// El alterno tampoco se lanza si no tiene capacidad (evita caer a claude_action
+		// sin secret cuando copilot falla): se propaga el motivo de ambos.
+		if reason := d.capacityBlock(ctx, ghd, repoURL, alt); reason != "" {
+			return DispatchResult{}, fmt.Errorf("%w: el canal %s falló (%v) y el alterno %s no tiene capacidad: %s",
+				ErrNoCapacity, cand.Executor, primaryErr, alt, reason)
+		}
 		url, err = fire(alt)
 		if err != nil {
 			return DispatchResult{}, fmt.Errorf("ambos canales fallaron (%s y %s): %w", cand.Executor, alt, err)
 		}
 		res.Channel = alt
+		res.RequestedChannel = cand.Executor
+		res.FallbackReason = fmt.Sprintf("el canal %s falló (%v); se usó %s", cand.Executor, primaryErr, alt)
 		if alt == "claude_action" {
 			res.Model = ""
 		}
@@ -298,6 +332,35 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 		}
 	}
 	return res, nil
+}
+
+// capacityBlock devuelve un MOTIVO VISIBLE si el canal no puede ejecutar ahora, o ""
+// si se puede despachar (pre-check de capacidad, análogo a gateOnDocs pero por canal).
+//
+//   - claude_action: exige el secret CLAUDE_CODE_OAUTH_TOKEN en el repo. Sin él la
+//     sesión de Claude muere al arrancar — es el "run arranca y falla al final" que
+//     queremos evitar. CONSULTABLE. (El LÍMITE de la suscripción/plan Claude NO es
+//     consultable: Anthropic no expone saldo por API; sólo se detecta en runtime como
+//     "session limit". No lo fingimos.)
+//   - copilot: la cuota (premium requests) NO es consultable de forma fiable — el
+//     endpoint de billing de la org da 0 seats aunque el Copilot PERSONAL del usuario
+//     funcione, y no hay endpoint de saldo por-usuario. La auth de creación la valida
+//     el propio dispatch (con la degradación al host). No fingimos un chequeo de saldo.
+//
+// Fail-OPEN ante un error de la API (un blip no debe bloquear el dispatch).
+func (d *Dispatcher) capacityBlock(ctx context.Context, gh GitHubDispatcher, repoURL, executor string) string {
+	if executor != "claude_action" {
+		return ""
+	}
+	has, err := gh.RepoSecretExists(ctx, repoURL, "CLAUDE_CODE_OAUTH_TOKEN")
+	if err != nil {
+		return "" // fail-open
+	}
+	if has {
+		return ""
+	}
+	return "falta el secret CLAUDE_CODE_OAUTH_TOKEN en el repo — la sesión de Claude " +
+		"moriría al arrancar. Añádelo en Settings → Canal Claude antes de despachar por este canal."
 }
 
 // fireChannel dispara el prompt por un canal concreto y devuelve la URL de la

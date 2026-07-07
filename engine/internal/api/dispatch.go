@@ -136,6 +136,12 @@ func (s *Server) dispatchWork(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusConflict, err.Error())
 			return
 		}
+		// Sin capacidad (p.ej. claude_action sin el secret): 409 con el motivo visible
+		// — la UI lo muestra y el usuario NO lanza un run que muere al final (Bug B).
+		if errors.Is(err, conductor.ErrNoCapacity) {
+			httpErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		httpErr(w, http.StatusBadGateway, "dispatch failed: "+err.Error())
 		return
 	}

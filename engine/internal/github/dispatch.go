@@ -19,16 +19,30 @@ const agentTasksAPIVersion = "2026-03-10"
 
 // CreateAgentTask starts a Copilot cloud-agent task on repoURL. model "" lets
 // GitHub pick (auto). Returns the task's html_url when the API exposes it.
-// CreateAgentTask con degradación: si el token del tenant recibe el 403 de la
-// Agent tasks API ("does not have read access" — permiso Copilot pendiente en
-// la App), se reintenta con la auth del host (dev). En cloud sin host auth el
-// error original se propaga.
+// CreateAgentTask con degradación: si el token user-to-server de la App recibe un
+// 403 de la Agent tasks API (el permiso Copilot está pendiente en el manifest), se
+// reintenta con la auth del host (dev/single-tenant). CLAVE: el 403 tiene un mensaje
+// DISTINTO por verbo — "does not have read access" en el GET de disponibilidad, pero
+// un simple "forbidden" en el POST de creación. La condición vieja sólo matcheaba el
+// primero, así que el POST de creación NUNCA degradaba → Copilot caía a claude_action
+// por el fallback silencioso del conductor. Ahora cualquier 403/forbidden del tenant
+// degrada. En cloud sin host auth el error se propaga igual (New() sin token falla).
 func (c *Client) CreateAgentTask(ctx context.Context, repoURL, prompt, model string) (string, error) {
 	url, err := c.createAgentTask(ctx, repoURL, prompt, model)
-	if err != nil && c.token != "" && strings.Contains(err.Error(), "does not have read access") {
+	if err != nil && c.token != "" && isForbidden(err) {
 		return New().createAgentTask(ctx, repoURL, prompt, model)
 	}
 	return url, err
+}
+
+// isForbidden reconoce un 403 de gh api sin importar el verbo/mensaje exacto
+// ("forbidden", "does not have read access", "HTTP 403").
+func isForbidden(err error) bool {
+	if err == nil {
+		return false
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "forbidden") || strings.Contains(low, "http 403")
 }
 
 func (c *Client) createAgentTask(ctx context.Context, repoURL, prompt, model string) (string, error) {

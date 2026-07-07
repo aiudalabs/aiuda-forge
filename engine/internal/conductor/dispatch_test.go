@@ -2,6 +2,7 @@ package conductor
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,14 +10,19 @@ import (
 )
 
 type fakeDispatchGH struct {
-	tasks     []string // prompts de agent tasks
-	models    []string
-	workflows []string // prompts vía workflow_dispatch
-	wfIssues  []string // input "issues" de cada workflow_dispatch
-	labeled   []int    // issues marcados agent:running al despachar (SetIssueRunning)
+	tasks      []string // prompts de agent tasks
+	models     []string
+	workflows  []string // prompts vía workflow_dispatch
+	wfIssues   []string // input "issues" de cada workflow_dispatch
+	labeled    []int    // issues marcados agent:running al despachar (SetIssueRunning)
+	copilotErr error    // si != nil, CreateAgentTask falla (para probar el fallback)
+	noSecret   bool     // si true, RepoSecretExists devuelve false (claude_action sin secret)
 }
 
 func (f *fakeDispatchGH) CreateAgentTask(_ context.Context, _, prompt, model string) (string, error) {
+	if f.copilotErr != nil {
+		return "", f.copilotErr
+	}
 	f.tasks = append(f.tasks, prompt)
 	f.models = append(f.models, model)
 	return "https://github.com/o/r/tasks/t1", nil
@@ -31,6 +37,10 @@ func (f *fakeDispatchGH) DispatchWorkflow(_ context.Context, _, _, _ string, inp
 func (f *fakeDispatchGH) SetIssueRunning(_ context.Context, _ string, numbers []int) error {
 	f.labeled = append(f.labeled, numbers...)
 	return nil
+}
+
+func (f *fakeDispatchGH) RepoSecretExists(_ context.Context, _, _ string) (bool, error) {
+	return !f.noSecret, nil
 }
 
 // seedDispatch: SP1 con dos stories listas; SP2 con una story gateada por SP1.
@@ -192,5 +202,74 @@ func TestDispatchCopilotDoesNotPreLabel(t *testing.T) {
 	}
 	if len(gh.labeled) != 0 {
 		t.Fatalf("labeled = %v, want [] (copilot no usa agent:running)", gh.labeled)
+	}
+}
+
+// TestDispatchFallbackIsNotSilent (Bug A): si el canal pedido (copilot) FALLA, el
+// dispatch cae al alterno PERO marca RequestedChannel + FallbackReason para que la UI
+// avise — no se cambia de canal en silencio.
+func TestDispatchFallbackIsNotSilent(t *testing.T) {
+	st := newStore(t)
+	seedDispatch(t, st)
+	gh := &fakeDispatchGH{copilotErr: errors.New("gh api create agent task: exit status 1: forbidden (HTTP 403)")}
+	d := &Dispatcher{Tickets: st, GH: gh}
+	pol := Policy{ExecutionUnit: "story", DispatchMode: "approve", Executor: "copilot"}
+
+	res, err := d.Dispatch(context.Background(), "p1", "https://github.com/o/r", pol, "S-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Channel != "claude_action" {
+		t.Fatalf("channel = %q, want claude_action (fallback)", res.Channel)
+	}
+	if res.RequestedChannel != "copilot" {
+		t.Fatalf("requested_channel = %q, want copilot", res.RequestedChannel)
+	}
+	if res.FallbackReason == "" || !strings.Contains(res.FallbackReason, "copilot") {
+		t.Fatalf("fallback_reason vacío o sin el canal pedido: %q", res.FallbackReason)
+	}
+}
+
+// TestDispatchClaudeActionBlockedWithoutSecret (Bug B): despachar claude_action sin el
+// secret CLAUDE_CODE_OAUTH_TOKEN se BLOQUEA con ErrNoCapacity — no se lanza un run que
+// muere al arrancar; el motivo es visible.
+func TestDispatchClaudeActionBlockedWithoutSecret(t *testing.T) {
+	st := newStore(t)
+	seedDispatch(t, st)
+	gh := &fakeDispatchGH{noSecret: true}
+	d := &Dispatcher{Tickets: st, GH: gh}
+	pol := Policy{ExecutionUnit: "story", DispatchMode: "approve", Executor: "claude_action"}
+
+	_, err := d.Dispatch(context.Background(), "p1", "https://github.com/o/r", pol, "S-01")
+	if !errors.Is(err, ErrNoCapacity) {
+		t.Fatalf("err = %v, want ErrNoCapacity", err)
+	}
+	if !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Fatalf("el motivo debería nombrar el secret: %v", err)
+	}
+	// No se despachó nada.
+	if len(gh.workflows) != 0 {
+		t.Fatalf("no debió dispararse el workflow: %d", len(gh.workflows))
+	}
+	if s, _ := st.GetStory("S-01"); s.Status == tickets.StatusRunning {
+		t.Fatalf("S-01 no debió quedar running (dispatch bloqueado)")
+	}
+}
+
+// TestDispatchClaudeActionOkWithSecret: con el secret presente, claude_action despacha
+// normal (el pre-check de capacidad no bloquea).
+func TestDispatchClaudeActionOkWithSecret(t *testing.T) {
+	st := newStore(t)
+	seedDispatch(t, st)
+	gh := &fakeDispatchGH{} // noSecret=false → secret existe
+	d := &Dispatcher{Tickets: st, GH: gh}
+	pol := Policy{ExecutionUnit: "story", DispatchMode: "approve", Executor: "claude_action"}
+
+	res, err := d.Dispatch(context.Background(), "p1", "https://github.com/o/r", pol, "S-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Channel != "claude_action" || len(gh.workflows) != 1 {
+		t.Fatalf("res=%+v workflows=%d", res, len(gh.workflows))
 	}
 }
