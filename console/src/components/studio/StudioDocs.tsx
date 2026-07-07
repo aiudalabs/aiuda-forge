@@ -30,8 +30,10 @@ import {
 } from "@/lib/hooks";
 import { IterationModal } from "./StudioModals";
 import { LiveLog } from "@/components/board/LiveLog";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useT } from "@/lib/i18n";
 import { PhasePanel } from "./PhasePanel";
+import { BacklogArtifact } from "./BacklogArtifact";
 import { phaseLabel, phaseState, PHASE_ICON, activePhaseIndex } from "./phaseHelpers";
 import { useRouter } from "next/navigation";
 
@@ -66,6 +68,11 @@ function metaTitle(name: string, path: string, t: (k: string) => string): string
 
 function isMarkdown(path: string) {
   return path.toLowerCase().endsWith(".md");
+}
+
+// El backlog se renderiza legible (épica + sprints + tarjetas de historia), no como YAML crudo.
+function isBacklog(path: string) {
+  return path.toLowerCase().endsWith("backlog.yaml");
 }
 
 // Which design phase (step) produces each doc — so the refine on a doc re-runs the
@@ -308,6 +315,9 @@ export function StudioDocs() {
           </button>
         )}
         <div className="sp" />
+        {/* Selector de idioma: en /studio ocultamos la topbar global, así que el
+            control de idioma (app-wide) vive aquí para no perderlo. */}
+        <LanguageSwitcher />
         {(phases.length > 0 || files.length > 0) && !fullscreen && (
           <button
             className={`btn ghost sm${!railOpen ? " on" : ""}`}
@@ -523,6 +533,8 @@ export function StudioDocs() {
                     </div>
                   ) : isHtml(active) ? (
                     <MockupFrame content={content ?? ""} t={t} />
+                  ) : isBacklog(active) ? (
+                    <BacklogArtifact raw={content ?? ""} />
                   ) : isMarkdown(active) ? (
                     <article className="docs-md artifact-md">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content ?? ""}</ReactMarkdown>
