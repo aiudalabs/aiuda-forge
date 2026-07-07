@@ -84,8 +84,16 @@ services:
           cpus: "3.0"
           memory: 4G
 
-  # ── Native orchestrator (polls control, fires factory runs) ─────────────────
+  # ── Native orchestrator (LEGACY factory scheduler) ──────────────────────────
+  # DESHABILITADO por default: el pivote GitHub-native lo reemplazó por el CONDUCTOR
+  # (internal/conductor, dentro de control). Correr ambos hace que peleen por las
+  # mismas stories: el conductor las pone `running` (assignee de Copilot / label
+  # agent:running de claude_action) y el native-scheduler las resetea a `backlog`
+  # (regla B4: "running with no run_id"), causando el flap ready/running en la UI.
+  # Detrás del profile `legacy` para no arrancar con un `docker compose up` normal;
+  # sólo `docker compose --profile legacy up` lo levanta (para pruebas del factory v1).
   orchestrator:
+    profiles: ["legacy"]
     build:
       context: ./engine
     restart: unless-stopped
