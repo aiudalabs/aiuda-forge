@@ -1,0 +1,26 @@
+# stack.verify.yaml — the per-stack verification CONTRACT (§1-bis). The generic
+# verify logic in _common/ reads this to know how to verify THIS stack; the kernel
+# only transports these strings, it never interprets them. A new stack = this file +
+# its rule tables, zero code.
+stack: react-supabase
+platform: [web]                       # web | android | ios | (list)
+image: fluxo-web                      # lane->image (§3); the kernel only transports the string
+
+# How to boot the REAL backend in CI (consumed by e2e-verify in a later sprint).
+backend:
+  boot: "supabase start"              # firebase emulators:exec | docker compose up | supabase start
+  ready_probe: "curl -sf http://127.0.0.1:54321/rest/v1/"
+  teardown: "supabase stop"
+
+# What the deterministic provisioning-lint applies (§2A). The rule table carries the
+# actual Supabase/Postgres vocabulary; this just points at it and names the modes.
+provisioning_lint:
+  rules: .fluxo/verify/provisioning.rules.yaml
+  authz_check: rls                    # firestore-rules | rls | api-authz-tests (used by check C, later)
+
+# How to exercise the flow (consumed by e2e-verify in a later sprint).
+e2e:
+  runner: playwright                  # playwright | flutter-integration | maestro
+  seed: .fluxo/verify/seed/           # fixtures = world state (NEVER what the app creates at runtime)
+  flows: .fluxo/verify/flows/         # flows derived from the ACs (per-story)
+  invariants: [session_persists, no_client_over_read]

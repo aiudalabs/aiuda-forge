@@ -1,0 +1,63 @@
+# provisioning.rules.yaml — react-supabase rule table for the generic
+# provisioning-lint engine (.fluxo/verify/provisioning_lint.py). ALL React/Supabase/
+# Postgres vocabulary lives HERE (never in the generic engine). Same engine, same
+# check shapes as flutter-firebase — only the values differ. This is the §1-bis test:
+# if both stacks come out of the same generic engine, the abstraction is real.
+#
+# Covers §2A checks A (indexes), B (roles used-vs-declared), D (scaffold, dependency
+# ->config, patterns). Check C (RLS vs client) needs the local backend → later sprint.
+stack: react-supabase
+
+# CHECK D — scaffold presence. If the app source exists, the Vite entry + config must
+# too (the web analogue of "platform folder missing").
+scaffold:
+  - when_present: "src/**/*.tsx"
+    require:
+      - "index.html"
+      - "vite.config.ts"
+    message: "React app present (src/) but the Vite entry (index.html) or config (vite.config.ts) is missing"
+
+# CHECK D — dependency -> required config. On the web the "platform config" is env
+# vars, not a manifest. @supabase/supabase-js needs its URL + anon key declared.
+dependency_config:
+  manifests:
+    - "package.json"
+  rules:
+    - package: "@supabase/supabase-js"
+      requires:
+        - key: "VITE_SUPABASE_URL"
+          in: ".env.example"
+        - key: "VITE_SUPABASE_ANON_KEY"
+          in: ".env.example"
+      message: "@supabase/supabase-js is used but VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not declared in .env.example"
+
+# CHECK D — required code pattern. If the Supabase client module exists, a
+# createClient() call must exist (the client is actually wired, not a dead stub).
+patterns:
+  - name: "supabase-client-created"
+    when_present: "src/lib/supabase.ts"
+    in: "src/**/*.ts"
+    pattern: "createClient\\s*(<|\\()"
+    min: 1
+    message: "src/lib/supabase.ts present but no createClient() call found — the Supabase client is not wired"
+
+# CHECK B — server privilege usage -> declared role. On Supabase the strong privilege
+# is service_role (bypasses RLS); using it must be declared in docs/provisioning.yaml
+# so the boundary is auditable. Used-but-undeclared = FAIL.
+role_map:
+  - api_pattern: "service_role|SERVICE_ROLE"
+    in: "supabase/functions/**/*.ts"
+    role: "service_role"
+    message: "An Edge Function uses the service_role key but 'service_role' is not declared in docs/provisioning.yaml roles"
+
+# CHECK A — index requirement. A client query that filters (.eq) AND orders (.order)
+# on the server needs a matching index; require one to be declared in a migration.
+# Same generic shape as Firestore — only the query dialect and index source change.
+indexes:
+  index_source: "supabase/migrations/**/*.sql"
+  declared_marker: "(?i)create\\s+index"
+  escape_hatch: "fluxo:no-index-needed"
+  needs_index:
+    - in: "src/**/*.ts"
+      pattern: "\\.eq\\([^)]*\\)[\\s\\S]{0,120}?\\.order\\("
+      message: "A Supabase query combines .eq() + .order() — ensure a matching index exists in a migration under supabase/migrations/"

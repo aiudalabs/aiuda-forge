@@ -1,0 +1,57 @@
+name: provisioning-lint
+
+# Deterministic boundary linter (§2A) — the cheapest floor of Fluxo's verification
+# layer. It runs the GENERIC, table-driven engine (.fluxo/verify/provisioning_lint.py)
+# against this repo's ACTUAL files, using the per-stack rule table
+# (.fluxo/verify/provisioning.rules.yaml) + the declared contract
+# (docs/provisioning.yaml). No backend, no emulator: it catches the class of bug that
+# unit tests mock and never see (a missing platform permission, an undeclared role, a
+# query that needs an index).
+#
+# This workflow is STACK-AGNOSTIC on purpose: it names no framework. Everything
+# stack-specific lives in the rule table (DATA). Do not add framework strings here.
+#
+# ROLLOUT: continue-on-error is true — the check RUNS and REPORTS (job summary +
+# annotations) but does NOT block the merge yet. It is promoted to a required,
+# blocking check per-project only after it has gone green on a real PR.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  provisioning-lint:
+    runs-on: ubuntu-latest
+    # Reports, does not block (S2). Flip to a required check once validated.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Guard: only run when this repo has been migrated to the verify layer (the
+      # rule table exists). Unmigrated/older repos skip cleanly — additive by design.
+      - name: Detect verify config
+        id: cfg
+        run: |
+          if [ -f .fluxo/verify/provisioning.rules.yaml ] && [ -f .fluxo/verify/provisioning_lint.py ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "provisioning-lint: no .fluxo/verify config in this repo — skipping."
+          fi
+
+      - name: Set up Python
+        if: steps.cfg.outputs.present == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install engine deps
+        if: steps.cfg.outputs.present == 'true'
+        run: python -m pip install --quiet pyyaml
+
+      - name: Run provisioning-lint
+        if: steps.cfg.outputs.present == 'true'
+        run: python .fluxo/verify/provisioning_lint.py --root .

@@ -1,0 +1,7 @@
+name: buggy_app
+dependencies:
+  flutter:
+    sdk: flutter
+  cloud_firestore: ^4.0.0
+  geolocator: ^11.0.0
+  google_maps_flutter: ^2.5.0

@@ -1,0 +1,12 @@
+version: 1
+stack: aiuda-flutter-firebase
+roles:
+  - identity: "functions-sa"
+    grants: ["roles/cloudfunctions.invoker"]
+indexes:
+  derive: true
+  required: []
+dependencies: []
+services: []
+authz: []
+bootstrap: []

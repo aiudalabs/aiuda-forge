@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+"""Fluxo provisioning-lint — generic, table-driven, stack-agnostic.
+
+The cheapest deterministic floor of Fluxo's verification layer (§2A of the E2E
+verification plan). It reads a per-stack rule table (provisioning.rules.yaml) plus
+the declared boundary contract (docs/provisioning.yaml, authored in design) and
+applies deterministic checks against the repo's ACTUAL files — catching the
+code<->system-boundary bugs that unit tests mock and never see.
+
+GOLDEN RULE (do not break): NO stack vocabulary lives in this file. Every
+stack-specific string — a manifest path, a dependency name, an API-usage marker, a
+role, an index file — comes from the rule table (DATA, per stack). Adding a stack is
+a rule-table change, never an edit here. If you find yourself typing a framework
+name in this file, it belongs in the rules instead.
+
+Checks implemented here (no backend needed):
+  A  indexes        — code queries that need a composite index vs the declared index source
+  B  roles          — server API usage vs roles declared in docs/provisioning.yaml
+  D  scaffold       — "if X exists then Y must exist" file-presence rules
+  D  dependency_cfg — dependency -> required platform config (manifest perm / env var / key)
+  D  patterns       — a required code pattern is present (min count)
+Check C (rules/RLS vs client) needs a real backend and lands in a later sprint.
+
+Exit code: 1 if any FAIL finding, else 0. Warnings never fail the run (a check that
+cannot be decided deterministically reports a visible WARNING, it never passes in
+silence and never blocks).
+"""
+import argparse
+import glob
+import os
+import re
+import sys
+
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("::error::PyYAML not installed. Run: pip install pyyaml\n")
+    sys.exit(2)
+
+FAIL = "FAIL"
+WARN = "WARN"
+
+
+class Finding:
+    def __init__(self, check, level, title, detail=""):
+        self.check = check
+        self.level = level
+        self.title = title
+        self.detail = detail
+
+
+# ── generic filesystem helpers (no stack knowledge) ────────────────────────────
+
+def _matches(root, pattern):
+    """Repo-relative paths of files matching a glob (recursive ** supported)."""
+    if not pattern:
+        return []
+    out = []
+    for p in glob.glob(os.path.join(root, pattern), recursive=True):
+        if os.path.isfile(p):
+            out.append(os.path.relpath(p, root))
+    return sorted(out)
+
+
+def _any_present(root, pattern):
+    return len(_matches(root, pattern)) > 0
+
+
+def _read(root, rel):
+    try:
+        with open(os.path.join(root, rel), "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _read_all(root, pattern):
+    """Concatenated text of every file matching the glob, plus the file list."""
+    files = _matches(root, pattern)
+    return "\n".join(_read(root, f) for f in files), files
+
+
+def _strip_escaped_lines(text, hatch):
+    """Drop lines carrying the escape-hatch marker so opted-out code is ignored."""
+    if not hatch:
+        return text
+    return "\n".join(l for l in text.splitlines() if hatch not in l)
+
+
+# ── check D: scaffold presence ────────────────────────────────────────────────
+
+def check_scaffold(root, rules):
+    findings = []
+    for rule in rules.get("scaffold", []) or []:
+        when = rule.get("when_present")
+        if when and not _any_present(root, when):
+            continue  # the trigger surface is not in this repo yet
+        for req in rule.get("require", []) or []:
+            if not _any_present(root, req):
+                findings.append(Finding(
+                    "scaffold", FAIL,
+                    rule.get("message", "required file missing"),
+                    "missing: {} (required when {} exists)".format(req, when or "always"),
+                ))
+    return findings
+
+
+# ── check D: dependency -> required config matrix ──────────────────────────────
+
+def _config_present(root, req):
+    """True when req['key'] appears in some file matching req['in']; if
+    req['non_empty'] is set, the key must also carry a real (non-blank,
+    non-placeholder) value."""
+    key = req.get("key", "")
+    text, files = _read_all(root, req.get("in", ""))
+    if not files or key not in text:
+        return False
+    if not req.get("non_empty"):
+        return True
+    # Look for a real value after the key: a quoted string, or a `:`/`=` token.
+    idx = 0
+    placeholder = re.compile(r"^(your[_-]?|placeholder|change[_-]?me|xxx+|todo)", re.I)
+    while True:
+        pos = text.find(key, idx)
+        if pos < 0:
+            return False
+        window = text[pos + len(key): pos + len(key) + 200]
+        m = re.search(r'"([^"]*)"', window) or re.search(r'[:=]\s*([^\s"\'#]+)', window)
+        val = (m.group(1).strip() if m else "")
+        if val and not placeholder.match(val):
+            return True
+        idx = pos + len(key)
+
+
+def check_dependency_config(root, rules):
+    findings = []
+    block = rules.get("dependency_config") or {}
+    manifests = block.get("manifests", []) or []
+    manifest_text = "\n".join(_read_all(root, m)[0] for m in manifests)
+    for rule in block.get("rules", []) or []:
+        pkg = rule.get("package", "")
+        if not pkg or not re.search(re.escape(pkg), manifest_text):
+            continue  # dependency not used by this repo
+        for req in rule.get("requires", []) or []:
+            if not _config_present(root, req):
+                findings.append(Finding(
+                    "dependency_config", FAIL,
+                    rule.get("message", "dependency requires missing config"),
+                    "'{}' requires '{}' in {}".format(pkg, req.get("key", ""), req.get("in", "")),
+                ))
+    return findings
+
+
+# ── check D: required code patterns ────────────────────────────────────────────
+
+def check_patterns(root, rules):
+    findings = []
+    for rule in rules.get("patterns", []) or []:
+        when = rule.get("when_present")
+        if when and not _any_present(root, when):
+            continue
+        text, files = _read_all(root, rule.get("in", ""))
+        if not files:
+            continue
+        count = len(re.findall(rule.get("pattern", ""), text))
+        if count < int(rule.get("min", 1)):
+            findings.append(Finding(
+                "patterns", FAIL,
+                rule.get("message", "required pattern not found"),
+                "pattern /{}/ found {}x in {} (need >= {})".format(
+                    rule.get("pattern", ""), count, rule.get("in", ""), rule.get("min", 1)),
+            ))
+    return findings
+
+
+# ── check B: server API usage vs declared roles ────────────────────────────────
+
+def _declared_grants(provisioning):
+    grants = set()
+    if not provisioning:
+        return grants
+    for r in provisioning.get("roles", []) or []:
+        for g in r.get("grants", []) or []:
+            grants.add(g)
+    return grants
+
+
+def check_roles(root, rules, provisioning, has_provisioning):
+    findings = []
+    role_rules = rules.get("role_map", []) or []
+    if not role_rules:
+        return findings
+    granted = _declared_grants(provisioning)
+    for rule in role_rules:
+        text, files = _read_all(root, rule.get("in", ""))
+        if not files:
+            continue
+        if not re.search(rule.get("api_pattern", ""), text):
+            continue  # this API is not used
+        role = rule.get("role", "")
+        if not has_provisioning:
+            findings.append(Finding(
+                "roles", WARN,
+                "declared boundary contract absent — cannot verify role '{}'".format(role),
+                "docs/provisioning.yaml not found; add it (design phase) to enforce roles",
+            ))
+            continue
+        if role not in granted:
+            findings.append(Finding(
+                "roles", FAIL,
+                rule.get("message", "used API's role is not declared"),
+                "used '{}' -> needs '{}', not declared in docs/provisioning.yaml".format(
+                    rule.get("api_pattern", ""), role),
+            ))
+    return findings
+
+
+# ── check A: composite index requirement vs declared index source ──────────────
+
+def check_indexes(root, rules):
+    findings = []
+    block = rules.get("indexes") or {}
+    needs = block.get("needs_index", []) or []
+    if not needs:
+        return findings
+    src_pattern = block.get("index_source", "")
+    declared_marker = block.get("declared_marker", "")
+    src_text, src_files = _read_all(root, src_pattern)
+    has_declarations = bool(declared_marker and re.search(declared_marker, src_text))
+    hatch = block.get("escape_hatch", "")
+    for rule in needs:
+        raw, files = _read_all(root, rule.get("in", ""))
+        if not files:
+            continue
+        text = _strip_escaped_lines(raw, hatch)
+        candidates = re.findall(rule.get("pattern", ""), text)
+        if not candidates:
+            continue
+        if not src_files or not has_declarations:
+            # queries that need an index exist, but NOTHING is declared -> real gap.
+            findings.append(Finding(
+                "indexes", FAIL,
+                rule.get("message", "query needs an index but none is declared"),
+                "{} candidate query(ies) in {} but no index declared in {}".format(
+                    len(candidates), rule.get("in", ""), src_pattern or "(unset)"),
+            ))
+        else:
+            # some indexes exist; we cannot prove THIS one matches -> visible warning.
+            findings.append(Finding(
+                "indexes", WARN,
+                "verify manually: query may need a composite index",
+                "{} candidate query(ies) in {}; confirm a matching index in {} "
+                "(or add '{}' to opt out)".format(
+                    len(candidates), rule.get("in", ""), src_pattern, hatch or "an escape-hatch comment"),
+            ))
+    return findings
+
+
+# ── driver ─────────────────────────────────────────────────────────────────────
+
+def run(root, rules_path, verify_path, provisioning_path):
+    rules = yaml.safe_load(open(rules_path).read()) if os.path.exists(rules_path) else None
+    if not rules:
+        # No rule table for this repo -> nothing to lint (older/unmigrated project).
+        print("provisioning-lint: no rule table at {} — skipping (nothing to check).".format(rules_path))
+        return [], "unknown"
+    verify = yaml.safe_load(open(verify_path).read()) if os.path.exists(verify_path) else {}
+    stack = (verify or {}).get("stack") or rules.get("stack") or "unknown"
+
+    has_provisioning = os.path.exists(provisioning_path)
+    provisioning = yaml.safe_load(open(provisioning_path).read()) if has_provisioning else None
+
+    findings = []
+    findings += check_scaffold(root, rules)
+    findings += check_dependency_config(root, rules)
+    findings += check_patterns(root, rules)
+    findings += check_roles(root, rules, provisioning, has_provisioning)
+    findings += check_indexes(root, rules)
+    return findings, stack
+
+
+def report(findings, stack):
+    fails = [f for f in findings if f.level == FAIL]
+    warns = [f for f in findings if f.level == WARN]
+
+    lines = ["# provisioning-lint — stack `{}`".format(stack), ""]
+    if not findings:
+        lines.append("No boundary issues found. ✅")
+    else:
+        lines.append("| level | check | issue | detail |")
+        lines.append("|---|---|---|---|")
+        for f in fails + warns:
+            lines.append("| {} | {} | {} | {} |".format(
+                "❌ FAIL" if f.level == FAIL else "⚠️ WARN", f.check, f.title, f.detail))
+    lines.append("")
+    lines.append("**{} FAIL, {} WARN**".format(len(fails), len(warns)))
+    md = "\n".join(lines)
+
+    print(md)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        try:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write(md + "\n")
+        except OSError:
+            pass
+    # GitHub annotations for quick triage in the PR checks tab.
+    for f in fails:
+        print("::error::[{}] {} — {}".format(f.check, f.title, f.detail))
+    for f in warns:
+        print("::warning::[{}] {} — {}".format(f.check, f.title, f.detail))
+    return 1 if fails else 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Fluxo provisioning-lint (generic, table-driven).")
+    ap.add_argument("--root", default=".", help="repo root to scan")
+    ap.add_argument("--rules", default=None, help="path to provisioning.rules.yaml")
+    ap.add_argument("--verify", default=None, help="path to stack.verify.yaml")
+    ap.add_argument("--provisioning", default=None, help="path to docs/provisioning.yaml")
+    a = ap.parse_args()
+    root = a.root
+    rules_path = a.rules or os.path.join(root, ".fluxo/verify/provisioning.rules.yaml")
+    verify_path = a.verify or os.path.join(root, ".fluxo/verify/stack.verify.yaml")
+    provisioning_path = a.provisioning or os.path.join(root, "docs/provisioning.yaml")
+    findings, stack = run(root, rules_path, verify_path, provisioning_path)
+    sys.exit(report(findings, stack))
+
+
+if __name__ == "__main__":
+    main()

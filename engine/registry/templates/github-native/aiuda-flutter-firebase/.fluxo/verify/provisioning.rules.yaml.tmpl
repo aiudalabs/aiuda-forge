@@ -1,0 +1,70 @@
+# provisioning.rules.yaml — flutter-firebase rule table for the generic
+# provisioning-lint engine (.fluxo/verify/provisioning_lint.py). ALL Firebase/Flutter
+# vocabulary lives HERE (never in the generic engine). The engine applies these rules
+# with stack-agnostic operations; changing/adding a rule is a DATA edit.
+#
+# Covers §2A checks A (indexes), B (roles used-vs-declared), D (scaffold, dependency
+# ->config, patterns). Check C (rules vs client) needs the emulator → later sprint.
+stack: aiuda-flutter-firebase
+
+# CHECK D — scaffold presence. If the trigger surface exists, the required files must
+# exist too. Catches bug #1 (Flutter app present, Android platform folder never
+# generated).
+scaffold:
+  - when_present: "lib/**/*.dart"
+    require:
+      - "android/app/src/main/AndroidManifest.xml"
+    message: "Flutter app present (lib/) but android/app/src/main/AndroidManifest.xml is missing — run `flutter create .` to scaffold the Android platform"
+
+# CHECK D — dependency -> required platform config. A declared dependency demands a
+# manifest permission / API key or it fails on a real device (not in unit tests).
+# Catches bugs #2 (location permission) and #4 (Maps API key).
+dependency_config:
+  manifests:
+    - "pubspec.yaml"
+  rules:
+    - package: "geolocator"
+      requires:
+        - key: "android.permission.ACCESS_FINE_LOCATION"
+          in: "android/app/src/main/AndroidManifest.xml"
+      message: "geolocator is used but ACCESS_FINE_LOCATION is not declared in AndroidManifest.xml"
+    - package: "google_maps_flutter"
+      requires:
+        - key: "com.google.android.geo.API_KEY"
+          in: "android/app/src/main/AndroidManifest.xml"
+          non_empty: true
+      message: "google_maps_flutter is used but the com.google.android.geo.API_KEY meta-data is missing or empty in AndroidManifest.xml"
+
+# CHECK D — required code pattern. Catches bug #5: Cloud Functions present but the
+# Admin SDK is never initialized (callables crash cold in production).
+patterns:
+  - name: "firebase-admin-initialized"
+    when_present: "functions/**/*.ts"
+    in: "functions/**/*.ts"
+    pattern: "initializeApp\\s*\\("
+    min: 1
+    message: "Cloud Functions present but admin.initializeApp() is never called — the Admin SDK is uninitialized"
+
+# CHECK B — server API usage -> required IAM role, cross-checked against the roles
+# declared in docs/provisioning.yaml. Used-but-undeclared = FAIL. Catches bug #6.
+role_map:
+  - api_pattern: "admin\\.firestore\\s*\\(|getFirestore\\s*\\(|\\.firestore\\s*\\(\\)"
+    in: "functions/**/*.ts"
+    role: "roles/datastore.user"
+    message: "Functions use Firestore but roles/datastore.user is not declared in docs/provisioning.yaml"
+  - api_pattern: "admin\\.messaging\\s*\\(|getMessaging\\s*\\("
+    in: "functions/**/*.ts"
+    role: "roles/firebasecloudmessaging.admin"
+    message: "Functions use Cloud Messaging but a messaging role is not declared in docs/provisioning.yaml"
+
+# CHECK A — composite index requirement. A Firestore query that filters on one field
+# and orders by another needs a composite index. Detect the candidates statically and
+# require an index to be declared in firestore.indexes.json. Catches bug #8.
+indexes:
+  index_source: "firestore.indexes.json"
+  declared_marker: "collectionGroup"      # each composite index entry carries this key
+  escape_hatch: "fluxo:no-index-needed"
+  needs_index:
+    - in: "lib/**/*.dart"
+      pattern: "\\.where\\([^)]*\\)[\\s\\S]{0,120}?\\.orderBy\\("
+      message: "A Firestore query combines .where() + .orderBy() — it needs a composite index in firestore.indexes.json"
