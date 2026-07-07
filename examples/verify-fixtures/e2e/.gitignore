@@ -1,0 +1,16 @@
+# The harness assembles scaffold-equivalent repos in a temp workdir; these should never
+# land in the committed fixtures (which carry only app artifacts). Ignore build/install
+# output in case anyone runs a fixture in place.
+node_modules/
+.fluxo/verify/e2e_verify.py
+.fluxo/verify/stack.verify.yaml
+**/e2e/lib.mjs
+**/e2e/seed.mjs
+**/e2e/package.json
+**/e2e/flows/
+**/e2e/invariants/
+**/e2e/seed/
+setup.log
+firestore-debug.log
+firebase-debug.log
+.supabase/

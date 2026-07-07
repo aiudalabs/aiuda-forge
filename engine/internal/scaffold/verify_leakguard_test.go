@@ -51,10 +51,17 @@ func TestBothStacksRenderVerifyLayer(t *testing.T) {
 	want := []string{
 		".fluxo/verify/provisioning_lint.py",   // generic engine (from _common, S2)
 		".github/workflows/provisioning-lint.yml", // generic workflow (from _common, S2)
-		".fluxo/verify/e2e_verify.py",          // generic orchestrator (from _common, S3)
-		".github/workflows/e2e-verify.yml",     // generic workflow (from _common, S3)
+		".fluxo/verify/e2e_verify.py",          // generic orchestrator (from _common, S3 pt.1)
+		".github/workflows/e2e-verify.yml",     // generic workflow (from _common, S3 pt.1)
 		".fluxo/verify/provisioning.rules.yaml", // stack DATA
 		".fluxo/verify/stack.verify.yaml",       // stack contract
+		// S3 pt.2 — the per-stack e2e assets the generic orchestrator runs (stack DATA):
+		// a seed loader, one AC-derived flow, and one checker per universal invariant.
+		// Both reference stacks must carry the full set (proof the surface is symmetric).
+		".fluxo/verify/e2e/seed.mjs",
+		".fluxo/verify/e2e/flows/booking_flow.mjs",
+		".fluxo/verify/e2e/invariants/session_persists.mjs",
+		".fluxo/verify/e2e/invariants/no_client_over_read.mjs",
 	}
 	for _, stack := range stacks {
 		files, _, err := Render(realTemplates, stack, Vars{"project_name": "Acme", "language": "es"})
@@ -71,6 +78,9 @@ func TestBothStacksRenderVerifyLayer(t *testing.T) {
 		// _common, not the stack) — the surest proof it is not per-stack forked.
 		if got := byPath[".fluxo/verify/provisioning_lint.py"]; !strings.Contains(got, "GOLDEN RULE") {
 			t.Errorf("stack %s: engine content missing/altered", stack)
+		}
+		if got := byPath[".fluxo/verify/e2e_verify.py"]; !strings.Contains(got, "GOLDEN RULE") {
+			t.Errorf("stack %s: e2e orchestrator content missing/altered", stack)
 		}
 	}
 }

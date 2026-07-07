@@ -1,0 +1,42 @@
+// session_persists — UNIVERSAL invariant (§2B), one checker per stack (stack DATA).
+//
+// Truth every app must hold: a logged-in user stays logged in across an app restart
+// (the live-session bug from the E2E session was "the app always asks for login").
+// Two parts, both required:
+//   1. CONFIG: the app must persist the session (supabase-js `persistSession: true`).
+//      persistSession:false / NONE = login is lost on reload = the bug.
+//   2. BEHAVIOR: the refresh token GoTrue issued must still mint a fresh access token
+//      after a simulated "reload" (a refresh round-trip against GoTrue).
+//
+// The app declares its choice in app_config.json at the repo root, mirroring the
+// createClient({ auth: { persistSession } }) the app ships with; the checker reads the
+// real shipped value rather than assuming it.
+import { readFileSync } from 'node:fs';
+import { createClient } from '@supabase/supabase-js';
+import { supabaseEnv, freshEmail } from '../lib.mjs';
+
+let cfg;
+try { cfg = JSON.parse(readFileSync('app_config.json', 'utf8')); }
+catch { cfg = { authPersistence: 'LOCAL' }; }
+
+if (cfg.authPersistence !== 'LOCAL') {
+  console.log(`  FAIL session_persists VIOLATED: app persistence is '${cfg.authPersistence}' — login is not retained across restart`);
+  process.exit(1);
+}
+
+const { url, anon } = supabaseEnv();
+const sb = createClient(url, anon, { auth: { persistSession: false } });
+const { data, error } = await sb.auth.signUp({ email: freshEmail('session'), password: 'passw0rd!' });
+if (error || !data.session) {
+  console.log(`  FAIL session_persists: could not establish a session — ${error?.message || 'no session'}`);
+  process.exit(1);
+}
+
+// Simulate a reload: exchange the persisted refresh token for a fresh access token.
+const { data: refreshed, error: rErr } = await sb.auth.refreshSession({ refresh_token: data.session.refresh_token });
+if (!rErr && refreshed.session?.access_token) {
+  console.log('  OK   session_persists holds (refresh token honored after restart)');
+  process.exit(0);
+}
+console.log(`  FAIL session_persists VIOLATED: refresh token not honored — ${rErr?.message || 'no token'}`);
+process.exit(1);

@@ -1,0 +1,37 @@
+// Shared helpers for the react-supabase e2e flow (stack DATA).
+//
+// Talks to the app's REAL backend — the local Supabase stack booted by the orchestrator
+// (`supabase start`: Postgres + GoTrue + PostgREST with RLS enforced). We use the same
+// @supabase/supabase-js the React app uses, as an END-USER client (anon key + login), so
+// the code<->backend boundary bugs (RLS denies, missing signup row, lost session) surface
+// as behavior. The service_role key (RLS bypass) is used ONLY for world-state seeding.
+//
+// The local anon/service keys are not secrets and are not hardcoded here: we read them
+// from `supabase status -o env` at runtime, so this file carries no credential.
+import { execSync } from 'node:child_process';
+
+let cached = null;
+export function supabaseEnv() {
+  if (cached) return cached;
+  // Prefer env (CI may export these); fall back to the CLI for local runs.
+  let url = process.env.SUPABASE_URL || process.env.API_URL || '';
+  let anon = process.env.SUPABASE_ANON_KEY || process.env.ANON_KEY || '';
+  let service = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SERVICE_ROLE_KEY || '';
+  if (!url || !anon || !service) {
+    const out = execSync('supabase status -o env', { encoding: 'utf8' });
+    const get = (k) => (out.match(new RegExp(`^${k}="?([^"\\n]+)"?`, 'm')) || [])[1] || '';
+    url = url || get('API_URL') || 'http://127.0.0.1:54321';
+    anon = anon || get('ANON_KEY');
+    service = service || get('SERVICE_ROLE_KEY');
+  }
+  cached = { url, anon, service };
+  return cached;
+}
+
+// A fresh end-user email. Signup is BEHAVIOR (never seeded) so bug #7 — the profile row
+// the app creates on signup — is exercised, not hidden.
+export function freshEmail(tag = 'flow') {
+  return `u_${tag}_${process.pid}_${Math.floor(Date.now() / 1000)}@example.com`;
+}
+
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

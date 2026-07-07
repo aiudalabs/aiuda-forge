@@ -1,0 +1,11 @@
+{
+  "emulators": {
+    "firestore": { "port": 8085 },
+    "auth": { "port": 9099 },
+    "functions": { "port": 5001 },
+    "hub": { "port": 4400 },
+    "singleProjectMode": true
+  },
+  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
+  "functions": { "source": "functions" }
+}

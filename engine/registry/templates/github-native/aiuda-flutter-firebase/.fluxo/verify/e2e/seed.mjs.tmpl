@@ -1,0 +1,46 @@
+// seed.mjs — load WORLD STATE into the booted backend via the Admin SDK (stack DATA).
+//
+// GOLDEN RULE OF SEEDING (§2B): seed only what preexists the user — the catalog and
+// availability the app reads but never creates (providers, slots). NEVER seed users/{uid}
+// or anything the signup/booking flow creates at runtime; seeding those hides exactly the
+// class of bug e2e-verify hunts (bug #7: the profile the app must create on signup).
+//
+// Fixtures live as JSON under ./seed/ so the world state is DATA, not code. Each file is
+// `collection.docId.json` and its body is the document.
+import { initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { PROJECT } from './lib.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const seedDir = join(here, 'seed');
+
+initializeApp({ projectId: PROJECT });
+const db = getFirestore();
+
+if (!existsSync(seedDir)) {
+  console.error(`seed: no ${seedDir} — nothing to seed (world state is optional).`);
+  process.exit(0);
+}
+
+const files = readdirSync(seedDir).filter((f) => f.endsWith('.json'));
+let n = 0;
+for (const f of files) {
+  const [collection, docId] = f.replace(/\.json$/, '').split('.');
+  if (!collection || !docId) {
+    console.error(`seed: skip ${f} — expected <collection>.<docId>.json`);
+    continue;
+  }
+  // Guard the golden rule mechanically: refuse to seed a users doc.
+  if (collection === 'users') {
+    console.error(`::error::seed: refusing to seed users/${docId} — the signup flow must create it (bug #7 guard)`);
+    process.exit(1);
+  }
+  const body = JSON.parse(readFileSync(join(seedDir, f), 'utf8'));
+  await db.doc(`${collection}/${docId}`).set(body);
+  n++;
+}
+console.log(`seed: loaded ${n} world-state doc(s) from ${files.length} fixture(s).`);
+process.exit(0);

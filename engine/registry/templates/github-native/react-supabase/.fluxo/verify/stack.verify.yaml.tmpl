@@ -6,10 +6,13 @@ stack: react-supabase
 platform: [web]                       # web | android | ios | (list)
 image: fluxo-web                      # lane->image (§3); the kernel only transports the string
 
-# How to boot the REAL backend in CI (consumed by e2e-verify in a later sprint).
+# How to boot the REAL backend in CI (consumed by e2e-verify, §2B). `supabase start`
+# brings up Postgres + GoTrue (auth) + PostgREST + Storage as local Docker containers and
+# returns; the orchestrator waits for ready_probe, runs the flow, then `supabase stop`.
 backend:
-  boot: "supabase start"              # firebase emulators:exec | docker compose up | supabase start
-  ready_probe: "curl -sf http://127.0.0.1:54321/rest/v1/"
+  boot: "supabase start"
+  ready_probe: "curl -sf http://127.0.0.1:54321/auth/v1/health >/dev/null"  # GoTrue health, 200 when ready
+  persistent: true                    # `supabase start` returns after the containers are up
   teardown: "supabase stop"
 
 # What the deterministic provisioning-lint applies (§2A). The rule table carries the
@@ -18,9 +21,23 @@ provisioning_lint:
   rules: .fluxo/verify/provisioning.rules.yaml
   authz_check: rls                    # firestore-rules | rls | api-authz-tests (used by check C, later)
 
-# How to exercise the flow (consumed by e2e-verify in a later sprint).
+# How to exercise the flow against the booted backend (§2B). Every command below is
+# stack DATA under .fluxo/verify/e2e/ — the generic orchestrator only runs them.
 e2e:
-  runner: playwright                  # playwright | flutter-integration | maestro
-  seed: .fluxo/verify/seed/           # fixtures = world state (NEVER what the app creates at runtime)
-  flows: .fluxo/verify/flows/         # flows derived from the ACs (per-story)
+  runner: playwright                  # real browser (Chromium) running @supabase/supabase-js as the app does
+  # setup_cmd installs the verify toolchain. In CI the baked image (fluxo-web, §3)
+  # preinstalls Playwright + Chromium; this covers the node deps the flow/checkers import.
+  setup_cmd: "cd .fluxo/verify/e2e && npm install --no-audit --no-fund && npx --yes playwright install chromium"
+  # seed = WORLD STATE ONLY (providers, availability), via the service_role key which
+  # bypasses RLS. NEVER seed profiles/users — the signup flow creates those (bug #7 guard).
+  seed_cmd: "node .fluxo/verify/e2e/seed.mjs"
+  seed: .fluxo/verify/e2e/seed/
+  # run = the flow derived from an acceptance criterion, driven in a REAL browser so the
+  # client talks to PostgREST/GoTrue with RLS enforced exactly as the shipped app does.
+  run_cmd: "node .fluxo/verify/e2e/flows/booking_flow.mjs"
+  flows: .fluxo/verify/e2e/flows/
+  # invariants = universal truths every app must hold; one checker script per invariant.
   invariants: [session_persists, no_client_over_read]
+  invariant_cmds:
+    session_persists: "node .fluxo/verify/e2e/invariants/session_persists.mjs"
+    no_client_over_read: "node .fluxo/verify/e2e/invariants/no_client_over_read.mjs"

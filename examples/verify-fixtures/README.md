@@ -33,6 +33,14 @@ declared index matches it — so when an index IS declared it emits a visible WA
 plan's false-positive rule (§2A). The exact `FAILED_PRECONDITION` proof comes from the
 emulator in `e2e-verify` (S3).
 
+## Behavior layer (S3): `e2e/`
+
+This directory covers the **static** `provisioning-lint` engine. Its sibling `e2e/` covers
+the **behavioral** `e2e-verify` orchestrator, which boots each stack's **real backend**
+(Firebase Emulator Suite / `supabase start`) and exercises the app's flow as a real client —
+catching #3, #5, #7, session-persistence and over-read as behavior. See
+[`e2e/README.md`](e2e/README.md) and run `e2e/run.sh`.
+
 ## Note
 
 These are throwaway trees used only by `run.sh`; they are not scaffolded projects and

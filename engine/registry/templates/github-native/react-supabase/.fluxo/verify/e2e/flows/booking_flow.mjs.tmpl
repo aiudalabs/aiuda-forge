@@ -1,0 +1,71 @@
+// booking_flow.mjs — ONE e2e flow derived from an acceptance criterion (stack DATA).
+//
+// AC (example): "A signed-up user can see their own upcoming bookings."
+// Runs in a REAL browser (Chromium via Playwright) executing @supabase/supabase-js exactly
+// as the shipped React app does — the session lives in browser storage, requests hit GoTrue
+// and PostgREST with RLS enforced. The code<->backend boundary bugs surface as behavior:
+//   #7  the profile row is created by SIGNUP (a Postgres trigger on auth.users), not seeded.
+//   #3  an RLS SELECT policy lets the OWNER read their own bookings (no policy = the bug:
+//       the owner sees zero of their own rows).
+//
+// Exit 1 on any failure — the generic orchestrator turns that into a red check.
+import { chromium } from 'playwright';
+import { createRequire } from 'node:module';
+import { supabaseEnv, freshEmail, sleep } from '../lib.mjs';
+
+const require = createRequire(import.meta.url);
+const supabaseUmd = require.resolve('@supabase/supabase-js/dist/umd/supabase.js');
+const { url, anon } = supabaseEnv();
+const email = freshEmail('flow');
+
+let failed = false;
+const ok = (m) => console.log('  OK  ', m);
+const bad = (m) => { console.log('  FAIL', m); failed = true; };
+
+const browser = await chromium.launch();
+const page = await browser.newPage();
+await page.setContent('<!doctype html><title>fluxo-e2e</title>');
+await page.addScriptTag({ path: supabaseUmd });
+
+// The whole flow runs INSIDE the browser page, as the real client.
+const res = await page.evaluate(async ({ url, anon, email }) => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const sb = window.supabase.createClient(url, anon, { auth: { persistSession: true } });
+  const out = { errors: [] };
+
+  const { data: signUp, error: suErr } = await sb.auth.signUp({ email, password: 'passw0rd!' });
+  if (suErr) { out.errors.push('signup: ' + suErr.message); return out; }
+  const uid = signUp.user?.id;
+  out.uid = uid;
+
+  // #7 — the profile row must exist because signup CREATED it (trigger on auth.users).
+  let profile = null;
+  for (let i = 0; i < 10 && !profile; i++) {
+    const { data } = await sb.from('profiles').select('id').eq('id', uid).maybeSingle();
+    if (data) profile = data; else await sleep(300);
+  }
+  out.profileFound = !!profile;
+
+  // #3 — the owner books, then reads their own bookings (the AC).
+  const { error: insErr } = await sb.from('bookings')
+    .insert({ owner_id: uid, provider_id: '11111111-1111-1111-1111-111111111111', date: '2026-08-01' });
+  if (insErr) out.errors.push('book insert: ' + insErr.message);
+  const { data: mine, error: selErr } = await sb.from('bookings').select('id').eq('owner_id', uid);
+  if (selErr) out.errors.push('book select: ' + selErr.message);
+  out.ownBookings = (mine || []).length;
+  return out;
+}, { url, anon, email });
+
+await browser.close();
+
+res.profileFound
+  ? ok('#7 profiles row created by signup behavior (trigger)')
+  : bad('#7 profiles row MISSING after signup — nothing created it at runtime');
+
+if (res.ownBookings >= 1) ok(`#3 owner read own bookings (${res.ownBookings})`);
+else bad(`#3 owner CANNOT read own bookings (got ${res.ownBookings}) — RLS SELECT policy missing/denying`);
+
+for (const e of res.errors || []) console.log('  note ', e);
+
+console.log(failed ? '\nFLOW: FAIL' : '\nFLOW: PASS');
+process.exit(failed ? 1 : 0);

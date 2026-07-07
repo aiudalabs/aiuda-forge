@@ -1,0 +1,14 @@
+version: 1
+stack: react-supabase
+roles:
+  - identity: "authenticated"
+    grants: ["insert:own"]
+  - identity: "service_role"
+    grants: ["all"]
+indexes:
+  derive: true
+  required: []
+dependencies: []
+services: []
+authz: []
+bootstrap: []

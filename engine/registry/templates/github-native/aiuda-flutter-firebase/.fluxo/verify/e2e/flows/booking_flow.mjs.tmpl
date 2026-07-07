@@ -1,0 +1,65 @@
+// booking_flow.mjs — ONE e2e flow derived from an acceptance criterion (stack DATA).
+//
+// AC (example): "A signed-up user can see their own upcoming bookings."
+// The dev authors one such flow per relevant story, in the SAME diff that is reviewed.
+// It drives the REAL backend as an authenticated end-user client (never admin), so the
+// backend-boundary bugs surface as behavior:
+//   #7  the users/{uid} profile is created by SIGNUP (server onCreate trigger), not seeded.
+//   #5  the server callable runs on cold start (Admin SDK actually initialized).
+//   #3  security rules let the OWNER read their own bookings (deny here = the bug).
+//
+// Exit 1 on any failure — the generic orchestrator turns that into a red check.
+import { doc, getDoc, getDocs, setDoc, collection, query, where, orderBy } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { clientApp, signUpFreshUser, sleep } from '../lib.mjs';
+
+let failed = false;
+const ok = (m) => console.log('  OK  ', m);
+const bad = (m) => { console.log('  FAIL', m); failed = true; };
+
+const { auth, db, fns } = clientApp('flow');
+
+// The orchestrator's ready_probe waits for auth+firestore, but the FUNCTIONS emulator
+// loads its triggers a moment later. Signing up before the onCreate trigger is registered
+// would miss it and mis-report #7. So first confirm functions is loaded by calling the
+// callable: a real response (success OR a function-level error like the #5 cold-start
+// crash) proves the code is loaded; only transport errors mean "not up yet" — retry those.
+// #5 — the callable exercises the server function cold start; its outcome is recorded here.
+let called = false, callErr = '';
+for (let i = 0; i < 25 && !called; i++) {
+  try { await httpsCallable(fns, 'listBookings')(); called = true; ok('#5 callable listBookings ran (server initialized)'); }
+  catch (e) {
+    const code = e.code || '';
+    if (code === 'functions/internal' || /INTERNAL/i.test(e.message || '')) { // loaded but threw = the #5 bug
+      callErr = e.message; break;
+    }
+    await sleep(1000); // functions/not-found | functions/unavailable | fetch failed = not loaded yet
+  }
+}
+if (!called) bad(`#5 callable listBookings failed on cold start: ${callErr || 'never responded'}`);
+
+// Functions is now loaded, so signup will fire the onCreate trigger deterministically.
+const user = await signUpFreshUser(auth, 'flow');
+const uid = user.uid;
+
+// #7 — the profile must appear because signup CREATED it (async server trigger). Poll.
+let profile = false;
+for (let i = 0; i < 16 && !profile; i++) {
+  if ((await getDoc(doc(db, 'users', uid))).exists()) profile = true; else await sleep(500);
+}
+profile
+  ? ok('#7 users/{uid} created by signup behavior')
+  : bad('#7 users/{uid} MISSING after signup — nothing created the profile at runtime');
+
+// #3 — the owner books, then reads their own bookings (the AC). A deny here is the bug.
+try {
+  await setDoc(doc(db, `bookings/${uid}_b1`), { userId: uid, providerId: 'prov1', date: '2026-08-01' });
+} catch (e) { bad(`booking write denied: ${e.code || e.message}`); }
+try {
+  const snap = await getDocs(
+    query(collection(db, 'bookings'), where('userId', '==', uid), orderBy('date', 'desc')));
+  ok(`#3 owner read own bookings (${snap.size})`);
+} catch (e) { bad(`#3 owner CANNOT read own bookings: ${e.code || e.message}`); }
+
+console.log(failed ? '\nFLOW: FAIL' : '\nFLOW: PASS');
+process.exit(failed ? 1 : 0);

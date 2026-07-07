@@ -1,0 +1,35 @@
+// no_client_over_read — UNIVERSAL invariant (§2B), one checker per stack (stack DATA).
+//
+// Truth every app must hold: an authenticated client reads ONLY what it is entitled to.
+// The service_role key bypasses RLS, so this MUST be checked with the ANON/auth client.
+// Bug shape it catches: an over-permissive RLS policy (`using (true)`) that exposes a
+// private/admin table to any signed-in user — the mirror image of the #3 RLS deny.
+//
+// Method: a seeded admin-only table (admin_secrets) holds a row (planted via service_role
+// in this checker). A normal signed-in user then selects it. Zero rows = RLS denied = holds.
+// Any row returned = the policy allowed the read = VIOLATION.
+import { createClient } from '@supabase/supabase-js';
+import { supabaseEnv, freshEmail } from '../lib.mjs';
+
+const { url, anon, service } = supabaseEnv();
+
+// Plant a secret with the service_role (RLS bypassed) so there IS something to over-read.
+const admin = createClient(url, service, { auth: { persistSession: false } });
+await admin.from('admin_secrets').upsert({ id: 1, secret: 'top-secret' });
+
+// A normal end-user tries to read it.
+const user = createClient(url, anon, { auth: { persistSession: false } });
+await user.auth.signUp({ email: freshEmail('overread'), password: 'passw0rd!' });
+const { data, error } = await user.from('admin_secrets').select('secret');
+
+if (error) {
+  // A hard RLS/permission error also means the read was refused — invariant holds.
+  console.log(`  OK   no_client_over_read holds (${error.message})`);
+  process.exit(0);
+}
+if ((data || []).length === 0) {
+  console.log('  OK   no_client_over_read holds (RLS returned zero rows to the client)');
+  process.exit(0);
+}
+console.log(`  FAIL no_client_over_read VIOLATED: client read admin_secrets (${data.length} row[s])`);
+process.exit(1);

@@ -1,0 +1,40 @@
+// seed.mjs — load WORLD STATE into the booted backend via the service_role key (stack DATA).
+//
+// GOLDEN RULE OF SEEDING (§2B): seed only what preexists the user — the catalog/availability
+// the app reads but never creates (providers, slots). NEVER seed profiles/users or anything
+// the signup flow creates at runtime; seeding those hides exactly the class of bug e2e-verify
+// hunts (bug #7: the profile row the app must create on signup). The service_role key bypasses
+// RLS, which is why seeding a users/profile row here would be a silent lie — so we refuse to.
+//
+// Fixtures live as JSON under ./seed/, one file per table: `<table>.json` holds an array of rows.
+import { createClient } from '@supabase/supabase-js';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { supabaseEnv } from './lib.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const seedDir = join(here, 'seed');
+const { url, service } = supabaseEnv();
+const admin = createClient(url, service, { auth: { persistSession: false } });
+
+if (!existsSync(seedDir)) {
+  console.error(`seed: no ${seedDir} — nothing to seed (world state is optional).`);
+  process.exit(0);
+}
+
+const FORBIDDEN = new Set(['users', 'profiles', 'auth.users']);
+let n = 0;
+for (const f of readdirSync(seedDir).filter((f) => f.endsWith('.json'))) {
+  const table = f.replace(/\.json$/, '');
+  if (FORBIDDEN.has(table)) {
+    console.error(`::error::seed: refusing to seed ${table} — the signup flow must create it (bug #7 guard)`);
+    process.exit(1);
+  }
+  const rows = JSON.parse(readFileSync(join(seedDir, f), 'utf8'));
+  const { error } = await admin.from(table).upsert(rows);
+  if (error) { console.error(`::error::seed: upsert into ${table} failed: ${error.message}`); process.exit(1); }
+  n += Array.isArray(rows) ? rows.length : 1;
+}
+console.log(`seed: loaded ${n} world-state row(s).`);
+process.exit(0);

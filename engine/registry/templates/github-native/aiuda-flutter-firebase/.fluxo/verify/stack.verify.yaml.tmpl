@@ -6,11 +6,17 @@ stack: aiuda-flutter-firebase
 platform: [android, ios]              # web | android | ios | (list)
 image: fluxo-flutter                  # lane->image (§3); the kernel only transports the string
 
-# How to boot the REAL backend in CI (consumed by e2e-verify in a later sprint).
+# How to boot the REAL backend in CI (consumed by e2e-verify, §2B). The orchestrator
+# starts this detached, waits for ready_probe, runs seed/flow/invariants, then tears down.
 backend:
-  boot: "firebase emulators:exec"     # firebase emulators:exec | docker compose up | supabase start
-  ready_probe: "curl -sf http://127.0.0.1:8080/"
-  teardown: ""                        # emulators:exec tears itself down
+  boot: "firebase emulators:start --only firestore,auth,functions --project demo-fluxo"
+  # Wait for the emulators the flow needs to actually LISTEN — the hub (4400) comes up
+  # before auth/firestore, so probing it lets the flow run too early. Auth + Firestore
+  # both answer 200 on / once ready; the functions emulator loads a moment later and the
+  # flow absorbs that with a short callable retry.
+  ready_probe: "curl -sf http://127.0.0.1:9099/ >/dev/null && curl -sf http://127.0.0.1:8085/ >/dev/null"
+  persistent: true                    # emulators:start is a foreground process the orchestrator manages
+  teardown: ""                        # SIGTERM to the boot process shuts the suite down
 
 # What the deterministic provisioning-lint applies (§2A). The rule table carries the
 # actual Firebase/Flutter vocabulary; this just points at it and names the modes.
@@ -18,9 +24,24 @@ provisioning_lint:
   rules: .fluxo/verify/provisioning.rules.yaml
   authz_check: firestore-rules        # firestore-rules | rls | api-authz-tests (used by check C, later)
 
-# How to exercise the flow (consumed by e2e-verify in a later sprint).
+# How to exercise the flow against the booted backend (§2B). Every command below is
+# stack DATA under .fluxo/verify/e2e/ — the generic orchestrator only runs them.
 e2e:
-  runner: flutter-integration         # playwright | flutter-integration | maestro
-  seed: .fluxo/verify/seed/           # fixtures = world state (NEVER what the app creates at runtime)
-  flows: .fluxo/verify/flows/         # flows derived from the ACs (per-story)
+  runner: firebase-emulator           # authenticated-client-context flow vs the real emulator suite
+  # setup_cmd installs the verify + functions toolchains. In CI the baked image
+  # (fluxo-backend-fb, §3) preinstalls firebase-tools + emulators; this covers the
+  # node deps the flow/functions import. Absent on a baked image, it is a no-op cost.
+  setup_cmd: "cd .fluxo/verify/e2e && npm install --no-audit --no-fund && cd - >/dev/null && cd functions && npm install --no-audit --no-fund"
+  # seed = WORLD STATE ONLY (providers, availability). NEVER users/{uid} — that is what
+  # the signup flow creates at runtime; seeding it would hide bug #7.
+  seed_cmd: "node .fluxo/verify/e2e/seed.mjs"
+  seed: .fluxo/verify/e2e/seed/       # world-state fixtures the seeder loads
+  # run = the flow derived from an acceptance criterion (per-story; the dev authors it
+  # in the same diff). Exercises signup->profile->callable->read-own as a real client.
+  run_cmd: "node .fluxo/verify/e2e/flows/booking_flow.mjs"
+  flows: .fluxo/verify/e2e/flows/
+  # invariants = universal truths every app must hold; one checker script per invariant.
   invariants: [session_persists, no_client_over_read]
+  invariant_cmds:
+    session_persists: "node .fluxo/verify/e2e/invariants/session_persists.mjs"
+    no_client_over_read: "node .fluxo/verify/e2e/invariants/no_client_over_read.mjs"

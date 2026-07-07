@@ -1,0 +1,42 @@
+// Shared client-context helpers for the aiuda-flutter-firebase e2e flow (stack DATA).
+// This talks to the app's REAL backend (the Firebase Emulator Suite booted by the
+// orchestrator) as an authenticated END-USER client — the exact context unit tests
+// mock away and where the code<->backend boundary bugs live. Admin/server SDK bypasses
+// security rules; the point of these checks is the client's view, so we use the client
+// SDK plus the Auth emulator, not the Admin SDK, for anything the user does.
+import { initializeApp } from 'firebase/app';
+import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
+
+// The demo- prefix marks an emulator-only project (no real credentials needed).
+export const PROJECT = 'demo-fluxo';
+export const HOST = '127.0.0.1';
+export const FS_PORT = 8085;
+export const AUTH_PORT = 9099;
+export const FN_PORT = 5001;
+
+export function clientApp(name) {
+  const app = initializeApp({ projectId: PROJECT, apiKey: 'fake-api-key' }, name);
+  const auth = getAuth(app);
+  connectAuthEmulator(auth, `http://${HOST}:${AUTH_PORT}`, { disableWarnings: true });
+  const db = getFirestore(app);
+  connectFirestoreEmulator(db, HOST, FS_PORT);
+  const fns = getFunctions(app);
+  connectFunctionsEmulator(fns, HOST, FN_PORT);
+  return { app, auth, db, fns };
+}
+
+// A fresh end-user account. Signup is BEHAVIOR (never seeded) so bug #7 — the
+// users/{uid} profile the app creates at signup — is exercised, not hidden.
+export async function signUpFreshUser(auth, tag = 'flow') {
+  const email = `u_${tag}_${process.pid}_${Math.floor(Date.now() / 1000)}@example.com`;
+  const cred = await createUserWithEmailAndPassword(auth, email, 'passw0rd');
+  return cred.user;
+}
+
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Every e2e script talks to the emulators; make that explicit for any child SDK too.
+process.env.FIRESTORE_EMULATOR_HOST = `${HOST}:${FS_PORT}`;
+process.env.FIREBASE_AUTH_EMULATOR_HOST = `${HOST}:${AUTH_PORT}`;
