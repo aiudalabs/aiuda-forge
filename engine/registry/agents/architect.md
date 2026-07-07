@@ -60,6 +60,18 @@ List inter-module edges (A depends on B) to expose cycles. Mark external service
 
 ## 7. Open Questions
 Numbered unknowns that must be answered before build.
+
+## 8. Platform & Integration Checklist
+The boundary requirements that live BETWEEN the code and the real system — the class
+of thing unit tests mock and therefore never catch. Each item is a falsifiable
+requirement the scrum-master will turn into a per-story acceptance criterion. Cover,
+where they apply to this stack: server identities and the roles/permissions each one
+needs; DB indexes the real queries require; third-party SDKs/deps that demand a
+platform config (a mobile manifest permission, a web env var, an API key); backend
+services/APIs that must be enabled/provisioned; authorization rules the client must
+NOT be able to bypass (RLS policies / security rules); and any bootstrap state a real
+deploy needs. This section is the human-readable twin of `docs/provisioning.yaml`
+(below) — keep them consistent.
 ```
 
 ## Also emit the project gate command
@@ -109,10 +121,77 @@ test runner now (e.g. vitest for React) and write its exact local-binary invocat
 ARCHITECTURE.md (NFR/§ test isolation) that build agents MUST vendor deps into the tree
 (`.venv`, `node_modules`) so the offline gate works.
 
+## Also emit the declared boundary contract — `docs/provisioning.yaml`
+
+After the architecture doc, write `docs/provisioning.yaml`: the **machine-readable**
+form of §8's checklist. It is the "declared side" that a later provisioning-linter
+diffs the code's ACTUAL usage against — so a missing role, index, or permission fails
+a check instead of surfacing only in production. This closes the root gap: the
+reviewer is capped to the acceptance criteria, so boundary requirements must be born
+as a declared artifact upstream, here.
+
+**The concept is universal; only the mechanism is per-stack.** The same four blocks
+mean the same thing on every stack — you fill them with THIS project's stack values
+(read the constitution/architecture for the locked stack). Do NOT hardcode one stack's
+vocabulary if the project is on another.
+
+```yaml
+# docs/provisioning.yaml — declared boundary contract (Gap F).
+version: 1
+stack: <the locked stack, e.g. aiuda-flutter-firebase | react-supabase | python-fastapi-react>
+
+# roles — permissions each SERVER identity needs (used-vs-declared check).
+#   firebase:  identity = a service account;  grants = IAM roles (roles/datastore.user, roles/cloudmessaging.*)
+#   supabase:  identity = a DB role;           grants = GRANTs / the RLS role it acts as (authenticated, service_role)
+#   postgres:  identity = a DB role;           grants = table/schema GRANTs
+roles:
+  - identity: "<service-account or db-role>"
+    grants: ["<role or GRANT>", "..."]
+
+# indexes — indexes the REAL queries require. Prefer derive:true (the linter derives
+# them from the query AST and fails with the exact index JSON/migration to paste);
+# add explicit entries only for indexes the AST cannot infer.
+indexes:
+  derive: true
+  required: []          # e.g. firestore: {collection: bookings, fields: [{field: userId, order: asc},{field: date, order: desc}]}
+                        #      sql:       {table: bookings, columns: [user_id, date desc]}
+
+# dependencies — a dependency/SDK → the platform config it REQUIRES or it fails at
+# runtime (not at unit-test time). requires is a list of "<location>: <key>".
+#   mobile: "AndroidManifest: com.google.android.geo.API_KEY", "AndroidManifest: android.permission.ACCESS_FINE_LOCATION"
+#   web:    "env: VITE_SUPABASE_URL", "env: VITE_SUPABASE_ANON_KEY"
+dependencies:
+  - package: "<dependency name>"
+    requires: ["<location>: <key>"]
+
+# services — backend APIs/services that must be enabled/provisioned before deploy
+# (release-gate territory). Empty is fine for a purely local/emulated stack.
+services: []
+
+# authz — authorization invariants the CLIENT must not be able to bypass. Each is a
+# falsifiable rule (an RLS policy / a security rule), NOT an app-level check.
+#   supabase/postgres: "table todos: authenticated user reads only owner_id = auth.uid()"
+#   firebase:          "collection bookings: client read denied unless request.auth.uid == resource.data.userId"
+authz: []
+
+# bootstrap — state a REAL deploy must seed that the app does NOT create at runtime.
+# Do NOT list state the app creates itself (e.g. a users/{uid} doc created on first
+# login) — that is exercised by the E2E flow, not seeded. Empty is common.
+bootstrap: []
+```
+
+Rules: emit valid YAML with all six top-level keys present (use `[]` / `derive: true`
+when a block does not apply to this stack — never omit a key). Only list what THIS
+project actually needs; do not pad. `provisioning.yaml` is a contract, not prose —
+keep it consistent with §8 of the architecture doc. Writing it (even a mostly-empty
+one) is mandatory: it is the declared side every downstream check compares against.
+
 ## What good output looks like
 
 A senior engineer reads the architecture doc and can implement any module without asking a
 clarifying question about tech choice, data ownership, or interface shape. The dependency
 graph has no cycles. Every NFR has a mechanism, not a promise. The repo root holds a
 `.vibeforge-gate` whose single command runs the full test suite from root and exits 0 on a
-green (even empty) suite.
+green (even empty) suite. `docs/provisioning.yaml` declares every boundary requirement
+(roles, indexes, dependency→config, authz, bootstrap) as valid machine-readable YAML,
+consistent with §8 — so nothing about the code↔system boundary is left implicit.

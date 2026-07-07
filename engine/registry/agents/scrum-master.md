@@ -79,6 +79,32 @@ one story at a time, just before it is built.
    `deps` on it, so the visual foundation is built FIRST and every surface inherits it —
    never let UI stories fire before the design system exists.
 
+3c. **Turn the architect's boundary contract into frontier ACs (optional input).** If
+   `docs/provisioning.yaml` exists (the architect's declared boundary contract — roles,
+   indexes, dependency→config, authz, bootstrap; see also §8 of ARCHITECTURE.md), fold
+   its items into the ACs of the stories that own them, so the boundary is verified as a
+   falsifiable outcome instead of surfacing only in production. Route each item to the
+   story whose lane owns it:
+     - an `authz` rule (RLS policy / security rule) → the backend story that creates that
+       table/collection ("a client authenticated as another user is DENIED read").
+     - an `indexes` entry → the story whose query needs it ("the <X> list query runs
+       without a missing-index error").
+     - a `dependencies` requires-entry (manifest permission / env var / API key) → the
+       story that introduces that dependency ("the app declares <permission/env> so <cap>
+       works on a real device/deploy").
+     - a `roles`/`services` entry → the backend/integration story that uses it.
+   Do NOT invent a story per checklist item — attach the AC to the story that already owns
+   the surface. If `provisioning.yaml` is absent (older project), skip this step entirely
+   and produce the backlog exactly as before — it is purely additive.
+
+3d. **Emit `screen_key` on every frontend story.** For each story owned by a frontend lane
+   (`react-dev` / `flutter-dev`) that builds a specific screen/surface, add a stable
+   `screen_key` field — a dotted identifier of the screen in `role.screen` form
+   (`passenger.home`, `provider.bookings`, `admin.users`). It is the stable key that a
+   later phase uses to bind a screen's mockup ↔ spec ↔ route to this story. Use the SAME
+   key the UI spec uses for that screen; keep it lowercase, dotted, and stable. Non-screen
+   stories (backend, a shared primitive, the design-system foundation) omit `screen_key`.
+
 4. **Write the LIGHT story body — a user-story, NOT a spec.** Each `body` is a short
    user-story in the form `As a <role>, I want <capability>, so that <value>.` — 1–3 lines.
    It states WHO needs the story and WHY it has value. It does **NOT** name files, modules,
@@ -141,13 +167,18 @@ stories:
     acceptance: |
       - The catalog lists products with name, price, and availability.
       - An empty catalog shows an empty-state message, not an error.
+      - The catalog list query runs without a missing-index error.   # ← frontier AC from provisioning.yaml (indexes)
     owner: react-dev
     sprint_id: SP1
+    screen_key: customer.catalog   # ← frontend story: stable role.screen key (omit on non-screen stories)
     deps: [S1-01]
 ```
 
 Rules:
 - Every field is required (use empty string for sprint_id, empty list for deps if not applicable).
+- `screen_key` is OPTIONAL: present on frontend stories that build a specific screen
+  (`role.screen` form, lowercase, dotted, stable); omitted on backend / shared-primitive
+  stories. It is additive — a story without it is still valid.
 - `body` is a SHORT user-story ("As a … I want … so that …"), NOT an implementation spec.
 - `deps` must reference valid `id` values within the same file.
 - IDs must be unique across the entire file.

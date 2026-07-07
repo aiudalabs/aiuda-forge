@@ -96,6 +96,13 @@ steps:
       feedback: $data_model_gate.detail
 
   # ── Fase 5: Architecture ──────────────────────────────────────────────────
+  # El architect escribe DOS artefactos: docs/ARCHITECTURE.md (prosa) y
+  # docs/provisioning.yaml — el CONTRATO DE FRONTERA declarado (Gap F, S1): roles/
+  # permisos por identidad, índices requeridos (o derive), dependencia→config, y un
+  # platform-checklist que el scrum-master convierte en ACs. `provisioning` es solo
+  # la RUTA declarada del 2º artefacto; el arch_gate existente lo revisa (sin gate
+  # nuevo). Proyectos viejos sin provisioning.yaml siguen andando: es OPCIONAL aguas
+  # abajo (el linter que lo consume llega en S2, opt-in).
   - id: architecture
     type: design
     label: Arquitectura
@@ -104,11 +111,12 @@ steps:
       prd: $prd.output.text
       data_model: $data_model.output.text
       output: docs/ARCHITECTURE.md
+      provisioning: docs/provisioning.yaml
 
   - id: arch_gate
     type: human_gate
     inputs:
-      reason: "Revisa la arquitectura (docs/ARCHITECTURE.md). Aprueba para proceder a la UI, o rechaza con feedback."
+      reason: "Revisa la arquitectura (docs/ARCHITECTURE.md) Y el contrato de frontera (docs/provisioning.yaml): roles/permisos, índices, dependencia→config y el platform-checklist. Aprueba para proceder a la UI, o rechaza con feedback."
     on_fail:
       goto: architecture
       max: 100
@@ -176,6 +184,11 @@ steps:
       prd: $prd.output.text
       architecture: $architecture.output.text
       data_model: $data_model.output.text
+      # Contrato de frontera del architect (S1): el scrum-master lo lee para (a)
+      # convertir el platform-checklist en ACs de frontera por-story y (b) emitir
+      # screen_key en las stories de frontend. RUTA opcional — si el archivo no
+      # existe (proyecto viejo), el scrum-master degrada al backlog de hoy.
+      provisioning: docs/provisioning.yaml
       output: docs/backlog.yaml
     on_fail:
       # Un backlog fallido/timed-out NO debe tumbar el design run completo (#15).
