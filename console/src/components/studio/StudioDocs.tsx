@@ -338,14 +338,16 @@ export function StudioDocs() {
             {t("studio.docs.changelog")}
           </button>
         )}
-        <button className="btn ghost sm" onClick={() => router.push("/")}>
-          {t("studio.view.newProject")}
-        </button>
+        {/* Orden/énfasis calcado del mockup: "Change request" (ghost) y "+ Nuevo
+            proyecto" primario a la derecha. */}
         {project.repo && (
-          <button className="btn primary sm" onClick={() => setCrOpen(true)}>
+          <button className="btn ghost sm" onClick={() => setCrOpen(true)}>
             {t("studio.view.newIteration")}
           </button>
         )}
+        <button className="btn primary sm" onClick={() => router.push("/")}>
+          {t("studio.view.newProject")}
+        </button>
       </header>
 
       {/* ── Cuerpo: riel | main ── */}
