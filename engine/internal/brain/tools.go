@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"forge/internal/tickets"
 )
 
 // ToolKind classifies a tool by blast radius. Reversible tools run automatically;
@@ -195,6 +197,78 @@ var registry = map[string]toolDef{
 		Kind: Mutating, MinRole: "editor",
 		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
 			return ok(ops.RerunStep(argStr(input, "run_id"), argStr(input, "step"), argStr(input, "feedback")))
+		},
+	},
+
+	// ---- mid-sprint board moves: proposed to the human, run only on approval ----
+	// The moves a team makes on the backlog between sprints. Each mutates the backlog
+	// through the guarded tickets state machine (the same store operation the HTTP
+	// endpoints call), so the Brain is a non-privileged client.
+	"cancel_story": {
+		Tool: Tool{Name: "cancel_story", Description: "Cancel a story (abandon the work) — move it to the terminal `cancelled` state. Legal from backlog/failed/in_review; a RUNNING story must have its run cancelled first. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"story_id": strp("the story id")}, "story_id")},
+		Kind: Mutating, MinRole: "editor",
+		Run: func(ops ControlOps, projectID string, input json.RawMessage) (string, error) {
+			return ok(ops.CancelStory(projectID, argStr(input, "story_id")))
+		},
+	},
+	"move_story": {
+		Tool: Tool{Name: "move_story", Description: "Move a story to another sprint (e.g. push SP2 work to SP3). Only a backlog/failed story can move, and never to a sprint EARLIER than a story it depends on (or LATER than a story that depends on it). MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"story_id": strp("the story id"), "sprint_id": strp("target sprint id, or empty to remove it from any sprint")}, "story_id")},
+		Kind: Mutating, MinRole: "editor",
+		Run: func(ops ControlOps, projectID string, input json.RawMessage) (string, error) {
+			return ok(ops.MoveStory(projectID, argStr(input, "story_id"), argStr(input, "sprint_id")))
+		},
+	},
+	"split_story": {
+		Tool: Tool{Name: "split_story", Description: "Split one story into two or more smaller stories. Each part inherits the original's epic, sprint and dependencies; the original is cancelled and any story that depended on it is rewired to the parts. Only a backlog/failed story can be split. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{
+			"story_id": strp("the story to split"),
+			"parts": map[string]any{
+				"type":        "array",
+				"description": "the new stories (at least 2)",
+				"items": obj(map[string]any{
+					"id":         strp("optional explicit id; omit to auto-derive <story>-a, <story>-b, …"),
+					"title":      strp("part title"),
+					"body":       strp("part description"),
+					"acceptance": strp("part acceptance criteria"),
+					"owner":      strp("optional lane/owner; defaults to the original's"),
+				}, "title"),
+			},
+		}, "story_id", "parts")},
+		Kind: Mutating, MinRole: "editor",
+		Run: func(ops ControlOps, projectID string, input json.RawMessage) (string, error) {
+			var in struct {
+				StoryID string               `json:"story_id"`
+				Parts   []tickets.StoryDraft `json:"parts"`
+			}
+			if err := json.Unmarshal(input, &in); err != nil {
+				return "", err
+			}
+			ids, err := ops.SplitStory(projectID, in.StoryID, in.Parts)
+			if err != nil {
+				return "", err
+			}
+			return jsonStr(map[string]any{"parts": ids, "cancelled": in.StoryID}), nil
+		},
+	},
+	"edit_story": {
+		Tool: Tool{Name: "edit_story", Description: "Edit a story's fields in place: title, body, acceptance, owner (lane) and/or deps. Only provided fields change; `deps` REPLACES the dependency set (revalidated: no self-dep, deps must exist, no cycle). Not allowed on a running or terminal (done/cancelled) story. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{
+			"story_id":   strp("the story id"),
+			"title":      strp("optional new title"),
+			"body":       strp("optional new description"),
+			"acceptance": strp("optional new acceptance criteria"),
+			"owner":      strp("optional new owner/lane"),
+			"deps": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "optional: REPLACE the dependency ids (empty array clears them)",
+			},
+		}, "story_id")},
+		Kind: Mutating, MinRole: "editor",
+		Run: func(ops ControlOps, projectID string, input json.RawMessage) (string, error) {
+			var patch tickets.StoryPatch
+			if err := json.Unmarshal(input, &patch); err != nil {
+				return "", err
+			}
+			return ok(ops.EditStory(projectID, argStr(input, "story_id"), patch))
 		},
 	},
 

@@ -606,6 +606,7 @@ type ticketView struct {
 	ExternalRef string   `json:"external_ref,omitempty"` // GitHub mirror (github:owner/repo#N) — la UI decide requeue nativo vs legacy
 	Repo        string   `json:"repo,omitempty"`         // the repo the PR lives in (needed to address it via gh)
 	ProjectID   string   `json:"project_id,omitempty"`   // lets the scheduler group work by project (audit A1)
+	Kind        string   `json:"kind,omitempty"`         // story|bug — the board can badge bugs distinctly
 }
 
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
@@ -665,6 +666,7 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			ExternalRef: st.ExternalRef,
 			Repo:        st.Repo,
 			ProjectID:   st.ProjectID,
+			Kind:        st.Kind,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": views})

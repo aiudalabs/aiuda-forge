@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"forge/internal/tickets"
 )
 
 // scriptedLLM returns a fixed sequence of turns; extra calls return end_turn.
@@ -35,6 +37,10 @@ type fakeOps struct {
 	mu      sync.Mutex
 	paused  bool
 	started []string
+	moves   []string // "storyID->sprintID" per MoveStory call
+	cancels []string // storyID per CancelStory call
+	splits  []string // storyID per SplitStory call
+	edits   []string // storyID per EditStory call
 }
 
 func (o *fakeOps) Status() (bool, int64)                     { o.mu.Lock(); defer o.mu.Unlock(); return o.paused, 0 }
@@ -52,9 +58,9 @@ func (o *fakeOps) StartRun(wf string, _ map[string]any) (string, error) {
 	o.started = append(o.started, wf)
 	return "run-x", nil
 }
-func (o *fakeOps) ApproveStep(string, string) error        { return nil }
-func (o *fakeOps) RejectStep(string, string, string) error { return nil }
-func (o *fakeOps) Metrics(string) (map[string]any, error)  { return map[string]any{}, nil }
+func (o *fakeOps) ApproveStep(string, string) error            { return nil }
+func (o *fakeOps) RejectStep(string, string, string) error     { return nil }
+func (o *fakeOps) Metrics(string) (map[string]any, error)      { return map[string]any{}, nil }
 func (o *fakeOps) ListRegistry(string) ([]string, error)       { return nil, nil }
 func (o *fakeOps) ReadRegistry(string, string) (string, error) { return "", nil }
 func (o *fakeOps) WriteRegistry(string, string, string) error  { return nil }
@@ -66,6 +72,34 @@ func (o *fakeOps) ActiveState(string) (map[string]any, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return map[string]any{"paused": o.paused, "active_runs": []map[string]any{}, "awaiting_approval": []map[string]any{}, "terminal_runs": 0}, nil
+}
+func (o *fakeOps) CancelStory(_, storyID string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.cancels = append(o.cancels, storyID)
+	return nil
+}
+func (o *fakeOps) MoveStory(_, storyID, sprintID string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.moves = append(o.moves, storyID+"->"+sprintID)
+	return nil
+}
+func (o *fakeOps) SplitStory(_, storyID string, parts []tickets.StoryDraft) ([]string, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.splits = append(o.splits, storyID)
+	ids := make([]string, len(parts))
+	for i := range parts {
+		ids[i] = parts[i].ID
+	}
+	return ids, nil
+}
+func (o *fakeOps) EditStory(_, storyID string, _ tickets.StoryPatch) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.edits = append(o.edits, storyID)
+	return nil
 }
 
 func newTestBrain(t *testing.T, llm LLM, ops ControlOps, emit func(string, string, map[string]any)) *Brain {
@@ -207,5 +241,48 @@ func TestBrainToolClassification(t *testing.T) {
 	}
 	if !roleAllows("editor", "owner") {
 		t.Errorf("owner must pass the editor gate")
+	}
+}
+
+// The mid-sprint board-move tools are registered as mutating/editor and route their
+// parsed input to the matching ControlOps call.
+func TestBrainTeamMoveTools(t *testing.T) {
+	for _, name := range []string{"cancel_story", "move_story", "split_story", "edit_story"} {
+		d, ok := registry[name]
+		if !ok {
+			t.Fatalf("%s not registered", name)
+		}
+		if d.Kind != Mutating || d.MinRole != "editor" {
+			t.Errorf("%s should be mutating/editor, got kind=%s role=%s", name, d.Kind, d.MinRole)
+		}
+	}
+
+	ops := &fakeOps{}
+	if _, err := registry["cancel_story"].Run(ops, "p1", json.RawMessage(`{"story_id":"S1"}`)); err != nil {
+		t.Fatalf("cancel_story run: %v", err)
+	}
+	if _, err := registry["move_story"].Run(ops, "p1", json.RawMessage(`{"story_id":"S2","sprint_id":"SP3"}`)); err != nil {
+		t.Fatalf("move_story run: %v", err)
+	}
+	if _, err := registry["split_story"].Run(ops, "p1", json.RawMessage(`{"story_id":"S3","parts":[{"id":"S3-a","title":"a"},{"id":"S3-b","title":"b"}]}`)); err != nil {
+		t.Fatalf("split_story run: %v", err)
+	}
+	if _, err := registry["edit_story"].Run(ops, "p1", json.RawMessage(`{"story_id":"S4","title":"new"}`)); err != nil {
+		t.Fatalf("edit_story run: %v", err)
+	}
+
+	ops.mu.Lock()
+	defer ops.mu.Unlock()
+	if len(ops.cancels) != 1 || ops.cancels[0] != "S1" {
+		t.Errorf("cancels = %v, want [S1]", ops.cancels)
+	}
+	if len(ops.moves) != 1 || ops.moves[0] != "S2->SP3" {
+		t.Errorf("moves = %v, want [S2->SP3]", ops.moves)
+	}
+	if len(ops.splits) != 1 || ops.splits[0] != "S3" {
+		t.Errorf("splits = %v, want [S3]", ops.splits)
+	}
+	if len(ops.edits) != 1 || ops.edits[0] != "S4" {
+		t.Errorf("edits = %v, want [S4]", ops.edits)
 	}
 }
