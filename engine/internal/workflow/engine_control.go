@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -110,6 +111,73 @@ func (e *Engine) RejectStep(runID, stepID, reason string) error {
 	return e.resolveAwaiting(runID, stepID, store.StatusFailed, StepResult{
 		Success: false, Output: map[string]any{"rejected": true, "reason": reason}, Detail: reason,
 	}, reason)
+}
+
+// maxAnswersPerPhase is the hard anti-loop cap on the `answer` verb. Unlike reject,
+// an answer does NOT consume on_fail.max (it is not a rejection), so it needs its own
+// ceiling so a pathological answer→re-run→answer loop cannot run forever. Humans answer
+// a handful of open questions per phase; 50 is far above any real interaction.
+const maxAnswersPerPhase = 50
+
+// AnswerStep answers a human_gate's open questions WITHOUT rejecting it: the target
+// phase (the gate's on_fail.goto) is re-run with the answer text injected as the
+// `answers` input, and the gate re-appears for approval. Crucially it does NOT count
+// against on_fail.max — the gate task is resolved to DONE (not FAILED), so countFailures
+// (which only counts FAILED tasks) is untouched; the answer budget is tracked separately
+// (maxAnswersPerPhase). No-op (ErrNoAwaitingStep) if nothing is awaiting.
+func (e *Engine) AnswerStep(runID, stepID, text string) error {
+	// Hard anti-loop cap (checked before resolving so the (N+1)th answer is refused).
+	n, err := e.Store.CountAnswers(runID, stepID)
+	if err != nil {
+		return err
+	}
+	if n >= maxAnswersPerPhase {
+		return fmt.Errorf("answer cap reached for step %q (%d answers)", stepID, maxAnswersPerPhase)
+	}
+	task, ok, err := e.Store.AnswerAwaiting(runID, stepID, text)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNoAwaitingStep
+	}
+	wf, err := e.Loader.Load(task.WorkflowID)
+	if err != nil {
+		return err
+	}
+	return e.advanceAnswer(wf, task, text)
+}
+
+// advanceAnswer re-enqueues the gate's on_fail target with the answer as the `answers`
+// input (parallel to how a reject re-enqueues it with `feedback`, but NOT counting as a
+// failure and NOT capped by on_fail.max). The target phase regenerates the doc
+// incorporating the answers, then its downstream gate re-parks for approval.
+func (e *Engine) advanceAnswer(wf *Workflow, gateTask *store.Task, text string) error {
+	step, ok := wf.StepByID(gateTask.StepID)
+	if !ok {
+		return fmt.Errorf("answer: step %q not in workflow", gateTask.StepID)
+	}
+	if step.OnFail == nil || step.OnFail.Goto == "" {
+		return fmt.Errorf("answer: step %q has no on_fail.goto target to answer into", gateTask.StepID)
+	}
+	target, ok := wf.StepByID(step.OnFail.Goto)
+	if !ok {
+		return fmt.Errorf("answer: on_fail.goto %q is not a step", step.OnFail.Goto)
+	}
+	ctx, err := e.buildContext(gateTask.RunID)
+	if err != nil {
+		return err
+	}
+	inputs := ResolveInputs(target.Inputs, ctx)
+	if inputs == nil {
+		inputs = map[string]any{}
+	}
+	inputs["answers"] = text
+	payload, _ := json.Marshal(inputs)
+	return e.Store.EnqueueTask(&store.Task{
+		ID: newID("task"), RunID: gateTask.RunID, WorkflowID: gateTask.WorkflowID,
+		StepID: target.ID, Type: target.Type, Payload: string(payload),
+	})
 }
 
 // resolveAwaiting atomically transitions the AWAITING (run, step) task to `to`

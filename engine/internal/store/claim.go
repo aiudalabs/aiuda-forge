@@ -211,6 +211,86 @@ func (s *Store) ResolveAwaiting(runID, stepID string, to Status, result map[stri
 	return t, true, nil
 }
 
+// AnswerAwaiting atomically resolves the AWAITING (run, step) gate as ANSWERED: it
+// transitions the parked task to DONE (NOT failed — an answer is not a rejection, so
+// it must not consume the on_fail failure budget) and, in the SAME transaction, emits
+// both the step transition event and a dedicated step.answer event so the live-log and
+// UI can distinguish an answer from an approve/reject. Winner-selection mirrors
+// ResolveAwaiting: the read and write share the write lock, so two concurrent resolvers
+// can never both act on the same gate — the loser gets (nil, false, nil). The caller
+// then re-enqueues the gate's on_fail target with the answer as input.
+func (s *Store) AnswerAwaiting(runID, stepID, text string) (*Task, bool, error) {
+	tx, err := s.db.Begin() // BEGIN IMMEDIATE — write lock before the read
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+
+	t, err := scanTaskCore(tx.QueryRow(taskCols+` WHERE run_id=? AND step_id=? AND status=? ORDER BY created_at DESC LIMIT 1`,
+		runID, stepID, string(StatusAwaiting)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil // nothing awaiting (already resolved / cancelled / lost the race)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	now := s.now()
+	result := map[string]any{"success": true, "output": map[string]any{"answered": true}, "detail": text}
+	b, err := json.Marshal(result)
+	if err != nil {
+		return nil, false, err
+	}
+	resultJSON := string(b)
+	if _, err := tx.Exec(`UPDATE tasks SET status=?, result=?, error=?, updated_at=? WHERE id=?`,
+		string(StatusDone), resultJSON, "", now, t.ID); err != nil {
+		return nil, false, err
+	}
+	// Single emit point (Golden Rule 5): the transition event AND the domain event
+	// are written in the one transaction that performs the transition.
+	if err := emitTx(tx, runID, t.ID, t.ProjectID, EventStepStatusChange,
+		map[string]any{"step": stepID, "from": StatusAwaiting, "to": StatusDone, "answered": true}, now); err != nil {
+		return nil, false, err
+	}
+	if err := emitTx(tx, runID, t.ID, t.ProjectID, EventStepAnswer,
+		map[string]any{"step": stepID, "text": text}, now); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	t.Status = StatusDone
+	t.Result = resultJSON
+	t.UpdatedAt = now
+	return t, true, nil
+}
+
+// CountAnswers returns how many step.answer events a run has recorded for stepID —
+// the anti-loop budget for the `answer` verb (which, unlike reject, is deliberately
+// NOT bounded by on_fail.max). Scoped by the event's data.step so it counts across
+// the gate's successive re-parked task instances.
+func (s *Store) CountAnswers(runID, stepID string) (int, error) {
+	rows, err := s.db.Query(`SELECT data FROM events WHERE run_id=? AND type=?`, runID, EventStepAnswer)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return 0, err
+		}
+		var d map[string]any
+		if json.Unmarshal([]byte(data), &d) == nil {
+			if st, _ := d["step"].(string); st == stepID {
+				n++
+			}
+		}
+	}
+	return n, rows.Err()
+}
+
 // Heartbeat updates a RUNNING task's liveness, rejecting a stale fence (a worker
 // whose claim was superseded by requeue_stale). Returns ErrStaleFence if so.
 func (s *Store) Heartbeat(taskID string, fence int64) error {

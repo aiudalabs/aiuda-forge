@@ -93,6 +93,7 @@ const (
 	EventStepEvent        = "step.event"
 	EventStepGate         = "step.gate"
 	EventStepVerify       = "step.verify"
+	EventStepAnswer       = "step.answer" // human answered a gate's open questions (distinct from approve/reject)
 	EventRunAwaitingApprv = "run.awaiting_approval"
 	EventRunDone          = "run.done"
 	EventRunFailed        = "run.failed"

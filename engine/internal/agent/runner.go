@@ -265,6 +265,15 @@ func buildPrompt(m *Manifest, step workflow.Step, inputs map[string]any) string 
 		b.WriteString(v)
 		b.WriteString("\n\n")
 	}
+	// Answers to the gate's open questions come BEFORE feedback: the human is
+	// resolving questions the agent itself raised, and the instruction is to EDIT the
+	// existing doc in place — not to regenerate it (which is what a reject/feedback
+	// round does). The instruction text is fixed so the behavior is deterministic.
+	if v := asString(inputs["answers"]); v != "" {
+		b.WriteString("## Answers to your open questions\n")
+		b.WriteString(v)
+		b.WriteString("\n\nUpdate the existing document incorporating these answers. Do NOT regenerate it from scratch; preserve everything not affected by the answers.\n\n")
+	}
 	if v := asString(inputs["feedback"]); v != "" {
 		b.WriteString("## Feedback from a previous attempt (address this)\n")
 		b.WriteString(v)
@@ -273,7 +282,7 @@ func buildPrompt(m *Manifest, step workflow.Step, inputs map[string]any) string 
 	// Any other inputs appended generically so nothing is silently dropped.
 	for k, val := range inputs {
 		switch k {
-		case "ticket", "instructions", "feedback", "agent":
+		case "ticket", "instructions", "feedback", "answers", "agent":
 			// "agent" is a routing key (selects the specialist), not prompt content.
 			continue
 		}

@@ -115,6 +115,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /control/resume", s.resume)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/approve", s.approveStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/reject", s.rejectStep)
+	m.HandleFunc("POST /runs/{id}/steps/{step}/answer", s.answerStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/merge", s.mergeStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/rerun", s.rerunStep)
 	m.HandleFunc("GET /runs/{id}/artifacts/{kind}", s.artifacts)
@@ -934,6 +935,36 @@ func (s *Server) rejectStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rejected": step, "run": id, "reason": req.Reason})
+}
+
+type answerReq struct {
+	Text string `json:"text"`
+}
+
+// answerStep is the third gate verb: the human ANSWERS the phase's open questions
+// (docs may end with "## Open questions"). Unlike reject, this does NOT count against
+// on_fail.max and does NOT regenerate the doc from scratch — it re-runs the phase with
+// the answers injected so the agent edits the existing doc in place, then the gate
+// re-appears for approval. Behavior lives in the engine/workflow, not here.
+func (s *Server) answerStep(w http.ResponseWriter, r *http.Request) {
+	id, step := r.PathValue("id"), r.PathValue("step")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
+	var req answerReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		httpErr(w, http.StatusBadRequest, "answer text is required")
+		return
+	}
+	if err := s.Engine.AnswerStep(id, step, req.Text); err != nil {
+		httpErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"answered": step, "run": id})
 }
 
 func (s *Server) mergeStep(w http.ResponseWriter, r *http.Request) {
