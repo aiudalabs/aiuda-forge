@@ -315,6 +315,54 @@ func TestEditFieldsAndDeps(t *testing.T) {
 	}
 }
 
+// Acceptance criterion: moving a story between sprints must NOT change which mockup it
+// implements — screen_key lives on the story, not the sprint, so the groom is stable.
+func TestMoveStoryPreservesScreenKey(t *testing.T) {
+	st := openTemp(t)
+	mkSprint(t, st, "SP1")
+	mkSprint(t, st, "SP2")
+	if err := st.CreateStory(tickets.Story{ID: "S", ProjectID: "p1", Title: "Login", SprintID: "SP1", ScreenKey: "customer.login"}); err != nil {
+		t.Fatalf("create S: %v", err)
+	}
+
+	if err := st.MoveStory("p1", "S", "SP2"); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	got, _ := st.GetStoryInProject("p1", "S")
+	if got.SprintID != "SP2" {
+		t.Fatalf("sprint not moved: got %q", got.SprintID)
+	}
+	if got.ScreenKey != "customer.login" {
+		t.Fatalf("move changed screen_key: got %q, want customer.login", got.ScreenKey)
+	}
+}
+
+// EditStory patches screen_key like any other field; a nil patch field leaves it alone.
+func TestEditScreenKey(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateStory(tickets.Story{ID: "S", ProjectID: "p1", Title: "Login", ScreenKey: "customer.login"}); err != nil {
+		t.Fatalf("create S: %v", err)
+	}
+
+	// Re-point the story at another screen.
+	if err := st.EditStory("p1", "S", tickets.StoryPatch{ScreenKey: strptr("customer.dashboard")}); err != nil {
+		t.Fatalf("edit screen_key: %v", err)
+	}
+	got, _ := st.GetStoryInProject("p1", "S")
+	if got.ScreenKey != "customer.dashboard" {
+		t.Fatalf("screen_key = %q, want customer.dashboard", got.ScreenKey)
+	}
+
+	// A patch that omits screen_key must not clear it.
+	if err := st.EditStory("p1", "S", tickets.StoryPatch{Title: strptr("Login v2")}); err != nil {
+		t.Fatalf("edit title: %v", err)
+	}
+	got, _ = st.GetStoryInProject("p1", "S")
+	if got.ScreenKey != "customer.dashboard" {
+		t.Fatalf("screen_key cleared by unrelated patch: got %q", got.ScreenKey)
+	}
+}
+
 func TestEditDepValidation(t *testing.T) {
 	st := openTemp(t)
 	mkStory(t, st, "A", "")

@@ -214,6 +214,43 @@ func TestGroomStoriesEndToEnd(t *testing.T) {
 	}
 }
 
+// The store is the source of truth for screen_key: when a story carries one, the
+// groom uses it and NEVER falls back to the (possibly stale) docs/backlog.yaml. The
+// backlog.yaml here says a different screen on purpose — a mid-sprint move would have
+// left it stale, and the groom must ignore it.
+func TestGroomStoriesPrefersStoreScreenKey(t *testing.T) {
+	st := newStore(t)
+	story := tickets.Story{ID: "S1", Title: "Dashboard UI", Owner: "react-dev", Body: "As a user…", Accept: "- works",
+		ProjectID: "p1", ExternalRef: "github:o/r#42", ScreenKey: "customer.dashboard"}
+	if err := st.CreateStory(story); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	fake := newFakeGroomGH()
+	// Stale snapshot: the YAML still points at the OLD screen. The store must win.
+	fake.files["docs/backlog.yaml"] = "stories:\n  - id: S1\n    screen_key: customer.login\n"
+
+	g := &Groomer{
+		Backend:   agent.FakeBackend{Reply: "DEV-READY SPEC."},
+		Agents:    detailerLoader(),
+		Tickets:   st,
+		Timeout:   time.Minute,
+		ClientFor: func(context.Context, string) GroomGitHub { return fake },
+	}
+	g.GroomStories(context.Background(), "p1", "https://github.com/o/r", []string{"S1"})
+
+	body, ok := fake.patched[42]
+	if !ok {
+		t.Fatal("story issue #42 not enriched")
+	}
+	if !strings.Contains(body, "docs/mockups/customer.dashboard.html") {
+		t.Fatalf("store screen_key not used:\n%s", body)
+	}
+	if strings.Contains(body, "customer.login") {
+		t.Fatalf("stale backlog.yaml screen_key leaked past the store:\n%s", body)
+	}
+}
+
 func TestExtractHeadingSection(t *testing.T) {
 	md := "# App\n\n## customer.catalog\nList of products.\n\n### sub\ndetail\n\n## customer.cart\nCart.\n"
 	got := extractHeadingSection(md, "customer.catalog")
