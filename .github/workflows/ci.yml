@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR branch).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect which parts of the monorepo changed. We use paths-filter (not the
+  # `paths:` trigger) so that BOTH the engine and console checks always report
+  # a status on every PR — a job that is skipped because its paths didn't change
+  # still counts as a passing (green) required check.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+      console: ${{ steps.filter.outputs.console }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            engine:
+              - 'engine/**'
+              - '.github/workflows/ci.yml'
+            console:
+              - 'console/**'
+              - '.github/workflows/ci.yml'
+
+  engine:
+    needs: changes
+    if: ${{ needs.changes.outputs.engine == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  console:
+    needs: changes
+    if: ${{ needs.changes.outputs.console == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint --if-present
+      - name: Typecheck
+        run: npx tsc --noEmit
