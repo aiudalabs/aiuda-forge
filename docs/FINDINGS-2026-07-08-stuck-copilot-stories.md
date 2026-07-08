@@ -13,6 +13,24 @@ se liberan solas**, incluso después de minutos. Diagnóstico en vivo contra el 
   404 para las 3:** `gh api agent task <uuid>: exit status 1: {"message":"not found"}`.
   (task ids: `c1d38e20-…`, `ceea33a3-…`, `5d809f99-…`)
 
+## ⚠️ CAUSA RAÍZ REAL (descubierta al desatascarlo) — el label `agent:running`
+Al intentar moverlas a `ready` se reveló que el ancla PERSISTENTE no era el 404 del sweep,
+sino el **label `agent:running`** pegado en los 5 issues. La derivación de la proyección
+(`projection.go` ~354) es: `target := backlog`; luego lo sube a `running` si hay **draft PR**,
+**agent assignee**, **label `agent:running`**, o **sesión de task**. Los 5 issues tenían el
+label puesto. El workflow lo pone al arrancar y lo quita en un step `if:always()` — pero
+**Copilot murió (créditos) sin ejecutar esa limpieza**, así que el label quedó pegado →
+`running` eterno. Había **3 anclas** que soltar: (1) draft PR #56 [ya cerrado], (2) la sesión
+de task [DELETE en story_sessions], (3) **el label `agent:running` [el persistente]**. Recién
+al quitar el label la proyección derivó a `backlog`. **El 404 del sweep es real pero
+secundario:** aunque el sweep funcionara, el label igual trababa las stories.
+- **Fix de raíz (además del de la Obs. D):** cuando una sesión de agente se determina muerta
+  (task fail, run `failure`, o un Copilot sin cleanup), hay que **quitar el label
+  `agent:running`** (limpieza GitHub-observable), no solo limpiar la sesión local. Hoy el label
+  solo se quita desde el workflow del agente en `if:always()`; si el agente muere por fuera de
+  ese path (créditos, kill), nadie lo quita → la story queda `running` para siempre. El
+  Conductor debería quitar el label como parte del barrido de sesiones muertas.
+
 ## Por qué NO se auto-liberan (dos causas, cada una suficiente)
 
 ### Bug A — el barrido trata el 404 como "sin veredicto" y no libera
