@@ -461,10 +461,14 @@ func migrateToCompositePK(db *sql.DB) error {
 			screen_key   TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (id, project_id)
 		)`,
-		// stories now carries `kind` and `screen_key` (both ALTERs run BEFORE this
-		// rebuild), so stories_new MUST include them too — otherwise `SELECT *` supplies
-		// 15 values into a 13-column table and the migration fails on every open (#17).
-		`INSERT OR IGNORE INTO stories_new SELECT * FROM stories`,
+		// Explicit column lists on BOTH sides (root cause of #17): `SELECT *` copies by
+		// POSITION, so a column added to `stories` (via an ALTER) but forgotten in
+		// stories_new silently misaligns every value by one — or crashes with a bare
+		// column-count mismatch. Naming the columns makes a future missing column fail
+		// with a NAMED SQL error ("no such column: X") instead. Keep this list in sync
+		// with the stories_new definition above and every migrationAdd* ALTER.
+		`INSERT OR IGNORE INTO stories_new(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind, screen_key)
+			SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind, screen_key FROM stories`,
 		`DROP TABLE stories`,
 		`ALTER TABLE stories_new RENAME TO stories`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_external_ref ON stories(external_ref) WHERE external_ref != ''`,
