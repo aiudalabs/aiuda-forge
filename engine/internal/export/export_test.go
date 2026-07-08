@@ -167,7 +167,7 @@ func TestPriorArtForLane(t *testing.T) {
 		{Dir: "frontend/src", Files: 3, Lanes: []string{"react-dev"}, Stories: []string{"S1", "S4"}},
 		{Dir: "backend/api", Files: 2, Lanes: []string{"python-dev"}, Stories: []string{"S2"}},
 	}
-	got := priorArtForLane("react-dev", mods)
+	got := PriorArtForLane("react-dev", mods)
 	if !strings.Contains(got, "frontend/src/") || strings.Contains(got, "backend/api/") {
 		t.Fatalf("react-dev prior art = %q, want only its own module", got)
 	}
@@ -175,10 +175,10 @@ func TestPriorArtForLane(t *testing.T) {
 		t.Fatalf("prior art should cite the stories: %q", got)
 	}
 	// A lane with no prior work → empty, so a fresh export is unchanged.
-	if s := priorArtForLane("flutter-dev", mods); s != "" {
+	if s := PriorArtForLane("flutter-dev", mods); s != "" {
 		t.Fatalf("unknown lane prior art = %q, want empty", s)
 	}
-	if s := priorArtForLane("react-dev", nil); s != "" {
+	if s := PriorArtForLane("react-dev", nil); s != "" {
 		t.Fatalf("no modules = %q, want empty", s)
 	}
 }
@@ -190,5 +190,64 @@ func TestIssueBodyPriorArtGating(t *testing.T) {
 	}
 	if body := issueBody(st, "### Prior art (x)\n- `y/`\n\n"); !strings.Contains(body, "Prior art") {
 		t.Fatalf("prior art not included:\n%s", body)
+	}
+}
+
+// A zero Enrichment must reproduce the plain export body byte-for-byte — the
+// groom-off invariant (VIBEFORGE_CONDUCTOR_GROOM=0). issueBody itself delegates to
+// EnrichedBody with a zero Enrichment, so this pins the two together.
+func TestEnrichedBodyEmptyIsByteIdentical(t *testing.T) {
+	st := tickets.Story{ID: "S1", SprintID: "SP1", Owner: "react-dev", Body: "As a user…", Accept: "- a\n- b"}
+	for _, priorArt := range []string{"", "### Prior art (x)\n- `y/`\n\n"} {
+		if got, want := EnrichedBody(st, priorArt, Enrichment{}), issueBody(st, priorArt); got != want {
+			t.Fatalf("EnrichedBody(zero) != issueBody:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+		}
+	}
+}
+
+// With a screen_key the enriched body carries all three sections; without one the
+// visual section is absent (backend stories never get a mockup).
+func TestEnrichedBodySections(t *testing.T) {
+	st := tickets.Story{ID: "S1", Owner: "react-dev", Body: "As a user…", Accept: "- works"}
+
+	enrich := Enrichment{
+		SpecDevReady: SpecSection("Build the LoginForm component."),
+		VisualSpec:   VisualSpecSection("customer.login", "https://raw.example/docs/mockups/customer.login.html", "### Login\nEmail + password."),
+		Components:   ComponentsSection([]string{"src/components/Button.tsx"}),
+	}
+	body := EnrichedBody(st, "", enrich)
+	for _, want := range []string{
+		"## Spec (dev-ready)", "Build the LoginForm component.",
+		"## Visual spec", "customer.login", "raw.example/docs/mockups/customer.login.html",
+		"el mockup manda sobre tu criterio visual",
+		"## Componentes existentes", "src/components/Button.tsx", "REUSA antes de crear",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("enriched body missing %q:\n%s", want, body)
+		}
+	}
+
+	// No screen_key → no visual section, but spec + components still render.
+	noScreen := Enrichment{
+		SpecDevReady: SpecSection("Add the /login endpoint."),
+		VisualSpec:   VisualSpecSection("", "", ""),
+		Components:   ComponentsSection([]string{"src/components/Button.tsx"}),
+	}
+	body = EnrichedBody(st, "", noScreen)
+	if strings.Contains(body, "## Visual spec") {
+		t.Fatalf("visual section leaked without a screen_key:\n%s", body)
+	}
+	if !strings.Contains(body, "## Spec (dev-ready)") || !strings.Contains(body, "## Componentes existentes") {
+		t.Fatalf("spec/components dropped when visual absent:\n%s", body)
+	}
+}
+
+// An empty spec (detailer failed) drops only the Spec section — the degrade path.
+func TestSpecSectionDegrades(t *testing.T) {
+	if s := SpecSection("   "); s != "" {
+		t.Fatalf("empty spec should render nothing, got %q", s)
+	}
+	if s := ComponentsSection(nil); s != "" {
+		t.Fatalf("no components should render nothing, got %q", s)
 	}
 }
