@@ -126,8 +126,9 @@ func (e *Engine) enqueueStep(runID, workflowID string, step Step, ctx Context) e
 // Re-run markers (internal input keys on a task's payload). They give "re-run one
 // phase" its surgical, non-cascading behaviour with NO workflow-name knowledge in the
 // kernel — advance() reads them generically:
-//   rerunMarker    — a re-run PHASE step: advance re-parks it at its review gate.
-//   terminalMarker — a re-run's review gate: approving it stops the run (no cascade).
+//
+//	rerunMarker    — a re-run PHASE step: advance re-parks it at its review gate.
+//	terminalMarker — a re-run's review gate: approving it stops the run (no cascade).
 const (
 	rerunMarker    = "__rerun"
 	terminalMarker = "__rerun_terminal"
@@ -156,6 +157,7 @@ func (e *Engine) enqueueStepMarked(runID, workflowID string, step Step, ctx Cont
 func (e *Engine) enqueueStepTerminal(runID, workflowID string, step Step, ctx Context) error {
 	return e.enqueueStepMarked(runID, workflowID, step, ctx, terminalMarker)
 }
+
 // enqueueStepRerun re-runs a phase (rerun marker) and, if feedback is given, injects
 // it as the `feedback` input — the same channel on_fail uses, which the design personas
 // already read ("if feedback is present, address every point"). This is what makes a
@@ -411,6 +413,34 @@ func (e *Engine) advance(wf *Workflow, task *store.Task, result StepResult) erro
 
 	// No on_fail policy: the run fails.
 	return e.Store.SetRunStatus(task.RunID, store.StatusFailed)
+}
+
+// advanceAnswer re-enqueues the answered gate's on_fail.goto target (the phase)
+// with the human's answers injected as the `answers` input — the answer-verb twin
+// of advance()'s on_fail branch, but WITHOUT the failure path: no countFailures, no
+// on_fail.max check, no run-fail on cap (the gate resolved DONE, not FAILED). The
+// phase re-runs, updates its doc from the answers, and re-parks at the same gate.
+// Callers (AnswerStep) have already verified step.OnFail.Goto is non-empty.
+func (e *Engine) advanceAnswer(wf *Workflow, task *store.Task, answers string) error {
+	step, _ := wf.StepByID(task.StepID)
+	target, ok := wf.StepByID(step.OnFail.Goto)
+	if !ok {
+		return e.Store.SetRunStatus(task.RunID, store.StatusFailed)
+	}
+	ctx, err := e.buildContext(task.RunID)
+	if err != nil {
+		return err
+	}
+	if target.Inputs == nil {
+		target.Inputs = map[string]any{}
+	}
+	inputs := ResolveInputs(target.Inputs, ctx)
+	inputs["answers"] = answers
+	payload, _ := json.Marshal(inputs)
+	return e.Store.EnqueueTask(&store.Task{
+		ID: newID("task"), RunID: task.RunID, WorkflowID: task.WorkflowID,
+		StepID: target.ID, Type: target.Type, Payload: string(payload),
+	})
 }
 
 // buildContext gathers the trigger payload + every completed step's result for a

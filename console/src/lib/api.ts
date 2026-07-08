@@ -622,6 +622,20 @@ export async function rejectStep(id: string, step: string, reason: string): Prom
   });
 }
 
+/**
+ * Responder las open questions de un human_gate (el TERCER verbo, junto a
+ * aprobar/rechazar). El kernel re-corre la fase incorporando las respuestas al
+ * doc EXISTENTE (no regenera) y re-parquea en el mismo gate para aprobar. NO es un
+ * rechazo: no consume el contador de on_fail. Ver POST /runs/{id}/steps/{step}/answer.
+ */
+export async function answerStep(id: string, step: string, text: string): Promise<void> {
+  if (await isMock()) return mutateMockStatus(id, "RUNNING");
+  await http<void>(`/runs/${id}/steps/${step}/answer`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
 export async function pauseFactory(): Promise<void> {
   if (await isMock()) {
     mockControl.paused = true;

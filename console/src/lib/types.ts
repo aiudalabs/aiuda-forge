@@ -88,6 +88,7 @@ export type RunEventType =
   | "step.event"
   | "step.gate"
   | "step.verify"
+  | "step.answer"
   | "run.awaiting_approval"
   | "run.done"
   | "run.failed"

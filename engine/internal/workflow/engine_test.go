@@ -555,3 +555,225 @@ func TestEngineInvalidateWorkflow(t *testing.T) {
 		t.Fatalf("after engine invalidate: want step2, got %+v", wf.Steps)
 	}
 }
+
+// driveToAwaiting runs ExecuteOne until a task for the run parks (AWAITING) or no
+// more work is claimable. Returns the awaiting step id. Used to drive a human_gate
+// (parkRunner) to its parked state in the answer-verb tests.
+func driveToAwaiting(t *testing.T, e *Engine, runID string) string {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		tasks, _ := e.Store.TasksForRun(runID)
+		for _, tk := range tasks {
+			if tk.Status == store.StatusAwaiting {
+				return tk.StepID
+			}
+		}
+		busy, err := e.ExecuteOne(context.Background(), "w")
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if !busy {
+			break
+		}
+	}
+	t.Fatalf("run %s never reached AWAITING", runID)
+	return ""
+}
+
+const answerFlowSrc = `
+id: answerflow
+version: 1.0.0
+steps:
+  - id: prd
+    type: echo
+  - id: prd_gate
+    type: human_gate
+    on_fail:
+      goto: prd
+      max: 2
+      feedback: $prd_gate.detail
+`
+
+// TestAnswerReRunsPhaseAndReparksGate is the acceptance criterion for the `answer`
+// verb: answering a gate's open questions re-runs the phase (goto target) with the
+// text injected as `answers` (NOT feedback), and the gate RE-PARKS for approval —
+// the run does not auto-advance. It is not a rejection: no FAILED gate task, and the
+// on_fail (reject) budget is untouched. Approving afterwards still completes the run.
+func TestAnswerReRunsPhaseAndReparksGate(t *testing.T) {
+	wf, _ := Parse([]byte(answerFlowSrc))
+	e := newEngine(t, MapLoader{"answerflow": wf})
+	e.Register("human_gate", parkRunner{})
+
+	runID, _ := e.StartRun("answerflow", nil)
+	if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+		t.Fatalf("expected prd_gate awaiting, got %q", step)
+	}
+
+	if err := e.AnswerStep(runID, "prd_gate", "Use Postgres, region us-east"); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+
+	// The phase re-runs, then the gate re-parks (reappears — no auto-advance).
+	if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+		t.Fatalf("expected prd_gate awaiting again after answer, got %q", step)
+	}
+
+	tasks, _ := e.Store.TasksForRun(runID)
+	var prdRuns, gateAwaiting, gateFailed int
+	var sawAnswers, sawFeedback bool
+	for _, tk := range tasks {
+		switch tk.StepID {
+		case "prd":
+			prdRuns++
+			if containsStr(tk.Payload, `"answers"`) {
+				sawAnswers = true
+			}
+			if containsStr(tk.Payload, `"feedback"`) {
+				sawFeedback = true
+			}
+		case "prd_gate":
+			switch tk.Status {
+			case store.StatusAwaiting:
+				gateAwaiting++
+			case store.StatusFailed:
+				gateFailed++
+			}
+		}
+	}
+	if prdRuns != 2 {
+		t.Fatalf("expected prd to run twice (initial + after answer), got %d", prdRuns)
+	}
+	if !sawAnswers {
+		t.Fatalf("expected `answers` injected into the re-run prd inputs")
+	}
+	if sawFeedback {
+		t.Fatalf("answer must NOT inject `feedback` (reject semantics leaked into answer)")
+	}
+	if gateAwaiting != 1 {
+		t.Fatalf("expected exactly one prd_gate re-parked (AWAITING), got %d", gateAwaiting)
+	}
+	if gateFailed != 0 {
+		t.Fatalf("answer must not FAIL the gate, got %d FAILED", gateFailed)
+	}
+	if n, _ := e.countFailures(runID, "prd_gate"); n != 0 {
+		t.Fatalf("on_fail (reject) counter must be 0 after an answer, got %d", n)
+	}
+
+	// Approve now: the approve path is unchanged and completes the run.
+	if err := e.ApproveStep(runID, "prd_gate"); err != nil {
+		t.Fatalf("approve after answer: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		if busy, _ := e.ExecuteOne(context.Background(), "w"); !busy {
+			break
+		}
+	}
+	run, _ := e.Store.GetRun(runID)
+	if run.Status != store.StatusDone {
+		t.Fatalf("expected run DONE after approve, got %s", run.Status)
+	}
+}
+
+// TestAnswerDoesNotConsumeOnFail: answering many times (well past on_fail.max=2)
+// never consumes the reject on_fail budget — answers resolve the gate DONE, so
+// countFailures stays 0. Each answer is recorded (CountAnswers) for the cap.
+func TestAnswerDoesNotConsumeOnFail(t *testing.T) {
+	wf, _ := Parse([]byte(answerFlowSrc))
+	e := newEngine(t, MapLoader{"answerflow": wf})
+	e.Register("human_gate", parkRunner{})
+	runID, _ := e.StartRun("answerflow", nil)
+
+	const rounds = 5 // > on_fail.max (2)
+	for i := 0; i < rounds; i++ {
+		if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+			t.Fatalf("round %d: expected prd_gate awaiting, got %q", i, step)
+		}
+		if err := e.AnswerStep(runID, "prd_gate", "answer round"); err != nil {
+			t.Fatalf("round %d answer: %v", i, err)
+		}
+	}
+	if n, _ := e.countFailures(runID, "prd_gate"); n != 0 {
+		t.Fatalf("on_fail counter must stay 0 after %d answers, got %d", rounds, n)
+	}
+	if n, _ := e.Store.CountAnswers(runID, "prd_gate"); n != rounds {
+		t.Fatalf("expected %d recorded answers, got %d", rounds, n)
+	}
+	if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+		t.Fatalf("gate must remain governable after answers, got %q", step)
+	}
+}
+
+// TestAnswerCapReached: after maxAnswersPerPhase answers, the next answer is
+// rejected with ErrAnswerCapReached (the hard anti-loop backstop) and the gate is
+// left awaiting (the rejected answer has no side effect).
+func TestAnswerCapReached(t *testing.T) {
+	wf, _ := Parse([]byte(answerFlowSrc))
+	e := newEngine(t, MapLoader{"answerflow": wf})
+	e.Register("human_gate", parkRunner{})
+	runID, _ := e.StartRun("answerflow", nil)
+
+	for i := 0; i < maxAnswersPerPhase; i++ {
+		if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+			t.Fatalf("round %d: expected prd_gate awaiting, got %q", i, step)
+		}
+		if err := e.AnswerStep(runID, "prd_gate", "answer"); err != nil {
+			t.Fatalf("round %d answer: %v", i, err)
+		}
+	}
+	if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+		t.Fatalf("expected prd_gate awaiting at cap, got %q", step)
+	}
+	if err := e.AnswerStep(runID, "prd_gate", "one too many"); !errors.Is(err, ErrAnswerCapReached) {
+		t.Fatalf("expected ErrAnswerCapReached at cap, got %v", err)
+	}
+	// The gate is still awaiting — a capped answer must be a no-op.
+	if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+		t.Fatalf("gate must stay awaiting after a capped answer, got %q", step)
+	}
+}
+
+// TestAnswerNoTarget: a gate with no on_fail.goto has nowhere to route answers →
+// ErrNoAnswerTarget, and the gate stays awaiting (never resolved).
+func TestAnswerNoTarget(t *testing.T) {
+	src := []byte(`
+id: answernotarget
+version: 1.0.0
+steps:
+  - id: prd
+    type: echo
+  - id: prd_gate
+    type: human_gate
+`)
+	wf, _ := Parse(src)
+	e := newEngine(t, MapLoader{"answernotarget": wf})
+	e.Register("human_gate", parkRunner{})
+	runID, _ := e.StartRun("answernotarget", nil)
+	if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+		t.Fatalf("expected prd_gate awaiting, got %q", step)
+	}
+	if err := e.AnswerStep(runID, "prd_gate", "x"); !errors.Is(err, ErrNoAnswerTarget) {
+		t.Fatalf("expected ErrNoAnswerTarget, got %v", err)
+	}
+	if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+		t.Fatalf("gate must remain awaiting after a no-target answer, got %q", step)
+	}
+}
+
+// TestAnswerRacingCancelIsTyped: answering a gate whose run was cancelled returns
+// ErrNoAwaitingStep (the same winner-selection typing as approve/reject), not a
+// misleading success.
+func TestAnswerRacingCancelIsTyped(t *testing.T) {
+	wf, _ := Parse([]byte(answerFlowSrc))
+	e := newEngine(t, MapLoader{"answerflow": wf})
+	e.Register("human_gate", parkRunner{})
+	runID, _ := e.StartRun("answerflow", nil)
+	if step := driveToAwaiting(t, e, runID); step != "prd_gate" {
+		t.Fatalf("expected prd_gate awaiting, got %q", step)
+	}
+	if err := e.Store.CancelRun(runID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := e.AnswerStep(runID, "prd_gate", "too late"); !errors.Is(err, ErrNoAwaitingStep) {
+		t.Fatalf("expected ErrNoAwaitingStep after cancel, got %v", err)
+	}
+}

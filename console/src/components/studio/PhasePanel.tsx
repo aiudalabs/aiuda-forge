@@ -12,6 +12,8 @@ import {
   useApprove,
   useRerunStep,
   useReject,
+  useAnswer,
+  useLiveEvents,
 } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 import type { DesignPhase, DesignStepStatus } from "@/lib/types";
@@ -42,11 +44,25 @@ export function PhasePanel({
 
   const approve = useApprove();
   const reject = useReject();
+  const answer = useAnswer();
   const rerun = useRerunStep();
+  // formMode selects which inline form is open — mutually exclusive with the
+  // default three-button row (Responder / Rechazar / Aprobar).
+  const [formMode, setFormMode] = useState<null | "reject" | "answer">(null);
   const [rejectInput, setRejectInput] = useState("");
-  const [showRejectForm, setShowRejectForm] = useState(false);
+  const [answerInput, setAnswerInput] = useState("");
 
   const gateStepId = phase.gateId || `${phase.stepId}_gate`;
+
+  // Q&A history for THIS phase: the run's step.answer events targeting this gate.
+  // The run stays RUNNING while a gate is parked, so the live events cover it; the
+  // hook also loads the full history on mount, so past answers show even when idle.
+  const events = useLiveEvents(runId, state === "awaiting" || state === "running");
+  const qa = events.filter(
+    (e) => e.type === "step.answer" && (e.data?.step as string | undefined) === gateStepId,
+  );
+
+  const busy = approve.isPending || reject.isPending || answer.isPending;
 
   function doApprove() {
     approve.mutate([runId, gateStepId]);
@@ -60,8 +76,18 @@ export function PhasePanel({
     if (!rejectInput.trim()) return;
     reject.mutate([runId, gateStepId, rejectInput.trim()], {
       onSuccess: () => {
-        setShowRejectForm(false);
+        setFormMode(null);
         setRejectInput("");
+      },
+    });
+  }
+
+  function doAnswer() {
+    if (!answerInput.trim()) return;
+    answer.mutate([runId, gateStepId, answerInput.trim()], {
+      onSuccess: () => {
+        setFormMode(null);
+        setAnswerInput("");
       },
     });
   }
@@ -117,27 +143,79 @@ export function PhasePanel({
         )}
       </div>
 
+      {/* Q&A de la fase: respuestas ya enviadas a las open questions (step.answer). */}
+      {qa.length > 0 && (
+        <div className="phase-qa">
+          <div className="phase-qa-title">{t("studio.view.qaHistory")}</div>
+          <ul className="phase-qa-list">
+            {qa.map((e, i) => (
+              <li key={e.id ?? i} className="phase-qa-item">
+                {String(e.data?.text ?? "")}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Acciones: solo cuando el gate está AWAITING */}
       {state === "awaiting" && phase.stepId !== "handoff" && (
         <div className="phase-actions">
-          {!showRejectForm ? (
+          {formMode === null && (
             <>
               <button
                 className="btn ghost"
-                onClick={() => setShowRejectForm(true)}
-                disabled={reject.isPending || approve.isPending}
+                onClick={() => setFormMode("answer")}
+                disabled={busy}
+              >
+                {t("studio.view.answer")}
+              </button>
+              <button
+                className="btn ghost"
+                onClick={() => setFormMode("reject")}
+                disabled={busy}
               >
                 {t("studio.view.reject")}
               </button>
               <button
                 className="btn primary"
                 onClick={doApprove}
-                disabled={approve.isPending || reject.isPending}
+                disabled={busy}
               >
                 {approve.isPending ? t("studio.view.approving") : t("studio.view.approve")}
               </button>
             </>
-          ) : (
+          )}
+          {formMode === "answer" && (
+            <div className="reject-form">
+              <textarea
+                className="inp"
+                style={{ resize: "vertical", minHeight: 72, fontSize: 13 }}
+                placeholder={t("studio.view.answerPlaceholder")}
+                value={answerInput}
+                onChange={(e) => setAnswerInput(e.target.value)}
+                autoFocus
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="btn ghost sm"
+                  onClick={() => {
+                    setFormMode(null);
+                    setAnswerInput("");
+                  }}
+                >
+                  {t("studio.view.cancel")}
+                </button>
+                <button
+                  className="btn primary sm"
+                  onClick={doAnswer}
+                  disabled={!answerInput.trim() || answer.isPending}
+                >
+                  {answer.isPending ? t("studio.view.answering") : t("studio.view.sendAnswer")}
+                </button>
+              </div>
+            </div>
+          )}
+          {formMode === "reject" && (
             <div className="reject-form">
               <textarea
                 className="inp"
@@ -151,7 +229,7 @@ export function PhasePanel({
                 <button
                   className="btn ghost sm"
                   onClick={() => {
-                    setShowRejectForm(false);
+                    setFormMode(null);
                     setRejectInput("");
                   }}
                 >

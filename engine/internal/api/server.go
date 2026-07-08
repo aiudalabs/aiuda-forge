@@ -115,6 +115,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /control/resume", s.resume)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/approve", s.approveStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/reject", s.rejectStep)
+	m.HandleFunc("POST /runs/{id}/steps/{step}/answer", s.answerStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/merge", s.mergeStep)
 	m.HandleFunc("POST /runs/{id}/steps/{step}/rerun", s.rerunStep)
 	m.HandleFunc("GET /runs/{id}/artifacts/{kind}", s.artifacts)
@@ -934,6 +935,43 @@ func (s *Server) rejectStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rejected": step, "run": id, "reason": req.Reason})
+}
+
+type answerReq struct {
+	Text string `json:"text"`
+}
+
+// answerStep is the THIRD gate verb (next to approve/reject): the human answers the
+// phase's open questions. The phase re-runs incorporating the answers into the
+// existing doc and re-parks at the same gate — it is NOT a rejection and does NOT
+// consume the reject on_fail budget (see Engine.AnswerStep). Empty text is a 400;
+// nothing awaiting / no on_fail.goto / answer cap reached are 409s.
+func (s *Server) answerStep(w http.ResponseWriter, r *http.Request) {
+	id, step := r.PathValue("id"), r.PathValue("step")
+	if !s.runAccessible(r.Context(), id) {
+		httpErr(w, http.StatusNotFound, "run not found: "+id)
+		return
+	}
+	var req answerReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		httpErr(w, http.StatusBadRequest, "answer text is required")
+		return
+	}
+	if err := s.Engine.AnswerStep(id, step, req.Text); err != nil {
+		switch {
+		case errors.Is(err, workflow.ErrNoAwaitingStep),
+			errors.Is(err, workflow.ErrNoAnswerTarget),
+			errors.Is(err, workflow.ErrAnswerCapReached):
+			httpErr(w, http.StatusConflict, err.Error())
+		default:
+			httpErr(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"answered": step, "run": id})
 }
 
 func (s *Server) mergeStep(w http.ResponseWriter, r *http.Request) {
