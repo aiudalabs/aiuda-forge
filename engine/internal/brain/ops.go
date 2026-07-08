@@ -26,6 +26,14 @@ type ControlOps interface {
 	Metrics(projectID string) (map[string]any, error)
 	ActiveState(projectID string) (map[string]any, error)
 
+	// Mid-sprint board moves — the operations a team makes on the backlog between
+	// sprints. Each MUTATES the backlog and is proposed for human approval. They are
+	// scoped to the project the Brain is acting in.
+	CancelStory(projectID, storyID string) error
+	MoveStory(projectID, storyID, sprintID string) error
+	SplitStory(projectID, storyID string, parts []tickets.StoryDraft) ([]string, error)
+	EditStory(projectID, storyID string, patch tickets.StoryPatch) error
+
 	// Registry / method authoring. The registry (workflows/agents/skills) IS the
 	// methodology, as DATA. read+list are reversible; write+delete MUTATE that data
 	// and are gated behind human approval. This is what turns the Brain from an
@@ -119,6 +127,34 @@ func (o EngineOps) RequeueRun(id string) (int, error) {
 		return 0, fmt.Errorf("ticket store not configured")
 	}
 	return o.Tickets.RequeueByRun(id)
+}
+
+func (o EngineOps) CancelStory(projectID, storyID string) error {
+	if o.Tickets == nil {
+		return fmt.Errorf("ticket store not configured")
+	}
+	return o.Tickets.CancelStory(projectID, storyID)
+}
+
+func (o EngineOps) MoveStory(projectID, storyID, sprintID string) error {
+	if o.Tickets == nil {
+		return fmt.Errorf("ticket store not configured")
+	}
+	return o.Tickets.MoveStory(projectID, storyID, sprintID)
+}
+
+func (o EngineOps) SplitStory(projectID, storyID string, parts []tickets.StoryDraft) ([]string, error) {
+	if o.Tickets == nil {
+		return nil, fmt.Errorf("ticket store not configured")
+	}
+	return o.Tickets.SplitStory(projectID, storyID, parts)
+}
+
+func (o EngineOps) EditStory(projectID, storyID string, patch tickets.StoryPatch) error {
+	if o.Tickets == nil {
+		return fmt.Errorf("ticket store not configured")
+	}
+	return o.Tickets.EditStory(projectID, storyID, patch)
 }
 
 func (o EngineOps) StartRun(wf string, payload map[string]any) (string, error) {

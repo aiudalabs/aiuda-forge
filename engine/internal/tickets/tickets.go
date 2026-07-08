@@ -26,7 +26,26 @@ const (
 	StatusInReview Status = "in_review"
 	StatusDone     Status = "done"
 	StatusFailed   Status = "failed"
+	// StatusCancelled is a terminal state a human moves a story to when the work is
+	// abandoned mid-flight (scope cut, superseded, or split into smaller stories). It
+	// is NEVER reached automatically — only via the explicit cancel operation — and,
+	// like done, it is terminal (no legal transition out of it). A story that is
+	// actively `running` cannot be cancelled directly: cancel its kernel run first
+	// (which parks the story failed), then cancel from there.
+	StatusCancelled Status = "cancelled"
 )
+
+// Kind classifies a story by the type of work. "story" is a feature/change; "bug"
+// is a defect. It is metadata for the Board (filtering, iconography) and does not
+// affect the lifecycle. Defaults to KindStory.
+const (
+	KindStory = "story"
+	KindBug   = "bug"
+)
+
+// validKind reports whether k is a recognised story kind. Empty is treated as
+// valid by callers that default it to KindStory.
+func validKind(k string) bool { return k == KindStory || k == KindBug }
 
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
@@ -48,6 +67,26 @@ var ErrDepCycle = errors.New("dependency cycle")
 // dependent would deadlock silently. Caught at CreateStory/AddDep instead.
 var ErrDepNotFound = errors.New("dependency story not found")
 
+// ErrInvalidState is returned by the human "team-move" operations (move/split/edit)
+// when the target story is in a state that operation forbids — e.g. moving or
+// splitting a story that is not in backlog/failed, or editing a running/terminal
+// story. It is distinct from ErrIllegalTransition (which guards the automatic
+// lifecycle): this guards the operator-driven mutations. Handlers map it to 409.
+var ErrInvalidState = errors.New("operation not allowed in current state")
+
+// ErrDepOrder is returned when moving a story to a sprint would break the sprint
+// ordering its dependency graph implies: a story may not sit in a sprint EARLIER
+// than any story it depends on (it would be fired before its prerequisite), nor
+// LATER than any story that depends on it (that dependent would be fired first).
+// Handlers map it to 409.
+var ErrDepOrder = errors.New("move breaks dependency ordering")
+
+// ErrInvalidInput is returned for malformed operation arguments the caller can fix —
+// e.g. a split with fewer than two parts, or a part id that collides with an existing
+// story. Distinct from ErrInvalidState (a state guard) so handlers map it to 400 while
+// a genuine DB failure still surfaces as 500.
+var ErrInvalidInput = errors.New("invalid input")
+
 // legalSources maps each writable target status to the set of stored statuses a
 // transition into it may legally start from. "ready" is derived (never stored) and
 // has no row. This is the tickets-store analogue of the kernel store's
@@ -66,6 +105,13 @@ var legalSources = map[Status][]Status{
 	StatusDone: {StatusInReview},
 	// A failure may strike any non-terminal state (backlog/running/in_review).
 	StatusFailed: {StatusBacklog, StatusRunning, StatusInReview},
+	// A human cancel abandons a story from any non-running, non-terminal state:
+	// backlog (which is also what a derived "ready" story is stored as), failed, or
+	// in_review. `running` is deliberately EXCLUDED — a live run must be cancelled
+	// first (it then parks the story failed, from where cancel is legal). done is
+	// terminal and never re-opened. This makes cancel-of-running a 0-row no-op that
+	// surfaces ErrIllegalTransition rather than orphaning a live run's PR.
+	StatusCancelled: {StatusBacklog, StatusFailed, StatusInReview},
 }
 
 // inClause renders a SQL `status IN ('a','b',...)` fragment from a status set. The
@@ -123,6 +169,35 @@ type Story struct {
 	// (v1.3), e.g. "github:owner/repo#42". Empty for natively-created stories.
 	// UNIQUE when non-empty, so re-importing the same issue is a no-op.
 	ExternalRef string `json:"external_ref,omitempty"`
+	// Kind classifies the work: KindStory (default) or KindBug. Board-only metadata;
+	// it does not affect the lifecycle.
+	Kind string `json:"kind,omitempty"`
+}
+
+// StoryDraft is the shape of ONE new story produced by splitting an existing one.
+// The split inherits the original's epic, sprint, kind, and dependency edges, so a
+// draft only carries the per-part fields the operator rewrites. An empty ID asks the
+// store to derive a deterministic suffix (<original>-a, <original>-b, …).
+type StoryDraft struct {
+	ID     string `json:"id,omitempty"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Accept string `json:"acceptance"`
+	// Owner overrides the inherited owner (lane) for this part; empty keeps the
+	// original's owner.
+	Owner string `json:"owner,omitempty"`
+}
+
+// StoryPatch is a sparse edit to a story: only non-nil fields are applied. Deps,
+// when non-nil, REPLACES the story's dependency set (an empty non-nil slice clears
+// them) and revalidates the graph (no self-dep, every dep exists, no cycle). Kind
+// is intentionally absent — it is set at creation, not edited here.
+type StoryPatch struct {
+	Title  *string   `json:"title,omitempty"`
+	Body   *string   `json:"body,omitempty"`
+	Accept *string   `json:"acceptance,omitempty"`
+	Owner  *string   `json:"owner,omitempty"`
+	Deps   *[]string `json:"deps,omitempty"`
 }
 
 // DefaultProjectID is the project that pre-multi-tenant stories/sprints are
@@ -158,7 +233,8 @@ CREATE TABLE IF NOT EXISTS stories (
   repo       TEXT NOT NULL DEFAULT '',
   pr_url     TEXT NOT NULL DEFAULT '',
   project_id TEXT NOT NULL DEFAULT '',
-  external_ref TEXT NOT NULL DEFAULT ''
+  external_ref TEXT NOT NULL DEFAULT '',
+  kind       TEXT NOT NULL DEFAULT 'story'
 );
 -- NOTE: the external_ref UNIQUE index is created in Open() AFTER the
 -- migrationAddExternalRef ALTER, not here: an existing DB's stories table predates
@@ -217,6 +293,10 @@ var projectIDMigrations = []string{
 // migrationAddExternalRef adds the import idempotency key column to DBs predating
 // ticket import (v1.3). Same swallow-on-duplicate contract as the other migrations.
 const migrationAddExternalRef = `ALTER TABLE stories ADD COLUMN external_ref TEXT NOT NULL DEFAULT ''`
+
+// migrationAddKind adds the story/bug classification column to DBs predating it.
+// Same swallow-on-duplicate contract; existing rows default to 'story'.
+const migrationAddKind = `ALTER TABLE stories ADD COLUMN kind TEXT NOT NULL DEFAULT 'story'`
 
 // Store is the ticket store backed by a sqlite database.
 type Store struct {
@@ -296,6 +376,12 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_external_ref ON stories(external_ref) WHERE external_ref != ''`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate external_ref index: %w", err)
+	}
+	// Story/bug classification (mid-sprint team moves): add kind to DBs predating it.
+	// Idempotent — a duplicate-column error means already migrated.
+	if _, err := db.Exec(migrationAddKind); err != nil && !isDuplicateColumn(err) {
+		db.Close()
+		return nil, fmt.Errorf("migrate stories.kind: %w", err)
 	}
 	if err := migrateToCompositePK(db); err != nil {
 		db.Close()
@@ -568,6 +654,12 @@ func (s *Store) CreateStory(st Story) error {
 	if st.ProjectID == "" {
 		st.ProjectID = DefaultProjectID // back-compat: an unscoped story joins the default project
 	}
+	if st.Kind == "" {
+		st.Kind = KindStory // default classification
+	}
+	if !validKind(st.Kind) {
+		return fmt.Errorf("invalid kind %q: want %q or %q", st.Kind, KindStory, KindBug)
+	}
 	// Reject a self-dependency up front: it never resolves (a story can't be its own
 	// "done" prerequisite) and would deadlock readiness forever (H7).
 	for _, dep := range st.Deps {
@@ -588,9 +680,9 @@ func (s *Store) CreateStory(st Story) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		st.ID, st.EpicID, st.SprintID, st.Title, st.Body, st.Accept, st.Owner, string(st.Status), st.RunID, st.Repo, st.PRURL, st.ProjectID, st.ExternalRef)
+	_, err = tx.Exec(`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		st.ID, st.EpicID, st.SprintID, st.Title, st.Body, st.Accept, st.Owner, string(st.Status), st.RunID, st.Repo, st.PRURL, st.ProjectID, st.ExternalRef, st.Kind)
 	if err != nil {
 		return err
 	}
@@ -801,7 +893,7 @@ func (s *Store) GetStoryInProject(projectID, id string) (Story, error) {
 // getStory is the shared loader: scoped to projectID when non-empty, unscoped
 // otherwise. It loads the story plus its deps.
 func (s *Store) getStory(projectID, id string) (Story, error) {
-	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
+	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind
 		FROM stories WHERE id=?`
 	args := []any{id}
 	if projectID != "" {
@@ -811,7 +903,7 @@ func (s *Store) getStory(projectID, id string) (Story, error) {
 	q += ` LIMIT 1`
 	var st Story
 	err := s.db.QueryRow(q, args...).
-		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef)
+		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Story{}, ErrNotFound
 	}
@@ -835,7 +927,7 @@ func (s *Store) ListStories() ([]Story, error) {
 // ListStoriesByProject returns stories scoped to projectID (empty = all projects,
 // for admin/back-compat) with their deps, ordered by id (audit A1).
 func (s *Store) ListStoriesByProject(projectID string) ([]Story, error) {
-	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
+	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind
 		FROM stories`
 	var args []any
 	if projectID != "" {
@@ -851,7 +943,7 @@ func (s *Store) ListStoriesByProject(projectID string) ([]Story, error) {
 	var out []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, st)
@@ -1146,6 +1238,351 @@ func (s *Store) RequeueByRun(runID string) (int, error) {
 	return total, nil
 }
 
+// ---- Human "team-move" operations (mid-sprint) -----------------------------
+// These model the moves a real team makes on the board between sprints: cancel a
+// story, move it to another sprint, split it into smaller ones, and edit its
+// fields/deps. All are operator-driven (never automatic) and each is guarded on the
+// story's current state so a live run is never corrupted. They mirror Requeue's
+// transactional, guarded-UPDATE discipline.
+
+// CancelStory moves a story to the terminal `cancelled` state through the guarded
+// state machine. Legal only from backlog/failed/in_review (legalSources[cancelled]);
+// a `running` story is refused with ErrIllegalTransition — cancel its run first (which
+// parks the story failed, from where cancel is legal). Missing id → ErrNotFound.
+// Scoped to projectID (empty = legacy unscoped).
+func (s *Store) CancelStory(projectID, id string) error {
+	return s.transitionScoped(projectID, id, StatusCancelled, "")
+}
+
+// MoveStory reassigns a story to newSprintID (empty = the loose/no-sprint pool).
+// Allowed only while the story is planning-mutable (backlog or failed); a
+// running/in_review/terminal story is refused (ErrInvalidState). The move must not
+// break the ordering the dependency graph implies: the target sprint may sit no
+// EARLIER than any sprint the story depends on, and no LATER than any sprint that
+// depends on the story (ErrDepOrder). Sprint order is the id-ascending order the
+// scheduler fires them in. A non-empty target sprint must exist in the story's
+// project (else ErrNotFound). projectID empty resolves the story's own project.
+func (s *Store) MoveStory(projectID, id, newSprintID string) error {
+	st, err := s.getStory(projectID, id)
+	if err != nil {
+		return err
+	}
+	if st.Status != StatusBacklog && st.Status != StatusFailed {
+		return fmt.Errorf("%w: %s is %s (move allowed only from backlog/failed)", ErrInvalidState, id, st.Status)
+	}
+	if newSprintID != "" {
+		ok, err := s.sprintExists(newSprintID, st.ProjectID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: sprint %s", ErrNotFound, newSprintID)
+		}
+	}
+	if err := s.checkMoveOrdering(st, newSprintID); err != nil {
+		return err
+	}
+	// Guarded on backlog/failed so a story that raced into running between our read and
+	// this write is not silently moved from under its run.
+	q := `UPDATE stories SET sprint_id=? WHERE id=? AND ` + inClause([]Status{StatusBacklog, StatusFailed})
+	args := []any{newSprintID, id}
+	if st.ProjectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, st.ProjectID)
+	}
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: %s changed state during move", ErrInvalidState, id)
+	}
+	return nil
+}
+
+// checkMoveOrdering verifies placing story st in targetSprint respects the sprint
+// order its dependency edges imply. A sprint's rank is its index in id-ascending order
+// (the fire order); a lower rank is "earlier". For every dep b of st it requires
+// rank(target) >= rank(b.sprint); for every story c that depends on st it requires
+// rank(c.sprint) >= rank(target). Deps/dependents with no sprint (loose) impose no
+// ordering and are skipped, as are sprints that no longer exist. Moving to the loose
+// pool (target "") is unranked and thus unconstrained. Returns ErrDepOrder naming the
+// first offending edge, or nil.
+func (s *Store) checkMoveOrdering(st Story, targetSprint string) error {
+	ranks, err := s.sprintRanks(st.ProjectID)
+	if err != nil {
+		return err
+	}
+	tRank, tOK := ranks[targetSprint]
+	if !tOK {
+		return nil // loose target: no fire-order position to violate
+	}
+	for _, dep := range st.Deps {
+		sp, err := s.sprintOf(dep, st.ProjectID)
+		if err != nil {
+			return err
+		}
+		if r, ok := ranks[sp]; ok && tRank < r {
+			return fmt.Errorf("%w: %s depends on %s which is in a later sprint (%s)", ErrDepOrder, st.ID, dep, sp)
+		}
+	}
+	dependents, err := s.StoryDependents(st.ProjectID, st.ID)
+	if err != nil {
+		return err
+	}
+	for _, c := range dependents {
+		sp, err := s.sprintOf(c, st.ProjectID)
+		if err != nil {
+			return err
+		}
+		if r, ok := ranks[sp]; ok && tRank > r {
+			return fmt.Errorf("%w: %s is depended on by %s which is in an earlier sprint (%s)", ErrDepOrder, st.ID, c, sp)
+		}
+	}
+	return nil
+}
+
+// sprintRanks maps each sprint id to its position in id-ascending order — the order the
+// scheduler fires sprints in — so a lower value means "earlier".
+func (s *Store) sprintRanks(projectID string) (map[string]int, error) {
+	sprints, err := s.listSprints(projectID)
+	if err != nil {
+		return nil, err
+	}
+	ranks := make(map[string]int, len(sprints))
+	for i, sp := range sprints {
+		ranks[sp.ID] = i
+	}
+	return ranks, nil
+}
+
+// sprintExists reports whether a sprint id exists in projectID.
+func (s *Store) sprintExists(id, projectID string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM sprints WHERE id=? AND project_id=?`, id, projectID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// sprintOf returns a story's sprint_id ("" if loose or the story is absent). A missing
+// story yields "" with no error: a dangling edge imposes no sprint ordering (the
+// dangling-dep integrity concern is surfaced elsewhere, D7).
+func (s *Store) sprintOf(id, projectID string) (string, error) {
+	var sp string
+	err := s.db.QueryRow(`SELECT sprint_id FROM stories WHERE id=? AND project_id=?`, id, projectID).Scan(&sp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return sp, nil
+}
+
+// SplitStory replaces one story with N new ones (parts). Each part inherits the
+// original's epic, sprint, kind, repo, and dependency edges; the part's own
+// title/body/acceptance/owner come from the draft (owner falls back to the original's).
+// Every story that depended on the original is REWIRED to depend on all parts instead,
+// so the split leaves no dangling dependency (D7) — dependents still wait for the work,
+// now spread across the parts. The original is marked `cancelled` with a note recording
+// the parts. Allowed only from backlog/failed (ErrInvalidState); needs ≥2 parts.
+// All-or-nothing in one transaction. Returns the new ids in order.
+//
+// The rewrite is acyclic by construction: parts depend only on the original's deps
+// (which could not reach the original in an acyclic graph), so no dependent→part edge
+// closes a loop — hence no cycle re-validation is needed.
+func (s *Store) SplitStory(projectID, id string, parts []StoryDraft) ([]string, error) {
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("%w: split needs at least 2 parts, got %d", ErrInvalidInput, len(parts))
+	}
+	orig, err := s.getStory(projectID, id)
+	if err != nil {
+		return nil, err
+	}
+	if orig.Status != StatusBacklog && orig.Status != StatusFailed {
+		return nil, fmt.Errorf("%w: %s is %s (split allowed only from backlog/failed)", ErrInvalidState, id, orig.Status)
+	}
+	// Resolve part ids: an explicit draft id wins, an empty one gets a deterministic
+	// suffix (<id>-a, <id>-b, …). Each must be new (no collision) and unique in the batch.
+	ids := make([]string, len(parts))
+	seen := map[string]bool{}
+	for i := range parts {
+		pid := strings.TrimSpace(parts[i].ID)
+		if pid == "" {
+			pid = fmt.Sprintf("%s-%c", id, 'a'+i)
+		}
+		if pid == id {
+			return nil, fmt.Errorf("%w: split part id %q collides with the original", ErrInvalidInput, pid)
+		}
+		if seen[pid] {
+			return nil, fmt.Errorf("%w: duplicate split part id %q", ErrInvalidInput, pid)
+		}
+		exists, err := s.storyExists(pid, orig.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, fmt.Errorf("%w: split part id %q already exists", ErrInvalidInput, pid)
+		}
+		seen[pid] = true
+		ids[i] = pid
+	}
+	dependents, err := s.StoryDependents(orig.ProjectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	for i, pid := range ids {
+		owner := parts[i].Owner
+		if owner == "" {
+			owner = orig.Owner
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO stories(id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			pid, orig.EpicID, orig.SprintID, parts[i].Title, parts[i].Body, parts[i].Accept, owner,
+			string(StatusBacklog), "", orig.Repo, "", orig.ProjectID, "", orig.Kind); err != nil {
+			return nil, err
+		}
+		for _, dep := range orig.Deps {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO story_deps(story_id, dep_id, project_id) VALUES(?,?,?)`, pid, dep, orig.ProjectID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Rewire each dependent off the original and onto every part.
+	for _, c := range dependents {
+		if _, err := tx.Exec(`DELETE FROM story_deps WHERE story_id=? AND dep_id=? AND project_id=?`, c, id, orig.ProjectID); err != nil {
+			return nil, err
+		}
+		for _, pid := range ids {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO story_deps(story_id, dep_id, project_id) VALUES(?,?,?)`, c, pid, orig.ProjectID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Cancel the original (guarded on backlog/failed) and stamp the split note. `body||?`
+	// appends the note in-place so the record explains why it was cancelled.
+	note := "\n\n_Split into: " + strings.Join(ids, ", ") + "_"
+	res, err := tx.Exec(
+		`UPDATE stories SET status='cancelled', body=body||? WHERE id=? AND project_id=? AND `+inClause([]Status{StatusBacklog, StatusFailed}),
+		note, id, orig.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("%w: %s changed state during split", ErrInvalidState, id)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// editable reports whether a story's fields/deps may be edited in its current state:
+// the planning-mutable states (backlog/failed/in_review). A running story is refused
+// (its run is live); done and cancelled are terminal and immutable.
+func editable(st Status) bool {
+	return st == StatusBacklog || st == StatusFailed || st == StatusInReview
+}
+
+// EditStory applies a sparse patch (title/body/acceptance/owner/deps) to a story.
+// Allowed only in an editable state (backlog/failed/in_review) — never on a running,
+// done, or cancelled story (ErrInvalidState). When patch.Deps is non-nil it REPLACES
+// the dependency set and revalidates the graph the same way publish/AddDep do (no
+// self-dep, every dep must exist, no cycle). projectID empty resolves the story's own
+// project. Missing id → ErrNotFound.
+func (s *Store) EditStory(projectID, id string, patch StoryPatch) error {
+	st, err := s.getStory(projectID, id)
+	if err != nil {
+		return err
+	}
+	if !editable(st.Status) {
+		return fmt.Errorf("%w: %s is %s (edit allowed only in backlog/failed/in_review)", ErrInvalidState, id, st.Status)
+	}
+	pid := st.ProjectID
+	// Validate a dep replacement BEFORE any write (mirror AddDep): self-dep, existence,
+	// and cycle are rejected whole so a bad edit leaves the graph untouched.
+	var newDeps []string
+	if patch.Deps != nil {
+		newDeps = *patch.Deps
+		for _, dep := range newDeps {
+			if dep == id {
+				return fmt.Errorf("%w: %s depends on itself", ErrDepCycle, id)
+			}
+			ok, err := s.storyExists(dep, pid)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("%w: %s -> %s", ErrDepNotFound, id, dep)
+			}
+		}
+		if err := s.checkNoCycle(id, newDeps, pid); err != nil {
+			return err
+		}
+	}
+	// Assemble the field update from the non-nil patch fields.
+	sets := []string{}
+	setArgs := []any{}
+	if patch.Title != nil {
+		sets = append(sets, "title=?")
+		setArgs = append(setArgs, *patch.Title)
+	}
+	if patch.Body != nil {
+		sets = append(sets, "body=?")
+		setArgs = append(setArgs, *patch.Body)
+	}
+	if patch.Accept != nil {
+		sets = append(sets, "accept=?")
+		setArgs = append(setArgs, *patch.Accept)
+	}
+	if patch.Owner != nil {
+		sets = append(sets, "owner=?")
+		setArgs = append(setArgs, *patch.Owner)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if len(sets) > 0 {
+		q := `UPDATE stories SET ` + strings.Join(sets, ", ") + ` WHERE id=? AND project_id=? AND ` + inClause([]Status{StatusBacklog, StatusFailed, StatusInReview})
+		a := append(append([]any{}, setArgs...), id, pid)
+		res, err := tx.Exec(q, a...)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("%w: %s changed state during edit", ErrInvalidState, id)
+		}
+	}
+	if patch.Deps != nil {
+		if _, err := tx.Exec(`DELETE FROM story_deps WHERE story_id=? AND project_id=?`, id, pid); err != nil {
+			return err
+		}
+		for _, dep := range newDeps {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO story_deps(story_id, dep_id, project_id) VALUES(?,?,?)`, id, dep, pid); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
 // SetStoryRun records the run_id that is executing a story. It only writes the
 // run_id on a non-terminal story (M5) — recording a run on a done/failed story is
 // always a mistake (a stale completion path) and must be a no-op, surfaced as
@@ -1348,7 +1785,7 @@ func reaches(adj map[string][]string, start, target string) bool {
 // A story with no deps is ready immediately when its stored status is backlog.
 func (s *Store) Ready() ([]Story, error) {
 	// Load all backlog stories and check deps in one pass.
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind
 		FROM stories WHERE status='backlog' ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -1357,7 +1794,7 @@ func (s *Store) Ready() ([]Story, error) {
 	var candidates []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, st)
@@ -1405,7 +1842,7 @@ func (s *Store) StoriesBySprintScoped(sprintID, projectID string) ([]Story, erro
 }
 
 func (s *Store) storiesBySprint(sprintID, projectID string) ([]Story, error) {
-	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
+	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind
 		FROM stories WHERE sprint_id=?`
 	args := []any{sprintID}
 	if projectID != "" {
@@ -1421,7 +1858,7 @@ func (s *Store) storiesBySprint(sprintID, projectID string) ([]Story, error) {
 	var stories []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind); err != nil {
 			return nil, err
 		}
 		stories = append(stories, st)
@@ -1726,7 +2163,7 @@ func (s *Store) MarkSprintInReview(sprintID, prURL string) error {
 // InReview returns all stories currently in_review (any sprint or loose). The
 // merge-reconcile loop reads these each cycle to check whether their PR merged.
 func (s *Store) InReview() ([]Story, error) {
-	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref
+	rows, err := s.db.Query(`SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind
 		FROM stories WHERE status='in_review' ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -1735,7 +2172,7 @@ func (s *Store) InReview() ([]Story, error) {
 	var out []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, st)

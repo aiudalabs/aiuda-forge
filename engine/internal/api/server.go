@@ -54,8 +54,8 @@ type Server struct {
 	// nil disables the sync endpoint + webhook. GHWebhookSecret feeds the webhook
 	// signature check, read per-request (hot-reloadable). Dispatcher fires ready
 	// work to GitHub agents under the project's autonomy policy (F2).
-	Projector       *conductor.Projector
-	Dispatcher      *conductor.Dispatcher
+	Projector  *conductor.Projector
+	Dispatcher *conductor.Dispatcher
 	// Resolver despacha resoluciones de conflicto de PR (claude_action). nil
 	// deshabilita el endpoint POST /projects/{id}/prs/{number}/resolve-conflicts.
 	Resolver        *conductor.ConflictResolver
@@ -246,13 +246,20 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /sprints/{id}/claim", s.needTickets(s.claimSprint))
 	m.HandleFunc("PUT /sprints/{id}/status", s.needTickets(s.updateSprintStatus))
 	m.HandleFunc("POST /sprints/{id}/requeue", s.needTickets(s.requeueSprint))
+	m.HandleFunc("POST /sprints/{id}/cancel", s.needTickets(s.cancelSprint))
 	m.HandleFunc("POST /stories/{id}/requeue", s.needTickets(s.requeueStory))
 	m.HandleFunc("POST /stories", s.needTickets(s.createStory))
 	m.HandleFunc("GET /stories", s.needTickets(s.listStoriesHandler))
 	m.HandleFunc("GET /stories/{id}", s.needTickets(s.getStory))
 	m.HandleFunc("DELETE /stories/{id}", s.needTickets(s.deleteStory))
+	// PATCH edits fields/deps in place; the mid-sprint moves cancel/move/split each
+	// have their own guarded action endpoint (mirroring /requeue).
+	m.HandleFunc("PATCH /stories/{id}", s.needTickets(s.editStory))
 	m.HandleFunc("PUT /stories/{id}/status", s.needTickets(s.updateStoryStatus))
 	m.HandleFunc("POST /stories/{id}/claim", s.needTickets(s.claimStory))
+	m.HandleFunc("POST /stories/{id}/cancel", s.needTickets(s.cancelStory))
+	m.HandleFunc("POST /stories/{id}/move", s.needTickets(s.moveStory))
+	m.HandleFunc("POST /stories/{id}/split", s.needTickets(s.splitStory))
 	m.HandleFunc("POST /stories/{id}/deps", s.needTickets(s.addStoryDeps))
 	// Enviar a GitHub por-story (F2): export idempotente síncrono con resultado real.
 	m.HandleFunc("POST /stories/{id}/export", s.needTickets(s.exportStory))
@@ -599,6 +606,222 @@ func (s *Server) requeueStory(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, map[string]any{"requeued": true})
 	}
+}
+
+// ---- Mid-sprint "team-move" operations (cancel/move/split/edit) -------------
+// These mirror the requeue handlers: read+authorize the story, then delegate to the
+// guarded store operation. Every state change still flows through the tickets state
+// machine (the single point that guards a story's status), so the API stays a thin,
+// non-privileged client (kernel constitution §4/§5).
+
+// cancelVerdict is the outcome of attempting to cancel ONE story — the cancel analogue
+// of requeueVerdict, so the single-story and sprint handlers share one validation.
+type cancelVerdict int
+
+const (
+	cancelDone    cancelVerdict = iota // → cancelled applied
+	cancelNoop                         // already cancelled: idempotent no-op
+	cancelBlocked                      // running (cancel its run first) or terminal done
+)
+
+// cancelStoryUnit validates and, when legal, cancels a single story. Only a
+// backlog/failed/in_review story is cancellable; `cancelled` is an idempotent no-op
+// (pressing the button twice must not error); a `running` story is blocked (its run
+// must be cancelled first — that parks it failed, from where cancel is legal); a `done`
+// story is blocked (shipped work is not cancelled). Callers have already authorized the
+// mutation on st.ProjectID.
+func (s *Server) cancelStoryUnit(st tickets.Story) (cancelVerdict, string, error) {
+	switch st.Status {
+	case tickets.StatusCancelled:
+		return cancelNoop, "la story ya está cancelada", nil
+	case tickets.StatusRunning:
+		return cancelBlocked, "la story está corriendo; cancela primero su run y luego cancélala", nil
+	case tickets.StatusDone:
+		return cancelBlocked, "la story está en done; no se puede cancelar trabajo ya entregado", nil
+	}
+	if err := s.Tickets.CancelStory(st.ProjectID, st.ID); err != nil {
+		if errors.Is(err, tickets.ErrIllegalTransition) {
+			// Raced out of a cancellable state between our read and this write.
+			return cancelBlocked, "la story cambió de estado; recarga e inténtalo de nuevo", nil
+		}
+		return cancelBlocked, "", err
+	}
+	return cancelDone, "", nil
+}
+
+// cancelStory handles POST /stories/{id}/cancel. Editor+ on the story's project.
+func (s *Server) cancelStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := s.storyForRoute(r, id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleEditor) {
+		return
+	}
+	verdict, reason, err := s.cancelStoryUnit(st)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	switch verdict {
+	case cancelNoop:
+		writeJSON(w, http.StatusOK, map[string]any{"cancelled": false, "reason": reason})
+	case cancelBlocked:
+		httpErr(w, http.StatusConflict, reason)
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"cancelled": true})
+	}
+}
+
+// cancelSprint handles POST /sprints/{id}/cancel — cancels every one of a sprint's
+// non-running, non-terminal stories, reporting which were cancelled and which were
+// skipped (a running/done story is left untouched, mirroring requeueSprint).
+func (s *Server) cancelSprint(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.sprintDenied(w, r.Context(), id, projects.RoleEditor) {
+		return
+	}
+	stories, err := s.Tickets.StoriesBySprint(id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cancelled := []string{}
+	skipped := []map[string]string{}
+	for _, st := range stories {
+		verdict, reason, err := s.cancelStoryUnit(st)
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		switch verdict {
+		case cancelDone:
+			cancelled = append(cancelled, st.ID)
+		case cancelBlocked:
+			skipped = append(skipped, map[string]string{"id": st.ID, "reason": reason})
+		}
+		// cancelNoop (already cancelled) is neither cancelled nor a problem — omit.
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": cancelled, "skipped": skipped})
+}
+
+type moveStoryReq struct {
+	SprintID string `json:"sprint_id"`
+}
+
+// moveStory handles POST /stories/{id}/move — reassigns a story to another sprint.
+// The store rejects a move that breaks dependency ordering (409) or leaves the
+// planning-mutable states (409); an unknown target sprint is 404. Editor+.
+func (s *Server) moveStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := s.storyForRoute(r, id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleEditor) {
+		return
+	}
+	var req moveStoryReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := s.Tickets.MoveStory(st.ProjectID, id, req.SprintID); err != nil {
+		switch {
+		case errors.Is(err, tickets.ErrNotFound):
+			httpErr(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, tickets.ErrInvalidState), errors.Is(err, tickets.ErrDepOrder):
+			httpErr(w, http.StatusConflict, err.Error())
+		default:
+			httpErr(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	got, err := s.Tickets.GetStoryInProject(st.ProjectID, id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, got)
+}
+
+type splitStoryReq struct {
+	Parts []tickets.StoryDraft `json:"parts"`
+}
+
+// splitStory handles POST /stories/{id}/split — replaces a story with N new ones and
+// cancels the original. Bad input (too few parts, id collision) is 400; a story not in
+// backlog/failed is 409. Editor+.
+func (s *Server) splitStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := s.storyForRoute(r, id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleEditor) {
+		return
+	}
+	var req splitStoryReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	ids, err := s.Tickets.SplitStory(st.ProjectID, id, req.Parts)
+	if err != nil {
+		switch {
+		case errors.Is(err, tickets.ErrInvalidInput):
+			httpErr(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, tickets.ErrInvalidState):
+			httpErr(w, http.StatusConflict, err.Error())
+		case errors.Is(err, tickets.ErrNotFound):
+			httpErr(w, http.StatusNotFound, err.Error())
+		default:
+			httpErr(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": id, "parts": ids})
+}
+
+// editStory handles PATCH /stories/{id} — a sparse edit of title/body/acceptance/
+// owner/deps. A dep replacement that is malformed (self-dep, missing dep, cycle) is
+// 400; editing a running/terminal story is 409. Editor+.
+func (s *Server) editStory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := s.storyForRoute(r, id)
+	if err != nil {
+		ticketNotFound(w, err)
+		return
+	}
+	if s.ticketDenied(w, r.Context(), st.ProjectID, projects.RoleEditor) {
+		return
+	}
+	var patch tickets.StoryPatch
+	if !readJSON(w, r, &patch) {
+		return
+	}
+	if err := s.Tickets.EditStory(st.ProjectID, id, patch); err != nil {
+		if depError(w, err) {
+			return
+		}
+		switch {
+		case errors.Is(err, tickets.ErrInvalidState):
+			httpErr(w, http.StatusConflict, err.Error())
+		case errors.Is(err, tickets.ErrNotFound):
+			httpErr(w, http.StatusNotFound, err.Error())
+		default:
+			httpErr(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	got, err := s.Tickets.GetStoryInProject(st.ProjectID, id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, got)
 }
 
 func (s *Server) controlStatus(w http.ResponseWriter, r *http.Request) {
