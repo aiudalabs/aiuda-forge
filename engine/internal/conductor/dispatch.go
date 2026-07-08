@@ -100,6 +100,11 @@ type Dispatcher struct {
 	GH      GitHubDispatcher
 	// ClientFor, si está presente, resuelve el cliente por PROYECTO (tenant).
 	ClientFor func(ctx context.Context, projectID string) *github.Client
+	// Groomer, si está presente (VIBEFORGE_CONDUCTOR_GROOM != "0"), enriquece el
+	// issue body de cada story JUSTO ANTES de despacharla: spec dev-ready (story-
+	// detailer) + spec visual + inventario de componentes. nil = grooming apagado →
+	// el body queda como lo dejó el export (comportamiento byte-idéntico).
+	Groomer *Groomer
 }
 
 // ghFor resuelve el dispatcher de GitHub para un proyecto.
@@ -292,6 +297,13 @@ func (d *Dispatcher) Dispatch(ctx context.Context, projectID, repoURL string, po
 	if reason := d.capacityBlock(ctx, ghd, repoURL, cand.Executor); reason != "" {
 		return DispatchResult{}, fmt.Errorf("%w: %s", ErrNoCapacity, reason)
 	}
+
+	// JIT grooming (BMAD level-2): expande cada story a un spec dev-ready y enriquece
+	// su issue body (spec + visual + componentes) ANTES de disparar, para que el agente
+	// lea el issue ya enriquecido. Best-effort y con nil-receiver seguro: si el groomer
+	// no está cableado (flag off) es un no-op; un fallo/timeout del detailer degrada el
+	// body pero NUNCA bloquea el dispatch (ver Groomer.GroomStories).
+	d.Groomer.GroomStories(ctx, projectID, repoURL, storyIDs)
 
 	url, err := fire(cand.Executor)
 	if err != nil {

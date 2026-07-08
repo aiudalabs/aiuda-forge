@@ -119,6 +119,38 @@ func (c *Client) AddIssueBlockedBy(ctx context.Context, repoURL string, issueNum
 	return true, nil
 }
 
+// UpdateIssueBody reemplaza el cuerpo de un issue existente (PATCH). Lo usa el
+// grooming JIT del conductor (internal/conductor/groom.go) para enriquecer el
+// issue de una story con el spec dev-ready + spec visual + inventario de
+// componentes justo antes de despacharla. El body viaja por temp file (--input)
+// para que un spec largo nunca choque con ARG_MAX (igual que CreateIssue).
+func (c *Client) UpdateIssueBody(ctx context.Context, repoURL string, number int, body string) error {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{"body": body})
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp("", "ghissue-body-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(payload); err != nil {
+		tmp.Close()
+		return err
+	}
+	tmp.Close()
+	out, err := c.runner(ctx, "", "gh", "api", "-X", "PATCH",
+		fmt.Sprintf("repos/%s/issues/%d", slug, number), "--input", tmp.Name())
+	if err != nil {
+		return fmt.Errorf("gh api update issue #%d body: %w: %s", number, err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
 // CloseIssue cierra un issue como completado, con un comentario de contexto.
 // El conductor lo usa para cerrar el loop cuando el PR de una story mergeó
 // pero sus closing keywords no auto-cerraron (p.ej. escritos entre backticks,

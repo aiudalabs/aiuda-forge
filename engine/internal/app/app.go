@@ -299,6 +299,26 @@ func Build(cfg Config) (*App, error) {
 		// o installation token de la App); sin credenciales → auth del host.
 		srv.Projector.ClientFor = srv.GHForProject
 		srv.Dispatcher = &conductor.Dispatcher{Tickets: tix, GH: gh, ClientFor: srv.GHForProject}
+		// JIT grooming (BMAD level-2): antes de despachar una story, el story-detailer
+		// la expande a un spec dev-ready y enriquece el issue (spec + visual + componentes).
+		// El agente corre en el HOST, sin sandbox (mismo cableado que el designRunner).
+		// Default ON; VIBEFORGE_CONDUCTOR_GROOM=0 lo apaga (deja el body como lo exportó
+		// export.go, byte-idéntico) para poder medir el impacto.
+		if os.Getenv("VIBEFORGE_CONDUCTOR_GROOM") != "0" {
+			srv.Dispatcher.Groomer = &conductor.Groomer{
+				Backend: backend,
+				Agents:  agentLoader,
+				Auth:    cfg.AgentAuth,
+				Tickets: tix,
+				Timeout: cfg.AgentTimeout,
+				ClientFor: func(ctx context.Context, projectID string) conductor.GroomGitHub {
+					if c := srv.GHForProject(ctx, projectID); c != nil {
+						return c
+					}
+					return nil
+				},
+			}
+		}
 		// Resolución de conflictos de PR (incidente #83): despacha al canal
 		// claude_action del tenant; mismo ClientFor multi-tenant que el resto.
 		srv.Resolver = conductor.NewConflictResolver(gh)

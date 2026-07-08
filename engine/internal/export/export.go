@@ -111,7 +111,7 @@ func GitHubBacklog(ctx context.Context, store *tickets.Store, gh GitHubWriter, p
 			res.IssuesSkipped++
 			continue
 		}
-		created, err := gh.CreateIssue(ctx, repoURL, issueTitle(st), issueBody(st, priorArtForLane(st.Owner, mods)), labelNames(st))
+		created, err := gh.CreateIssue(ctx, repoURL, issueTitle(st), issueBody(st, PriorArtForLane(st.Owner, mods)), labelNames(st))
 		if err != nil {
 			return res, fmt.Errorf("issue %s: %w", st.ID, err)
 		}
@@ -188,11 +188,85 @@ func issueTitle(st tickets.Story) string {
 	return fmt.Sprintf("%s — %s", st.ID, st.Title)
 }
 
+// Enrichment carries the JIT-groom sections the conductor computes just before a
+// story is dispatched (internal/conductor/groom.go): the dev-ready spec expanded
+// by the story-detailer, the visual spec (mockup + UI_SCREENS extract, frontend
+// only), and the sibling-component inventory. Each field is a fully-rendered
+// markdown section (heading included) or "" when absent — a zero Enrichment
+// reproduces the pre-groom body byte-for-byte, which is what keeps
+// VIBEFORGE_CONDUCTOR_GROOM=0 a no-op.
+type Enrichment struct {
+	SpecDevReady string // "## Spec (dev-ready)" section, or ""
+	VisualSpec   string // "## Visual spec" section (frontend/screen_key only), or ""
+	Components   string // "## Componentes existentes" section, or ""
+}
+
+func (e Enrichment) empty() bool {
+	return e.SpecDevReady == "" && e.VisualSpec == "" && e.Components == ""
+}
+
+// SpecSection renders the "## Spec (dev-ready)" block from the story-detailer's
+// output. "" when the spec is empty (detailer failed/degraded) so the section is
+// simply omitted.
+func SpecSection(spec string) string {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return ""
+	}
+	return "## Spec (dev-ready)\n\n" + spec + "\n\n"
+}
+
+// VisualSpecSection renders the "## Visual spec" block for a frontend story: a raw
+// link to its mockup + the UI_SCREENS extract for that screen + the explicit
+// instruction that the mockup is the source of truth for the look. "" when there
+// is no screen_key (non-screen story) so backend stories never get it.
+func VisualSpecSection(screenKey, mockupURL, uiExtract string) string {
+	if strings.TrimSpace(screenKey) == "" {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Visual spec\n\nEsta story construye la pantalla `%s`.\n\n", screenKey)
+	if mockupURL != "" {
+		fmt.Fprintf(&b, "Mockup de referencia (raw): %s\n\n", mockupURL)
+	}
+	if x := strings.TrimSpace(uiExtract); x != "" {
+		b.WriteString("Spec de la pantalla (docs/UI_SCREENS.md):\n\n")
+		b.WriteString(x)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("**El resultado DEBE verse como el mockup; el mockup manda sobre tu criterio visual.**\n\n")
+	return b.String()
+}
+
+// ComponentsSection renders the "## Componentes existentes" block: the components
+// already built in the destination repo for this story's lane, with the REUSE
+// instruction. "" when the lane has no known component directory or it is empty.
+func ComponentsSection(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Componentes existentes\n\nComponentes ya construidos en el repo — **REUSA antes de crear**:\n")
+	for _, p := range paths {
+		fmt.Fprintf(&b, "- `%s`\n", p)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 // issueBody composes the issue body: user story + acceptance criteria as a
 // checklist + optional "prior art" (task #5, the F2 enrichment hook) + a
 // metadata footer. priorArt is the pre-rendered block of modules the story's
 // lane already built (empty on a fresh project → nothing extra emitted).
 func issueBody(st tickets.Story, priorArt string) string {
+	return EnrichedBody(st, priorArt, Enrichment{})
+}
+
+// EnrichedBody is issueBody plus the JIT-groom sections. It is what the conductor
+// PATCHes onto a story's issue right before dispatch. With a zero Enrichment it is
+// byte-identical to the initial export body (the groom-off invariant); the new
+// sections slot in after the acceptance criteria and before the prior-art/footer.
+func EnrichedBody(st tickets.Story, priorArt string, enrich Enrichment) string {
 	var b strings.Builder
 	if body := strings.TrimSpace(st.Body); body != "" {
 		b.WriteString(body)
@@ -204,6 +278,11 @@ func issueBody(st tickets.Story, priorArt string) string {
 			fmt.Fprintf(&b, "- [ ] %s\n", ac)
 		}
 		b.WriteString("\n")
+	}
+	if !enrich.empty() {
+		b.WriteString(enrich.SpecDevReady)
+		b.WriteString(enrich.VisualSpec)
+		b.WriteString(enrich.Components)
 	}
 	if priorArt != "" {
 		b.WriteString(priorArt)
@@ -224,12 +303,14 @@ func issueBody(st tickets.Story, priorArt string) string {
 	return b.String()
 }
 
-// priorArtForLane renderiza el bloque "Prior art" del cuerpo del issue: los
+// PriorArtForLane renderiza el bloque "Prior art" del cuerpo del issue: los
 // módulos que la lane de la story YA construyó (del grafo producto↔código), para
 // que el agente los extienda en vez de crear estructura paralela. Devuelve "" si
 // la lane no ha tocado nada todavía (proyecto nuevo o primera story de la lane),
 // así el primer export no cambia. Máximo 8 módulos para no inflar el cuerpo.
-func priorArtForLane(owner string, mods []tickets.ModuleHit) string {
+// Exportada para que el grooming del conductor recomponga el body sin perder el
+// prior-art al PATCHear (internal/conductor/groom.go).
+func PriorArtForLane(owner string, mods []tickets.ModuleHit) string {
 	if owner == "" || len(mods) == 0 {
 		return ""
 	}
