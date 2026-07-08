@@ -437,8 +437,12 @@ func migrateToCompositePK(db *sql.DB) error {
 			pr_url       TEXT NOT NULL DEFAULT '',
 			project_id   TEXT NOT NULL DEFAULT '',
 			external_ref TEXT NOT NULL DEFAULT '',
+			kind         TEXT NOT NULL DEFAULT 'story',
 			PRIMARY KEY (id, project_id)
 		)`,
+		// stories now carries `kind` (migrationAddKind runs BEFORE this rebuild), so
+		// stories_new MUST include it too — otherwise `SELECT *` supplies 14 values
+		// into a 13-column table and the migration fails on every open.
 		`INSERT OR IGNORE INTO stories_new SELECT * FROM stories`,
 		`DROP TABLE stories`,
 		`ALTER TABLE stories_new RENAME TO stories`,
