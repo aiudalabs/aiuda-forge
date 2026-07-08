@@ -61,6 +61,7 @@ func (o *fakeOps) StartRun(wf string, _ map[string]any) (string, error) {
 func (o *fakeOps) ApproveStep(string, string) error            { return nil }
 func (o *fakeOps) RejectStep(string, string, string) error     { return nil }
 func (o *fakeOps) Metrics(string) (map[string]any, error)      { return map[string]any{}, nil }
+func (o *fakeOps) Digest(string) (string, error)              { return "🗓️ Standup", nil }
 func (o *fakeOps) ListRegistry(string) ([]string, error)       { return nil, nil }
 func (o *fakeOps) ReadRegistry(string, string) (string, error) { return "", nil }
 func (o *fakeOps) WriteRegistry(string, string, string) error  { return nil }

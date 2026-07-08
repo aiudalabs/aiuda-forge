@@ -80,6 +80,17 @@ var registry = map[string]toolDef{
 			return jsonStr(m), err
 		},
 	},
+	"daily_digest": {
+		Tool: Tool{Name: "daily_digest", Description: "Generate the project's daily standup digest: what progressed (stories done), what's blocking (stories waiting on unfinished deps, runs that retried/timed out), what's next (running work), and what it cost (token spend) since the last digest. Returns the standup text. Reversible — read-only; it does NOT move the last-digest watermark.", InputSchema: obj(nil)},
+		Kind: Reversible, MinRole: "viewer",
+		Run: func(ops ControlOps, projectID string, _ json.RawMessage) (string, error) {
+			text, err := ops.Digest(projectID)
+			if err != nil {
+				return "", err
+			}
+			return jsonStr(map[string]any{"digest": text}), nil
+		},
+	},
 	"list_runs": {
 		Tool: Tool{Name: "list_runs", Description: "List this project's runs (id, workflow, status).", InputSchema: obj(nil)},
 		Kind: Reversible, MinRole: "viewer",

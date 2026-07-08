@@ -86,7 +86,14 @@ type Project struct {
 	ExecutorByLane   string `json:"executor_by_lane"`
 	WorkflowApproval string `json:"workflow_approval"`
 	MaxConcurrency   int    `json:"max_concurrency"`
-	CreatedAt        int64  `json:"created_at"`
+	// DigestChannel is where the daily standup digest is pushed, as
+	// "connector:target" (e.g. "telegram:123456789"); a bare value defaults to the
+	// telegram connector. Empty = digest OFF for this project (nullable semantics).
+	DigestChannel string `json:"digest_channel"`
+	// LastDigestAt is the unix-millis timestamp of the most recent digest sent for
+	// this project — the "since" watermark the next digest reports from. 0 = never.
+	LastDigestAt int64 `json:"last_digest_at"`
+	CreatedAt    int64 `json:"created_at"`
 }
 
 const schema = `
@@ -104,6 +111,8 @@ CREATE TABLE IF NOT EXISTS projects (
   executor_by_lane  TEXT NOT NULL DEFAULT '{}',
   workflow_approval TEXT NOT NULL DEFAULT 'manual',
   max_concurrency   INTEGER NOT NULL DEFAULT 0,
+  digest_channel    TEXT NOT NULL DEFAULT '',
+  last_digest_at    INTEGER NOT NULL DEFAULT 0,
   created_at     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS project_members (
@@ -145,6 +154,9 @@ var migrations = []string{
 	`ALTER TABLE projects ADD COLUMN executor_by_lane TEXT NOT NULL DEFAULT '{}'`,
 	`ALTER TABLE projects ADD COLUMN workflow_approval TEXT NOT NULL DEFAULT 'manual'`,
 	`ALTER TABLE projects ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 0`,
+	// Daily digest (standup push): where to send it, and the last-sent watermark.
+	`ALTER TABLE projects ADD COLUMN digest_channel TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE projects ADD COLUMN last_digest_at INTEGER NOT NULL DEFAULT 0`,
 }
 
 // validExecutionUnit / validMergeMode bound the accepted settings values so the
@@ -260,11 +272,11 @@ func (s *Store) Create(p Project) (Project, error) {
 	return p, nil
 }
 
-const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, executor_by_lane, workflow_approval, max_concurrency, created_at FROM projects`
+const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, executor_by_lane, workflow_approval, max_concurrency, digest_channel, last_digest_at, created_at FROM projects`
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.ExecutorByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.ExecutorByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.DigestChannel, &p.LastDigestAt, &p.CreatedAt)
 	return p, err
 }
 
@@ -440,6 +452,34 @@ func (s *Store) PutSettings(id string, in Settings) (Settings, error) {
 		return Settings{}, ErrNotFound
 	}
 	return cur, nil
+}
+
+// SetDigestChannel sets (or clears, with "") the project's daily-digest target.
+// The value is "connector:target" (a bare value defaults to the telegram
+// connector). Returns ErrNotFound for an unknown project.
+func (s *Store) SetDigestChannel(id, channel string) error {
+	res, err := s.db.Exec(`UPDATE projects SET digest_channel=? WHERE id=?`, channel, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkDigestSent records that a digest was just delivered for the project, moving
+// the last_digest_at watermark forward to `at` (unix millis). The next digest
+// reports the window since this timestamp.
+func (s *Store) MarkDigestSent(id string, at int64) error {
+	res, err := s.db.Exec(`UPDATE projects SET last_digest_at=? WHERE id=?`, at, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // isUniqueConstraint reports whether err is a sqlite UNIQUE violation.

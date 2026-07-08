@@ -1,8 +1,11 @@
 package brain
 
 import (
+	"context"
 	"fmt"
+	"time"
 
+	"forge/internal/digest"
 	"forge/internal/store"
 	"forge/internal/tickets"
 	"forge/internal/workflow"
@@ -25,6 +28,12 @@ type ControlOps interface {
 	RejectStep(runID, step, reason string) error
 	Metrics(projectID string) (map[string]any, error)
 	ActiveState(projectID string) (map[string]any, error)
+
+	// Digest synthesizes the project's daily standup — what progressed, what's
+	// blocking, what's next, what it cost — since the last digest. Reversible
+	// (read-only): it generates text, it does not move the last-digest watermark
+	// (that's the scheduler's job when it actually delivers).
+	Digest(projectID string) (string, error)
 
 	// Mid-sprint board moves — the operations a team makes on the backlog between
 	// sprints. Each MUTATES the backlog and is proposed for human approval. They are
@@ -66,6 +75,13 @@ type EngineOps struct {
 	// skills/). Wired from VIBEFORGE_REGISTRY so the Brain edits the SAME files the
 	// kernel reads — no privileged path (kernel constitution).
 	RegistryDir string
+	// Digester builds the daily standup digest. Optional: when nil, the daily_digest
+	// tool reports that digests are not configured.
+	Digester *digest.Digester
+	// ProjectInfo returns a project's display name and last-digest watermark (the
+	// "since" the digest reports from). Wired from the projects store; nil → the
+	// digest uses the project id as name and an all-time window.
+	ProjectInfo func(projectID string) (name string, since time.Time)
 }
 
 func (o EngineOps) Status() (bool, int64) {
@@ -155,6 +171,18 @@ func (o EngineOps) EditStory(projectID, storyID string, patch tickets.StoryPatch
 		return fmt.Errorf("ticket store not configured")
 	}
 	return o.Tickets.EditStory(projectID, storyID, patch)
+}
+
+func (o EngineOps) Digest(projectID string) (string, error) {
+	if o.Digester == nil {
+		return "", fmt.Errorf("digest not configured")
+	}
+	name := projectID
+	var since time.Time
+	if o.ProjectInfo != nil {
+		name, since = o.ProjectInfo(projectID)
+	}
+	return o.Digester.Build(context.Background(), projectID, name, since)
 }
 
 func (o EngineOps) StartRun(wf string, payload map[string]any) (string, error) {
