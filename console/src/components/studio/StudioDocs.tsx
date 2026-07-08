@@ -198,6 +198,13 @@ export function StudioDocs() {
     ? phaseLabel(t, runningPhase.stepId, runningPhase.name)
     : t("studio.activity.working");
   const lastMsg = liveEvents.length ? liveEvents[liveEvents.length - 1].message : "";
+  // Historial de Q&A: las respuestas a preguntas abiertas de un gate (verbo `answer`),
+  // distinto de un reject. Visible aunque el run no esté generando, para poder repasar
+  // lo respondido en cada fase.
+  const qaEvents = useMemo(
+    () => liveEvents.filter((e) => e.type === "step.answer"),
+    [liveEvents],
+  );
 
   // Estado del doc para su badge en el riel (mockup: ✓ generado / spinner generando):
   // deriva de la fase que lo produce. Sin fase (o no en curso) → ✓ (el archivo existe).
@@ -604,6 +611,33 @@ export function StudioDocs() {
               <LiveLog events={liveEvents} />
             </div>
           )}
+        </section>
+      )}
+
+      {/* ── Historial de preguntas y respuestas (verbo answer) ── */}
+      {run && qaEvents.length > 0 && (
+        <section className="studio-activity on" aria-label={t("studio.view.qaTitle")}>
+          <div className="studio-act-bar" style={{ cursor: "default" }}>
+            <span className="studio-act-label">
+              <b>{t("studio.view.qaTitle")}</b>
+            </span>
+          </div>
+          <div className="studio-act-term">
+            <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+              {qaEvents.map((e) => {
+                const base = (e.step || "").replace(/_gate$/, "");
+                const text = typeof e.data?.text === "string" ? e.data.text : e.message;
+                return (
+                  <li key={e.id} style={{ fontSize: 13, lineHeight: 1.4 }}>
+                    <div style={{ color: "var(--ink4)", fontSize: 12 }}>
+                      {phaseLabel(t, base, base)} · {e.ts}
+                    </div>
+                    <div style={{ color: "var(--ink)" }}>{text}</div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         </section>
       )}
 

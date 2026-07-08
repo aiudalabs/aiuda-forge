@@ -12,6 +12,7 @@ import {
   useApprove,
   useRerunStep,
   useReject,
+  useAnswer,
 } from "@/lib/hooks";
 import { useT } from "@/lib/i18n";
 import type { DesignPhase, DesignStepStatus } from "@/lib/types";
@@ -42,11 +43,24 @@ export function PhasePanel({
 
   const approve = useApprove();
   const reject = useReject();
+  const answer = useAnswer();
   const rerun = useRerunStep();
-  const [rejectInput, setRejectInput] = useState("");
-  const [showRejectForm, setShowRejectForm] = useState(false);
+  // A single form slot: reject (regenerates with feedback) OR answer (folds answers
+  // into the existing doc). null = the three top-level verbs are shown.
+  const [formMode, setFormMode] = useState<null | "reject" | "answer">(null);
+  const [formInput, setFormInput] = useState("");
 
   const gateStepId = phase.gateId || `${phase.stepId}_gate`;
+  const busy = approve.isPending || reject.isPending || answer.isPending;
+
+  function openForm(mode: "reject" | "answer") {
+    setFormMode(mode);
+    setFormInput("");
+  }
+  function closeForm() {
+    setFormMode(null);
+    setFormInput("");
+  }
 
   function doApprove() {
     approve.mutate([runId, gateStepId]);
@@ -57,13 +71,13 @@ export function PhasePanel({
   }
 
   function doReject() {
-    if (!rejectInput.trim()) return;
-    reject.mutate([runId, gateStepId, rejectInput.trim()], {
-      onSuccess: () => {
-        setShowRejectForm(false);
-        setRejectInput("");
-      },
-    });
+    if (!formInput.trim()) return;
+    reject.mutate([runId, gateStepId, formInput.trim()], { onSuccess: closeForm });
+  }
+
+  function doAnswer() {
+    if (!formInput.trim()) return;
+    answer.mutate([runId, gateStepId, formInput.trim()], { onSuccess: closeForm });
   }
 
   return (
@@ -120,20 +134,15 @@ export function PhasePanel({
       {/* Acciones: solo cuando el gate está AWAITING */}
       {state === "awaiting" && phase.stepId !== "handoff" && (
         <div className="phase-actions">
-          {!showRejectForm ? (
+          {formMode === null ? (
             <>
-              <button
-                className="btn ghost"
-                onClick={() => setShowRejectForm(true)}
-                disabled={reject.isPending || approve.isPending}
-              >
+              <button className="btn ghost" onClick={() => openForm("reject")} disabled={busy}>
                 {t("studio.view.reject")}
               </button>
-              <button
-                className="btn primary"
-                onClick={doApprove}
-                disabled={approve.isPending || reject.isPending}
-              >
+              <button className="btn ghost" onClick={() => openForm("answer")} disabled={busy}>
+                {t("studio.view.answer")}
+              </button>
+              <button className="btn primary" onClick={doApprove} disabled={busy}>
                 {approve.isPending ? t("studio.view.approving") : t("studio.view.approve")}
               </button>
             </>
@@ -142,27 +151,29 @@ export function PhasePanel({
               <textarea
                 className="inp"
                 style={{ resize: "vertical", minHeight: 72, fontSize: 13 }}
-                placeholder={t("studio.view.rejectPlaceholder")}
-                value={rejectInput}
-                onChange={(e) => setRejectInput(e.target.value)}
+                placeholder={
+                  formMode === "answer"
+                    ? t("studio.view.answerPlaceholder")
+                    : t("studio.view.rejectPlaceholder")
+                }
+                value={formInput}
+                onChange={(e) => setFormInput(e.target.value)}
                 autoFocus
               />
               <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  className="btn ghost sm"
-                  onClick={() => {
-                    setShowRejectForm(false);
-                    setRejectInput("");
-                  }}
-                >
+                <button className="btn ghost sm" onClick={closeForm}>
                   {t("studio.view.cancel")}
                 </button>
                 <button
                   className="btn primary sm"
-                  onClick={doReject}
-                  disabled={!rejectInput.trim() || reject.isPending}
+                  onClick={formMode === "answer" ? doAnswer : doReject}
+                  disabled={!formInput.trim() || busy}
                 >
-                  {reject.isPending ? t("studio.view.sending") : t("studio.view.sendFeedback")}
+                  {busy
+                    ? t("studio.view.sending")
+                    : formMode === "answer"
+                    ? t("studio.view.sendAnswer")
+                    : t("studio.view.sendFeedback")}
                 </button>
               </div>
             </div>

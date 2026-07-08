@@ -292,6 +292,11 @@ function eventMessage(type: string, data: Record<string, unknown>, step?: string
   // step.event = una acción fina del agente (lo que claude HIZO): tool_use / text.
   // Se renderiza como una línea de log estilo terminal: "→ Edit notas.py", etc.
   if (type === "step.event") return stepEventLine(data);
+  // step.answer = the human answered the gate's open questions (distinct from a reject).
+  if (type === "step.answer") {
+    const text = typeof data.text === "string" ? data.text : "";
+    return text ? `✎ ${text}` : "✎ answer";
+  }
   if (typeof data.detail === "string" && data.detail) return data.detail;
   const from = data.from;
   const to = data.to;
@@ -619,6 +624,19 @@ export async function rejectStep(id: string, step: string, reason: string): Prom
   await http<void>(`/runs/${id}/steps/${step}/reject`, {
     method: "POST",
     body: JSON.stringify({ reason }),
+  });
+}
+
+/**
+ * Answer a gate's open questions WITHOUT rejecting it. The kernel re-runs the phase
+ * with the answers folded into the EXISTING doc (no regeneration), then re-parks the
+ * gate for approval. Does NOT count as a rejection (on_fail budget untouched).
+ */
+export async function answerStep(id: string, step: string, text: string): Promise<void> {
+  if (await isMock()) return mutateMockStatus(id, "RUNNING");
+  await http<void>(`/runs/${id}/steps/${step}/answer`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
   });
 }
 
