@@ -37,10 +37,37 @@ La proyección asoció las 5 stories del sprint al **mismo** PR #56. Si esto es 
 (Copilot hace 1 PR por tanda) o una mis-asociación, el efecto es que **un solo PR muerto
 bloquea 5 stories**. Vale entender la regla de anclaje story↔PR de Copilot.
 
-### Observación D — 404 en `gh api agent task <id>` (¿endpoint o id?)
-No es un 403 de permiso (el permiso Copilot de la App está habilitado) — es 404 "not found".
-Hay que confirmar si el problema es el *endpoint* que arma el código, el *formato del id*
-(session id vs task id), o que la task **expira/se borra** tras fallar. Lead de investigación.
+### Observación D — por qué el 404 (causa raíz, no es sobre los issues)
+La consulta es (`internal/github/dispatch.go` `AgentTaskState`):
+```
+GET /agents/repos/{owner}/{repo}/tasks/{uuid}   (X-GitHub-Api-Version: 2026-03-10)
+```
+Cuatro puntos que explican el 404:
+1. **Son dos APIs distintas.** Los issues viven en `/repos/{o}/{r}/issues/{n}` — existen, están
+   bien. El barrido NO consulta el issue: consulta el registro de la **agent-task de Copilot**
+   en `/agents/repos/.../tasks/{uuid}`. Que el issue exista no dice nada del registro de la task.
+2. **Es una API en PUBLIC-PREVIEW** pinneada a `2026-03-10` (el código lo dice: *"the Agent
+   tasks public-preview shape we tested live"*). Las preview de GitHub cambian sin aviso →
+   síntoma clásico: *funcionó al probarlo, ahora 404* porque el path / esquema de id / conducta
+   derivaron.
+3. **La task es efímera.** El uuid se extrae de la URL web de la sesión (`github.com/.../tasks/
+   <uuid>`, `taskIDRe`). Muy probablemente, cuando el run de Copilot termina (completed/failed/
+   sin créditos), ese registro deja de ser consultable por id → 404. O sea el 404 es, de hecho,
+   **señal de que la task murió** — pero el código lo trata como "sin veredicto".
+4. **No es 403.** El permiso Copilot de la App está habilitado (hay test separado para el 403).
+   Es 404 "not found": el registro no está en ese path. Problema distinto (endpoint/preview/
+   efímero), no de permiso.
+
+**El defecto de fondo es DE DÓNDE saca la señal de vida.** El barrido depende de esta preview
+frágil; cuando da 404 no puede distinguir "muerta de verdad" de "la API se rompió" → no toca
+nada → la story cuelga. **Y la señal confiable ya existe y la observamos:** `gh run list`
+mostró el workflow **"Running Copilot cloud agent" → `failure`/`cancelled`** — observable,
+estable, no-preview. Para **claude_action** el barrido ya NO usa ninguna API frágil: usa el
+label GitHub-observable **`agent:running`** (resuelto 2026-07-06), justo para evitar esto. Para
+Copilot sigue colgado de la Agent Tasks preview API.
+- **Fix de raíz:** derivar vida/muerte de Copilot del **estado del workflow run** (`failure`/
+  `cancelled` = muerto) o de un **label observable**, NO de `/agents/.../tasks/{uuid}`. Mismo
+  patrón que ya se aplicó a claude_action.
 
 ### Observación E — el agotamiento de créditos no dispara failover de canal
 El probe de canal verifica que existan workflow+secret, no el saldo de créditos. Copilot
@@ -64,6 +91,9 @@ Como el dispatch es manual, no hay loop; pero **las 5 no se liberan solas**. Pal
   WIP** (o cerrar el draft huérfano automáticamente).
 - **Reencolar desde `running`:** permitir el requeue manual de una story `running` atascada
   (transición `running → backlog`), no solo desde `failed`.
-- **Observación D:** arreglar la consulta de estado de la task (endpoint/id) para que el
-  barrido tenga datos reales.
+- **Observación D (el fix clave):** dejar de depender de la Agent Tasks preview API para la
+  liveness de Copilot. Derivar vida/muerte del **estado del workflow run** ("Running Copilot
+  cloud agent" → `failure`/`cancelled`) o de un **label observable** — el MISMO patrón que ya
+  se aplicó a claude_action (`agent:running`, 2026-07-06). Esto arregla A y D de un saque: un
+  run `failure` es un veredicto de muerte inequívoco y estable, sin 404 ni preview frágil.
 - **Failover por saldo (E):** opcional — detectar "sin créditos" como canal no disponible.
