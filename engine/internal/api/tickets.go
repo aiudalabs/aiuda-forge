@@ -607,6 +607,7 @@ type ticketView struct {
 	Repo        string   `json:"repo,omitempty"`         // the repo the PR lives in (needed to address it via gh)
 	ProjectID   string   `json:"project_id,omitempty"`   // lets the scheduler group work by project (audit A1)
 	Kind        string   `json:"kind,omitempty"`         // story|bug — the board can badge bugs distinctly
+	ScreenKey   string   `json:"screen_key,omitempty"`   // the mockup a frontend story implements — the Flow graph / console link it to docs/mockups/<screen_key>.html
 }
 
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
@@ -667,6 +668,7 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			Repo:        st.Repo,
 			ProjectID:   st.ProjectID,
 			Kind:        st.Kind,
+			ScreenKey:   st.ScreenKey,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": views})

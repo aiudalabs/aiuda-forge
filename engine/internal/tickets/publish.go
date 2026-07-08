@@ -38,7 +38,11 @@ type backlogStory struct {
 	Acceptance string   `yaml:"acceptance"`
 	Owner      string   `yaml:"owner"`
 	SprintID   string   `yaml:"sprint_id"`
-	Deps       []string `yaml:"deps"`
+	// ScreenKey names the mockup a frontend story implements. It was previously read
+	// only from this committed snapshot by the groomer; now it is persisted into the
+	// store so the store becomes the source of truth after mid-sprint moves.
+	ScreenKey string   `yaml:"screen_key"`
+	Deps      []string `yaml:"deps"`
 	// DependsOn is a defensive alias for Deps: a planner prompt that emits
 	// `depends_on:` (instead of the canonical `deps:`) would otherwise have its
 	// dependencies silently dropped, leaving every story dependency-free so the whole
@@ -170,6 +174,7 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 			Body:      s.Body,
 			Accept:    s.Acceptance,
 			Owner:     s.Owner,
+			ScreenKey: s.ScreenKey,
 			Deps:      s.deps(),
 			Status:    StatusBacklog,
 			Repo:      repo,

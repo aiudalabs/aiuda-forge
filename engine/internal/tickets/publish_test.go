@@ -405,6 +405,95 @@ func TestPublishRunnerSetsRepo(t *testing.T) {
 	}
 }
 
+// screenKeyFixture carries a frontend story with a screen_key and a backend story
+// without one — the scrum-master emits screen_key only for stories that own a screen.
+const screenKeyFixture = `
+epic:
+  id: E1
+  title: "Foundation"
+stories:
+  - id: S1-01
+    title: "Login screen"
+    body: "Build the login UI."
+    acceptance: "User can log in."
+    owner: react-dev
+    sprint_id: SP1
+    screen_key: customer.login
+    deps: []
+  - id: S1-02
+    title: "Auth endpoint"
+    body: "Issue JWTs."
+    acceptance: "Token minted."
+    owner: python-dev
+    sprint_id: SP1
+    deps: [S1-01]
+`
+
+// TestPublishRunnerPersistsScreenKey: publishing writes each story's screen_key from
+// the backlog into the store column (the store, not backlog.yaml, is now the truth).
+func TestPublishRunnerPersistsScreenKey(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	writeBacklog(t, workdir, "docs/backlog.yaml", screenKeyFixture)
+
+	if res := runPublish(t, st, workdir, nil); !res.Success {
+		t.Fatalf("publish failed: %s", res.Detail)
+	}
+
+	front, err := st.GetStory("S1-01")
+	if err != nil {
+		t.Fatalf("GetStory S1-01: %v", err)
+	}
+	if front.ScreenKey != "customer.login" {
+		t.Errorf("S1-01 screen_key: got %q, want customer.login", front.ScreenKey)
+	}
+	// A backend story without a screen_key gets an empty column, not a spurious value.
+	back, err := st.GetStory("S1-02")
+	if err != nil {
+		t.Fatalf("GetStory S1-02: %v", err)
+	}
+	if back.ScreenKey != "" {
+		t.Errorf("S1-02 screen_key: got %q, want empty", back.ScreenKey)
+	}
+}
+
+// TestPublishRunnerScreenKeyIdempotent: a re-publish (iterate) whose backlog reuses an
+// existing id must NOT overwrite the story already in the store — including its
+// screen_key. Confirms the append-idempotent contract for the new column.
+func TestPublishRunnerScreenKeyIdempotent(t *testing.T) {
+	st := openTemp(t)
+	workdir := t.TempDir()
+	writeBacklog(t, workdir, "docs/backlog.yaml", screenKeyFixture)
+
+	if res := runPublish(t, st, workdir, nil); !res.Success {
+		t.Fatalf("first publish failed: %s", res.Detail)
+	}
+
+	// A second backlog reusing S1-01's id but flipping its screen_key. The id collides,
+	// so the store row is preserved — the original screen_key must NOT be clobbered.
+	writeBacklog(t, workdir, "docs/backlog.yaml", `
+epic: { id: E1, title: "F" }
+stories:
+  - id: S1-01
+    title: "Login screen v2"
+    owner: react-dev
+    sprint_id: SP1
+    screen_key: customer.WRONG
+    deps: []
+`)
+	res := runPublish(t, st, workdir, nil)
+	if !res.Success {
+		t.Fatalf("second publish failed: %s", res.Detail)
+	}
+	if res.Output["skipped"] != 1 {
+		t.Fatalf("second publish skipped: got %v, want 1", res.Output["skipped"])
+	}
+	got, _ := st.GetStory("S1-01")
+	if got.ScreenKey != "customer.login" {
+		t.Errorf("screen_key was overwritten on re-publish: got %q, want customer.login", got.ScreenKey)
+	}
+}
+
 // TestPublishRunnerNoRepo: when inputs["repo"] is absent, stories get an empty repo.
 func TestPublishRunnerNoRepo(t *testing.T) {
 	st := openTemp(t)

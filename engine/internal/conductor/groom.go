@@ -98,8 +98,12 @@ func (g *Groomer) GroomStories(ctx context.Context, projectID, repoURL string, s
 	if repo == nil {
 		return
 	}
-	keys := g.screenKeys(ctx, repo, repoURL)
 	mods, _ := g.Tickets.ModuleMap(projectID, 2)
+	// yamlKeys is the DEPRECABLE fallback: the docs/backlog.yaml parse is done lazily
+	// and only when a story's store screen_key is empty (a backlog published before
+	// the screen_key column existed). Remove once all live backlogs are re-published
+	// through the store — the store is the source of truth now.
+	var yamlKeys map[string]string
 	for _, id := range storyIDs {
 		st, err := g.Tickets.GetStory(id)
 		if err != nil {
@@ -110,7 +114,16 @@ func (g *Groomer) GroomStories(ctx context.Context, projectID, repoURL string, s
 		if num == 0 {
 			continue // not mirrored to a GitHub issue → nothing to enrich
 		}
-		if err := g.GroomIssue(ctx, repo, repoURL, st, num, keys[st.ID], export.PriorArtForLane(st.Owner, mods)); err != nil {
+		// Store first (source of truth); fall back to the committed backlog.yaml only
+		// for pre-migration stories whose column is still empty.
+		screenKey := st.ScreenKey
+		if screenKey == "" {
+			if yamlKeys == nil {
+				yamlKeys = g.screenKeys(ctx, repo, repoURL)
+			}
+			screenKey = yamlKeys[st.ID]
+		}
+		if err := g.GroomIssue(ctx, repo, repoURL, st, num, screenKey, export.PriorArtForLane(st.Owner, mods)); err != nil {
 			log.Printf("conductor groom(%s): story %s: %v", projectID, id, err)
 		}
 	}
@@ -217,9 +230,10 @@ func groomPrompt(st tickets.Story) string {
 }
 
 // screenKeys maps story id → screen_key by parsing docs/backlog.yaml from the repo.
-// The store does not persist screen_key (the scrum-master emits it but nothing
-// consumed it, and tickets/ is out of scope), so the committed backlog is the
-// source. Empty map on any failure (no visual sections → graceful).
+// DEPRECABLE: this is only the FALLBACK for stories published before the store grew a
+// screen_key column (see GroomStories — the store is now the source of truth). Once no
+// live backlog predates that migration, delete this and read screen_key from the store
+// only. Empty map on any failure (no visual sections → graceful).
 func (g *Groomer) screenKeys(ctx context.Context, repo GroomGitHub, repoURL string) map[string]string {
 	out := map[string]string{}
 	raw, err := repo.ReadFile(ctx, repoURL, "docs/backlog.yaml", groomRef)
