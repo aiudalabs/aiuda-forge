@@ -247,3 +247,13 @@ docs/GTM-2026-07-03-onboarding-monetizacion.md, docs/UI-AUDIT-2026-07-03.md. Doc
    Pendientes menores: gatear/avisar dispatch si docs/ no está en main; quitar EnsureDevBranch (rama dev vestigial);
    live-log del design run (#13); editor per-proyecto de .github/ del repo; conversational gates (#3);
    hardening tenantToken (verificar usabilidad del token antes de devolverlo).
+
+## Reglas para sesiones de agente (Claude Code)
+- Monorepo: engine/ (Go, módulo `forge`) + console/ (Next.js/TS en console/src).
+- El método vive en engine/registry/ (YAML + markdown). NUNCA hardcodear metodología en Go.
+- NO editar ni revertir docs/ salvo pedido explícito de la tarea.
+- Inputs de agentes: usar $<step>.output.text — NUNCA $<step>.text (bug #16).
+- Al leer artifacts/steps de un run, tomar SIEMPRE la última instancia del step (bug #18: retry duplica steps).
+- console/src/lib/statusToken.ts es la ÚNICA fuente de colores/estados de la UI.
+- NO reintroducir `transform` en la animación fadeUp de .wrap (bug de drawers position:fixed, resuelto 2026-07-02).
+- Todo cambio con tests (go test ./... verde en engine; lint verde en console) y commits convencionales. Una tarea = un branch = un PR.
