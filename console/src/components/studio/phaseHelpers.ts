@@ -23,6 +23,16 @@ export function phaseState(p: DesignPhase): PhaseState {
     if (p.designStatus === "RUNNING") return "running";
     return "pending";
   }
+  // La instancia MÁS RECIENTE de la fase manda (misma regla que el bug #18 de
+  // steps duplicados: al haber varias tasks de un step, gana la más nueva). Cuando
+  // la fase vuelve a correr —`answer` re-encola la fase con las respuestas, `rerun`
+  // la regenera— queda una task nueva RUNNING/QUEUED de la fase junto al gate ANTERIOR
+  // aún resuelto en DONE. Ese gate DONE es viejo: la fase está EN CURSO, no aprobada.
+  // Chequear la fase en curso ANTES del gate DONE evita pintar ✓ verde, adelantar la
+  // navegación (activePhaseIndex) y exponer "Regenerar" durante la re-corrida.
+  if (p.gateStatus === "DONE" && (p.designStatus === "RUNNING" || p.designStatus === "QUEUED")) {
+    return "running";
+  }
   if (p.gateStatus === "DONE") return "approved";
   if (p.gateStatus === "FAILED") return "failed";
   if (p.gateStatus === "AWAITING") return "awaiting";
