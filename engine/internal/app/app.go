@@ -22,6 +22,8 @@ import (
 	"forge/internal/channels"
 	"forge/internal/channels/telegram"
 	"forge/internal/conductor"
+	"forge/internal/cron"
+	"forge/internal/digest"
 	"forge/internal/gate"
 	"forge/internal/github"
 	"forge/internal/pr"
@@ -59,6 +61,12 @@ type App struct {
 	Bus      *api.Bus
 	Server   *api.Server
 	workers  int
+
+	// Daily digest scheduler (standup push). digester + channels + the parsed cron
+	// are wired in Build; the loop runs from StartBackground when all three exist.
+	digester       *digest.Digester
+	digestChannels channels.Registry
+	digestCron     cron.Schedule
 }
 
 // Build assembles a kernel per cfg.
@@ -267,21 +275,6 @@ func Build(cfg Config) (*App, error) {
 	reg := api.NewRegistry(cfg.RegistryRoot)
 	srv := api.NewServer(st, eng, bus, reg, tix, proj, au)
 
-	// Brain (optional): the per-project conversational assistant. Wired only when a
-	// dedicated ANTHROPIC_API_KEY is present; otherwise its routes return 503. It
-	// runs the tool-use loop in-process against the engine/store, and streams over
-	// the same event bus (emit → AppendEvent scoped to a conversation id).
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		bst, bErr := brain.Open(filepath.Join(filepath.Dir(cfg.DBPath), "brain.db"))
-		if bErr != nil {
-			return nil, fmt.Errorf("brain store: %w", bErr)
-		}
-		ops := brain.EngineOps{Engine: eng, Store: st, Tickets: tix, RegistryDir: cfg.RegistryRoot}
-		llm := brain.NewClient(key, os.Getenv("BRAIN_MODEL"))
-		emit := func(convID, typ string, data map[string]any) { _, _ = st.AppendEvent(convID, "", typ, data) }
-		srv.Brain = brain.New(llm, ops, bst, emit)
-	}
-
 	var appApprover *conductor.Approver
 	// GitHub projection (F1 pivot): mirror exported stories' state (issue/PR) into
 	// the ticket store. The webhook secret is read per-request (env wins, settings
@@ -362,10 +355,12 @@ func Build(cfg Config) (*App, error) {
 	// spend cap) to each project's subscribed channels. Telegram first; its bot token
 	// is read per-send from settings (settings.mcp.telegram.token), so a token change
 	// is picked up without a restart. Sends are async + best-effort (Delivery).
+	var digestChannels channels.Registry
 	if proj != nil {
 		tg := telegram.New(func() string { return srv.Settings.MCPValue("telegram", "token") })
 		registry := channels.Registry{tg.Name(): tg}
-		srv.Channels = registry // inbound webhooks reply through the same connectors
+		digestChannels = registry // reused by the daily-digest scheduler (task #digest)
+		srv.Channels = registry   // inbound webhooks reply through the same connectors
 		delivery := &channels.Delivery{
 			Registry: registry,
 			Lookup: func(projectID, eventType string) ([]channels.Target, error) {
@@ -390,11 +385,95 @@ func Build(cfg Config) (*App, error) {
 		}
 	}
 
+	// Daily digest (standup push): the Digester gathers the standup facts from the
+	// ticket + control stores; spend comes from billing (project → owner → workspace).
+	// It is shared by the Brain's daily_digest tool and the scheduler below. The LLM
+	// synthesis is wired in the Brain block (only when a key is present); without it
+	// the digest ships the deterministic four-section render.
+	var digester *digest.Digester
+	if tix != nil {
+		digester = &digest.Digester{Stories: tix, Runs: st}
+		if proj != nil {
+			digester.Spend = func(projectID string, since int64) (float64, error) {
+				p, err := proj.Get(projectID)
+				if err != nil || p.OwnerID == "" {
+					return 0, nil // unowned/system project → no billable spend
+				}
+				ws, err := bill.WorkspaceForOwner(p.OwnerID)
+				if err != nil {
+					return 0, nil
+				}
+				return bill.SpendSince(ws.ID, since)
+			}
+		}
+	}
+
+	// Brain (optional): the per-project conversational assistant. Wired only when a
+	// dedicated ANTHROPIC_API_KEY is present; otherwise its routes return 503. It
+	// runs the tool-use loop in-process against the engine/store, and streams over
+	// the same event bus (emit → AppendEvent scoped to a conversation id). Its LLM
+	// also powers the digest's synthesis when present.
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		bst, bErr := brain.Open(filepath.Join(filepath.Dir(cfg.DBPath), "brain.db"))
+		if bErr != nil {
+			return nil, fmt.Errorf("brain store: %w", bErr)
+		}
+		llm := brain.NewClient(key, os.Getenv("BRAIN_MODEL"))
+		if digester != nil {
+			digester.Synthesize = func(ctx context.Context, system, user string) (string, error) {
+				res, err := llm.Stream(ctx, system,
+					[]brain.Message{{Role: "user", Content: []brain.ContentBlock{{Type: "text", Text: user}}}}, nil, nil)
+				if err != nil {
+					return "", err
+				}
+				return res.Text, nil
+			}
+		}
+		ops := brain.EngineOps{Engine: eng, Store: st, Tickets: tix, RegistryDir: cfg.RegistryRoot, Digester: digester}
+		if proj != nil {
+			ops.ProjectInfo = func(projectID string) (string, time.Time) {
+				p, err := proj.Get(projectID)
+				if err != nil {
+					return projectID, time.Time{}
+				}
+				name := p.Name
+				if name == "" {
+					name = projectID
+				}
+				return name, digestSince(p.LastDigestAt)
+			}
+		}
+		emit := func(convID, typ string, data map[string]any) { _, _ = st.AppendEvent(convID, "", typ, data) }
+		srv.Brain = brain.New(llm, ops, bst, emit)
+	}
+
+	// Digest schedule: VIBEFORGE_DIGEST_CRON (5-field cron, UTC; default 08:00 Panamá
+	// = 13:00 UTC). Parsed at boot so a bad expression FAILS the boot with a clear
+	// message rather than silently never firing.
+	digestSchedule, cronErr := cron.Parse(envOr("VIBEFORGE_DIGEST_CRON", "0 13 * * *"))
+	if cronErr != nil {
+		return nil, fmt.Errorf("VIBEFORGE_DIGEST_CRON: %w", cronErr)
+	}
+
 	workers := cfg.Workers
 	if workers <= 0 {
 		workers = 1
 	}
-	return &App{Store: st, Tickets: tix, Projects: proj, Auth: au, Engine: eng, Bus: bus, Server: srv, workers: workers, approver: appApprover}, nil
+	return &App{
+		Store: st, Tickets: tix, Projects: proj, Auth: au, Engine: eng, Bus: bus, Server: srv,
+		workers: workers, approver: appApprover,
+		digester: digester, digestChannels: digestChannels, digestCron: digestSchedule,
+	}, nil
+}
+
+// digestSince converts a stored last_digest_at (unix millis; 0 = never) into the
+// window start the digest reports from — the zero Time for "never" so the first
+// digest covers all history rather than everything since 1970.
+func digestSince(lastDigestAt int64) time.Time {
+	if lastDigestAt <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(lastDigestAt)
 }
 
 // ClaudeBackend returns a CliBackend pre-configured for the claude CLI.
@@ -459,6 +538,81 @@ func (a *App) StartBackground(ctx context.Context) {
 			go a.conductorLoop(ctx, interval)
 		}
 	}
+	// Daily digest scheduler (standup push): fires on VIBEFORGE_DIGEST_CRON and
+	// pushes each project's digest to its configured channel. Needs the digester,
+	// the projects store, and a channel registry to deliver through.
+	if a.digester != nil && a.Projects != nil && len(a.digestChannels) > 0 {
+		go a.digestLoop(ctx)
+	}
+}
+
+// digestLoop sleeps until the next cron tick, then sends the digest for every
+// project that has a digest channel configured. It re-derives the next tick each
+// iteration so a long delivery never drifts the schedule.
+func (a *App) digestLoop(ctx context.Context) {
+	log.Printf("digest: scheduler on (cron %q UTC)", a.digestCron.String())
+	for {
+		next := a.digestCron.Next(time.Now().UTC())
+		if next.IsZero() {
+			log.Printf("digest: schedule %q never matches — scheduler stopping", a.digestCron.String())
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(next)):
+		}
+		a.sendDigests(ctx)
+	}
+}
+
+// sendDigests builds and delivers the digest for each project with a configured
+// digest_channel, then advances that project's last-digest watermark. A project
+// with no channel (null = off) is skipped; one bad channel never blocks the rest.
+func (a *App) sendDigests(ctx context.Context) {
+	ps, err := a.Projects.List()
+	if err != nil {
+		log.Printf("digest: list projects: %v", err)
+		return
+	}
+	for _, p := range ps {
+		if p.DigestChannel == "" {
+			continue // null = digest off for this project
+		}
+		connector, target := parseDigestChannel(p.DigestChannel)
+		conn := a.digestChannels.Get(connector)
+		if conn == nil {
+			log.Printf("digest: %s: unknown connector %q", p.ID, connector)
+			continue
+		}
+		name := p.Name
+		if name == "" {
+			name = p.ID
+		}
+		text, err := a.digester.Build(ctx, p.ID, name, digestSince(p.LastDigestAt))
+		if err != nil {
+			log.Printf("digest: build %s: %v", p.ID, err)
+			continue
+		}
+		ev := channels.Event{Type: "digest.daily", ProjectID: p.ID, Title: text}
+		if err := conn.Notify(ctx, target, ev); err != nil {
+			log.Printf("digest: deliver %s → %s:%s: %v", p.ID, connector, target, err)
+			continue
+		}
+		if err := a.Projects.MarkDigestSent(p.ID, time.Now().UTC().UnixMilli()); err != nil {
+			log.Printf("digest: mark sent %s: %v", p.ID, err)
+		}
+	}
+}
+
+// parseDigestChannel splits a stored digest_channel into (connector, target). A
+// bare value (no "connector:" prefix) defaults to telegram — the only connector
+// today — so "123456789" and "telegram:123456789" are equivalent.
+func parseDigestChannel(v string) (connector, target string) {
+	if i := strings.IndexByte(v, ':'); i >= 0 {
+		return v[:i], v[i+1:]
+	}
+	return "telegram", v
 }
 
 // autoMergeFails acota los reintentos de auto-merge por PR (un PR que no

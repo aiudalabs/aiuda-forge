@@ -150,6 +150,21 @@ func (s *Store) CycleHealth(workspaceID string) (Health, error) {
 	return h, nil
 }
 
+// SpendSince returns the total real token cost (USD) a workspace incurred at or
+// after `since` (unix millis), summed across cost_events regardless of billing
+// cycle. It powers the daily digest's "cuánto costó" line — the spend for the
+// period since the last digest. A workspace with no events in the window returns 0.
+func (s *Store) SpendSince(workspaceID string, since int64) (float64, error) {
+	var total float64
+	err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(cost_usd), 0) FROM cost_events WHERE workspace_id=? AND created_at>=?`,
+		workspaceID, since).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 func b2i(b bool) int {
 	if b {
 		return 1
