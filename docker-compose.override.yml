@@ -1,0 +1,34 @@
+# ── DEV override — auto-loaded, DO NOT use in prod ───────────────────────────
+#
+# `docker compose` loads THIS file automatically ON TOP of docker-compose.yml
+# whenever COMPOSE_FILE is UNSET. It supplies the localhost identity URLs that the
+# base file intentionally no longer defaults (incident 2026-07-09), so the local
+# dev loop stays a plain `docker compose up --build`.
+#
+# PROD MUST set  COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.prod.yml  in
+# .env. Setting COMPOSE_FILE **suppresses this auto-override** — so a bare
+# `docker compose up` on the server uses the prod overlay (the real domain), NEVER
+# these localhost values. That is the whole point: the operator can no longer forget
+# a `-f` flag into a silent-localhost boot.
+#
+# ⚠️  If you are on a server and `docker compose exec control env | grep PUBLIC_URL`
+#     shows localhost, then COMPOSE_FILE is unset in your .env — fix that (DEPLOY.md §4).
+
+name: aiuda-forge
+
+services:
+  control:
+    environment:
+      VIBEFORGE_CORS_ORIGIN: http://localhost:3000
+      VIBEFORGE_PUBLIC_URL: http://localhost:8080
+      VIBEFORGE_CONSOLE_URL: http://localhost:3000
+      # Explicitly allow the localhost public URL: the control's boot guard would
+      # otherwise refuse to start a with-users deployment on a localhost URL.
+      VIBEFORGE_ALLOW_LOCAL_URL: "1"
+
+  console:
+    build:
+      args:
+        NEXT_PUBLIC_VIBEFORGE_API_URL: http://localhost:8080
+    environment:
+      NEXT_PUBLIC_VIBEFORGE_API_URL: http://localhost:8080

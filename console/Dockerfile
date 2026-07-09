@@ -16,8 +16,11 @@ ENV FORGE_API_INTERNAL=${FORGE_API_INTERNAL}
 # NEXT_PUBLIC_VIBEFORGE_API_URL is BAKED here (Next inlines NEXT_PUBLIC_* at build) — it's
 # the URL the BROWSER uses to reach the control plane. For a real deploy behind one domain
 # + reverse proxy, set it to https://<domain>/forge-api (see deploy/docker-compose.prod.yml).
-# Defaults to localhost:8080 for local dev.
-ARG NEXT_PUBLIC_VIBEFORGE_API_URL=http://localhost:8080
+# NO localhost default ON PURPOSE (incident 2026-07-09): a default here silently baked dev's
+# URL into a prod image whenever the build arg was missing. The compose layer ALWAYS supplies
+# it — localhost via docker-compose.override.yml (dev), the domain via the prod overlay — and
+# fails loudly (${VAR:?}) if neither did. A direct `docker build` MUST pass --build-arg.
+ARG NEXT_PUBLIC_VIBEFORGE_API_URL
 ENV NEXT_PUBLIC_VIBEFORGE_API_URL=${NEXT_PUBLIC_VIBEFORGE_API_URL}
 RUN npm run build
 

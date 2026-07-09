@@ -56,15 +56,27 @@ services:
       VIBEFORGE_AGENT_IMAGE: ${VIBEFORGE_AGENT_IMAGE:-vibeforge-agent:local}
       VIBEFORGE_ENGINE: ${VIBEFORGE_ENGINE:-claude}
       VIBEFORGE_SANDBOX: ${VIBEFORGE_SANDBOX:-docker}
-      VIBEFORGE_CORS_ORIGIN: ${VIBEFORGE_CORS_ORIGIN:-http://localhost:3000}
+      # IDENTITY-CRITICAL PUBLIC ORIGIN — NO localhost default on purpose (incident 2026-07-09):
+      # a bare `docker compose up` used to recreate control with dev's localhost SILENTLY. Left
+      # EMPTY in the bare base (compose interpolates each file BEFORE merging overlays, so a
+      # ${VAR:?} here would break the very overlays meant to fill it). The real value comes from a
+      # layer that REPLACES this key: dev via the auto-loaded docker-compose.override.yml, prod via
+      # deploy/docker-compose.prod.yml. The enforcement lives at the control's BOOT GUARD below
+      # (refuses a with-users deploy on empty/localhost URL) — a stronger check than compose-config.
+      VIBEFORGE_CORS_ORIGIN: ${VIBEFORGE_CORS_ORIGIN:-}
       VIBEFORGE_API_TOKEN: ${VIBEFORGE_API_TOKEN}
       VIBEFORGE_ADMIN_EMAIL: ${VIBEFORGE_ADMIN_EMAIL}
       VIBEFORGE_ADMIN_PASSWORD: ${VIBEFORGE_ADMIN_PASSWORD}
       VIBEFORGE_AGENT_AUTH: ${VIBEFORGE_AGENT_AUTH:-oauth_token}
       VIBEFORGE_GH_ORG: ${VIBEFORGE_GH_ORG}
-      # Onboarding GitHub (Forja): URLs públicas + credenciales de la App
-      VIBEFORGE_PUBLIC_URL: ${VIBEFORGE_PUBLIC_URL:-http://localhost:8080}
-      VIBEFORGE_CONSOLE_URL: ${VIBEFORGE_CONSOLE_URL:-http://localhost:3000}
+      # Onboarding GitHub (Forja): URLs públicas + credenciales de la App.
+      # IDENTITY-CRITICAL — empty in the bare base, no localhost default (see VIBEFORGE_CORS_ORIGIN
+      # above). A wrong VIBEFORGE_PUBLIC_URL breaks GitHub OAuth callbacks + preview links; the
+      # control FAIL-FASTS at boot if this is empty/localhost WITH users (unless VIBEFORGE_ALLOW_LOCAL_URL=1).
+      VIBEFORGE_PUBLIC_URL: ${VIBEFORGE_PUBLIC_URL:-}
+      VIBEFORGE_CONSOLE_URL: ${VIBEFORGE_CONSOLE_URL:-}
+      # Explicit escape hatch for the control's boot guard (dev override sets it to "1").
+      VIBEFORGE_ALLOW_LOCAL_URL: ${VIBEFORGE_ALLOW_LOCAL_URL:-}
       VIBEFORGE_GHAPP_CREDS: /data/github-app.json
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
@@ -165,12 +177,18 @@ services:
       context: ./console
       args:
         FORGE_API_INTERNAL: http://control:8080
+        # BAKED into the browser JS (Next inlines NEXT_PUBLIC_* at BUILD time — the runtime
+        # env below is a no-op for the browser). IDENTITY-CRITICAL, empty in the bare base (no
+        # localhost default): a base build without the overlay used to bake dev's localhost into
+        # the image SILENTLY. Dev supplies it via docker-compose.override.yml; prod via the prod
+        # overlay. A bare-base build bakes EMPTY (never localhost) — a real deploy always layers one.
+        NEXT_PUBLIC_VIBEFORGE_API_URL: ${NEXT_PUBLIC_VIBEFORGE_API_URL:-}
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       FORGE_API_INTERNAL: http://control:8080
-      NEXT_PUBLIC_VIBEFORGE_API_URL: ${NEXT_PUBLIC_VIBEFORGE_API_URL:-http://localhost:8080}
+      NEXT_PUBLIC_VIBEFORGE_API_URL: ${NEXT_PUBLIC_VIBEFORGE_API_URL:-}
     depends_on:
       - control
     networks:

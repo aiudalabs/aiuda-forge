@@ -93,9 +93,13 @@ nano .env
 Leyenda **Lee**: *control* = el contenedor `control` (API + agentes de diseño + conductor);
 *console* = build de Next.js; *caddy* = reverse proxy (solo prod). **Prod?** = obligatoria en producción.
 
+**Fail-fast** = una config incompleta se rechaza en vez de arrancar mal. `⛔ compose` = `docker compose`
+falla en `config`/`up`. `⛔ boot` = el contenedor `control` se niega a arrancar con un `log FATAL` accionable.
+
 | Variable | Lee | Default | Prod? | Qué es |
 |---|---|---|---|---|
-| `FLUXO_DOMAIN` | caddy, prod override | — | **Sí** | Dominio público. Ej: `fluxo.aiudalabs.com`. |
+| `COMPOSE_FILE` | docker compose | *(auto: base + override dev)* | **Sí** | **`docker-compose.yml:deploy/docker-compose.prod.yml`**. Hace que TODO `docker compose …` incluya el overlay de prod **sin el `-f` manual** (causa raíz del incidente 2026-07-09). Al estar seteada, compose **no** auto-carga `docker-compose.override.yml` (el de dev). En dev: dejala **sin setear**. |
+| `FLUXO_DOMAIN` | caddy, prod override | — | **Sí** ⛔ compose | Dominio público. Ej: `fluxo.aiudalabs.com`. Si falta con el overlay de prod, `docker compose config` **falla** (no rinde `https:///forge-api`). |
 | `VIBEFORGE_API_TOKEN` | control | — | **Sí** | Token de servicio interno. `openssl rand -hex 32`. Sin esto la auth no se activa. |
 | `VIBEFORGE_ADMIN_EMAIL` | control | — | **Sí** | Email del primer usuario (se crea al primer boot). |
 | `VIBEFORGE_ADMIN_PASSWORD` | control | — | **Sí** | Contraseña de ese primer usuario. |
@@ -128,8 +132,15 @@ Leyenda **Lee**: *control* = el contenedor `control` (API + agentes de diseño +
 | `VIBEFORGE_GH_TIMEOUT_SEC` | control | `90` | No | Corta llamadas `gh`/`git` colgadas. |
 | `VIBEFORGE_GITHUB_WEBHOOK_SECRET` | control | vacío | si usás webhooks | Secret del webhook de la GitHub App (§6.4). *(Antes estaba en `.env` pero no llegaba al contenedor; ahora sí.)* |
 
-**No pongas en `.env`** (los setea el override de prod a partir de `FLUXO_DOMAIN`):
-`VIBEFORGE_PUBLIC_URL`, `VIBEFORGE_CONSOLE_URL`, `VIBEFORGE_CORS_ORIGIN`, `NEXT_PUBLIC_VIBEFORGE_API_URL`.
+**No pongas en `.env`** (los setea la capa de compose, no el `.env`): `VIBEFORGE_PUBLIC_URL`,
+`VIBEFORGE_CONSOLE_URL`, `VIBEFORGE_CORS_ORIGIN`, `NEXT_PUBLIC_VIBEFORGE_API_URL`. En **prod** los deriva
+`deploy/docker-compose.prod.yml` a partir de `FLUXO_DOMAIN`; en **dev** los pone `docker-compose.override.yml`
+(localhost + `VIBEFORGE_ALLOW_LOCAL_URL=1`). El **base los deja VACÍOS a propósito** — nunca localhost — para
+que un `docker compose up` pelado no arranque apuntando a dev en silencio (incidente 2026-07-09).
+
+> **`VIBEFORGE_PUBLIC_URL` — ⛔ boot.** Si hay usuarios y esta URL está vacía o es `localhost`/`127.0.0.1`,
+> el `control` **se niega a arrancar** con un `FATAL` (rompería el OAuth de GitHub y los preview tokens).
+> Para una instancia local con usuarios a propósito: `VIBEFORGE_ALLOW_LOCAL_URL=1` (el override de dev ya lo pone).
 
 ### Las tres credenciales, en una línea
 - `CLAUDE_CODE_OAUTH_TOKEN` = suscripción Claude → agentes de diseño en modo `oauth_token`.
@@ -162,10 +173,24 @@ DooD contra el daemon del host), así que hay que construirla una vez **antes** 
 ./engine/scripts/build-sandbox-images.sh    # crea vibeforge-agent:local (+ forge-gate:local legacy)
 ```
 
-Después, con el `.env` lleno y el DNS apuntando:
+**PASO OBLIGATORIO — fijá el `COMPOSE_FILE` en `.env`** (esto reemplaza los `-f` manuales para
+siempre; sin esto un `docker compose up` pelado arranca en modo **dev/localhost**):
 
 ```bash
-docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+echo 'COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.prod.yml' >> .env
+grep -q '^FLUXO_DOMAIN=' .env || echo 'FLUXO_DOMAIN=tu-dominio.com' >> .env   # sin esto, compose config falla
+```
+
+Verificá la config ANTES de levantar (falla ruidoso si falta `FLUXO_DOMAIN`, nunca rinde localhost):
+
+```bash
+docker compose config | grep -E 'PUBLIC_URL|CONSOLE_URL|NEXT_PUBLIC'   # deben mostrar tu dominio, NO localhost
+```
+
+Después, con el `.env` lleno y el DNS apuntando (ya **sin `-f`** — `COMPOSE_FILE` los incluye):
+
+```bash
+docker compose up -d --build
 ```
 
 Levanta `caddy`, `control`, `console`, `egress-proxy`. Ver estado:
@@ -175,6 +200,10 @@ docker compose ps
 docker compose logs -f caddy      # debe obtener el certificado TLS
 docker compose logs -f control    # "vibeforge control listening on :8080 ... 1 user(s)"
 ```
+
+> Si `control` sale con `FATAL: VIBEFORGE_PUBLIC_URL=… localhost … but N user(s) exist`, es que
+> `COMPOSE_FILE` **no** quedó en `.env` (arrancó en modo dev). Corregí `.env` y reintentá — el
+> fail-fast te frenó ANTES de romper el OAuth de GitHub. **Es el comportamiento correcto.**
 
 ---
 
@@ -280,7 +309,8 @@ git pull
 # 4) reconstruí la imagen del sandbox SOLO si cambió su Dockerfile:
 ./engine/scripts/build-sandbox-images.sh
 # 5) UP (reconstruye control/console/caddy y aplica migraciones al boot):
-docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#    Ya SIN -f: el COMPOSE_FILE del .env incluye el overlay de prod (§4).
+docker compose up -d --build
 ```
 Los datos persisten en `forge-data`; los previews en `forge-previews`.
 
@@ -312,6 +342,12 @@ solo lo usa el target firebase). Construila con `./engine/scripts/build-sandbox-
 Corré esto con un **proyecto de juguete** (ej. "RutaViva-smoke") apenas termina el deploy. Cada paso
 prueba una feature de #15→#29; si todos pasan, el deploy soporta el código.
 
+- [ ] **0a. Identidad pública (el chequeo del incidente 2026-07-09)** — `docker compose exec control env | grep PUBLIC_URL`
+      debe mostrar **tu dominio público** (`https://<dominio>/forge-api`), **NUNCA** `localhost`. Si sale localhost,
+      `COMPOSE_FILE` no quedó en `.env` (§4) — el deploy arrancó en modo dev.
+- [ ] **0b. Login OAuth de GitHub end-to-end** — desde la URL pública, **Continuar con GitHub** → autorizá →
+      confirmá que el redirect vuelve a **tu dominio** (no a `localhost`) y caés logueado. Es el ÚNICO flujo que
+      ni los tests ni el conductor ejercitan, y el que rompió el incidente (el callback salía a localhost).
 - [ ] **0. Salud** — `curl …/forge-api/healthz` → 200; login en la UI OK.
 - [ ] **1. Proyecto en ceremonia total** — creá el proyecto y poné, en Ajustes del proyecto,
       `planning_mode`, `review_mode`, `retro_mode` = **ceremony** (así se ejercitan las 3 ceremonias).

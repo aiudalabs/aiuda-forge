@@ -184,6 +184,16 @@ func main() {
 		authCfg = httpx.AuthConfig{}
 	}
 
+	// ---- fail-fast: public identity URL sane for a real deployment ----------
+	// A with-users deployment whose VIBEFORGE_PUBLIC_URL is empty or localhost is
+	// almost always a misconfig — GitHub OAuth callbacks and preview links resolve to
+	// localhost and break (incident 2026-07-09: control recreated by a bare `docker
+	// compose up` WITHOUT the prod overlay, silently pointing at dev). Booting wrong in
+	// silence is worse than refusing to boot. Dev opts out with VIBEFORGE_ALLOW_LOCAL_URL=1.
+	if msg := localPublicURLFatal(os.Getenv("VIBEFORGE_PUBLIC_URL"), userCount, os.Getenv("VIBEFORGE_ALLOW_LOCAL_URL") == "1"); msg != "" {
+		log.Fatal(msg)
+	}
+
 	// CORS posture: locked to a single origin (with credentials) when auth is
 	// active; "*" only when explicitly opted into open dev mode (VIBEFORGE_CORS=open).
 	corsCfg := httpx.CORSConfig{
@@ -296,4 +306,43 @@ func envInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// localPublicURLFatal returns a non-empty FATAL message when the control is about to
+// start a real (has-users) deployment on a public URL that is empty or points at
+// localhost — a config that silently breaks GitHub OAuth callbacks and preview links.
+// Returns "" when the config is fine, when there are no users yet (a token-only setup
+// or first boot is allowed to be local), or when the operator explicitly allowed a
+// local URL (allowLocal, VIBEFORGE_ALLOW_LOCAL_URL=1, for the dev loop). Kept pure so
+// the boot decision is unit-tested without standing up the server.
+func localPublicURLFatal(publicURL string, userCount int, allowLocal bool) string {
+	if allowLocal || userCount == 0 || !isLocalURL(publicURL) {
+		return ""
+	}
+	shown := publicURL
+	if strings.TrimSpace(shown) == "" {
+		shown = "(empty)"
+	}
+	return fmt.Sprintf("FATAL: VIBEFORGE_PUBLIC_URL=%s but %d user(s) exist — GitHub OAuth "+
+		"callbacks and preview links would resolve to localhost and break. This usually means "+
+		"docker compose ran WITHOUT the prod overlay. Fix: set "+
+		"COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.prod.yml and FLUXO_DOMAIN in .env "+
+		"(see DEPLOY.md §4). For an intentional local dev instance with users, set "+
+		"VIBEFORGE_ALLOW_LOCAL_URL=1.", shown, userCount)
+}
+
+// isLocalURL reports whether a public base URL is empty or points at the local host
+// (localhost / 127.0.0.1 / ::1 / 0.0.0.0) — i.e. not reachable as a public identity
+// for OAuth callbacks reached from a user's browser.
+func isLocalURL(u string) bool {
+	if strings.TrimSpace(u) == "" {
+		return true
+	}
+	lower := strings.ToLower(u)
+	for _, needle := range []string{"localhost", "127.0.0.1", "::1", "0.0.0.0"} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }
