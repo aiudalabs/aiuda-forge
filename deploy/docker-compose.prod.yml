@@ -27,7 +27,10 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      FLUXO_DOMAIN: ${FLUXO_DOMAIN}
+      # Required: without it every ${FLUXO_DOMAIN} below expands empty → the control would boot
+      # with VIBEFORGE_PUBLIC_URL=https:///forge-api (malformed) and Caddy couldn't issue TLS.
+      # Fail at `compose config` instead. Set FLUXO_DOMAIN in .env (e.g. fluxo.aiudalabs.com).
+      FLUXO_DOMAIN: "${FLUXO_DOMAIN:?required — set FLUXO_DOMAIN in .env, e.g. fluxo.aiudalabs.com (DEPLOY.md section 4)}"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -52,6 +55,10 @@ services:
       args:
         # Baked into the JS the browser runs (see console/Dockerfile). Same-origin path.
         NEXT_PUBLIC_VIBEFORGE_API_URL: https://${FLUXO_DOMAIN}/forge-api
+    environment:
+      # Mirror of the build arg (a no-op for the browser — NEXT_PUBLIC_* is inlined at build —
+      # but keeps the running container's env self-describing instead of empty).
+      NEXT_PUBLIC_VIBEFORGE_API_URL: https://${FLUXO_DOMAIN}/forge-api
 
 volumes:
   caddy-data:

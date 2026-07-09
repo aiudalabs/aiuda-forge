@@ -20,6 +20,7 @@ jobs:
     outputs:
       engine: ${{ steps.filter.outputs.engine }}
       console: ${{ steps.filter.outputs.console }}
+      compose: ${{ steps.filter.outputs.compose }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -31,6 +32,12 @@ jobs:
               - '.github/workflows/ci.yml'
             console:
               - 'console/**'
+              - '.github/workflows/ci.yml'
+            compose:
+              - 'docker-compose*.yml'
+              - 'deploy/**'
+              - 'console/Dockerfile'
+              - 'scripts/check-compose-config.sh'
               - '.github/workflows/ci.yml'
 
   engine:
@@ -48,6 +55,17 @@ jobs:
           cache-dependency-path: engine/go.sum
       - run: go vet ./...
       - run: go test -race ./...
+
+  # Guards the 2026-07-09 incident class: the IDENTITY-CRITICAL public URLs must render
+  # correctly per mode and the BARE BASE must never render localhost.
+  compose:
+    needs: changes
+    if: ${{ needs.changes.outputs.compose == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose config (dev / prod / base / prod-without-domain)
+        run: ./scripts/check-compose-config.sh
 
   console:
     needs: changes
