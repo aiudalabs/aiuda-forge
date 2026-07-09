@@ -191,7 +191,9 @@ func (s *Server) stackForProject(projectID string) string {
 
 // scaffoldVarsFor deriva las variables de template del proyecto (nombre, lanes).
 func (s *Server) scaffoldVarsFor(projectID, stack string) scaffold.Vars {
-	vars := scaffold.Vars{"stack": stack, "language": "es"}
+	// art_director: on by default — gates the ui-verify visual-acceptance step. The
+	// template reads `!= 'off'`, so on/absent both keep it on.
+	vars := scaffold.Vars{"stack": stack, "language": "es", "art_director": "on"}
 	if s.Projects != nil {
 		if p, err := s.Projects.Get(projectID); err == nil {
 			vars["project_name"] = p.Name

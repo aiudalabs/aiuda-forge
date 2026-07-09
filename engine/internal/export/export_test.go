@@ -242,6 +242,25 @@ func TestEnrichedBodySections(t *testing.T) {
 	}
 }
 
+// TestHasScreenAndNoneMarker: "none" is the explicit frontend-foundation marker — a
+// story with no screen of its own — and must be treated identically to an empty key
+// (no real screen), so a foundation story never gets a Visual spec (and the art-director
+// QA that reads that section from the issue therefore skips it cleanly).
+func TestHasScreenAndNoneMarker(t *testing.T) {
+	if !HasScreen("customer.login") {
+		t.Error("a real key must count as a screen")
+	}
+	for _, k := range []string{"", "  ", "none", "None", "NONE"} {
+		if HasScreen(k) {
+			t.Errorf("HasScreen(%q) = true, want false (absent or the none marker)", k)
+		}
+	}
+	// "none" produces no Visual spec, exactly like an empty key.
+	if got := VisualSpecSection("none", "https://raw.example/docs/mockups/none.html", "### X"); got != "" {
+		t.Errorf("VisualSpecSection(none) must render nothing, got %q", got)
+	}
+}
+
 // An empty spec (detailer failed) drops only the Spec section — the degrade path.
 func TestSpecSectionDegrades(t *testing.T) {
 	if s := SpecSection("   "); s != "" {

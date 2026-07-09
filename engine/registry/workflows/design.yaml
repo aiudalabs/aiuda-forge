@@ -67,6 +67,21 @@ steps:
       instructions: $trigger.instructions
       output: docs/PRD.md
 
+  # Lint the PRD before the human sees it: every functional requirement (FR-NN) must
+  # carry a GIVEN/WHEN/THEN scenario (the acceptance contract the story inherits). A
+  # malformed PRD loops back to the pm with the exact gap named — the reviewer's
+  # attention is not spent on a doc that is structurally broken.
+  - id: validate_prd
+    type: validate
+    label: Lint PRD
+    inputs:
+      schema: prd
+      path: docs/PRD.md
+    on_fail:
+      goto: prd
+      max: 2
+      feedback: $validate_prd.detail
+
   - id: prd_gate
     type: human_gate
     inputs:
@@ -197,6 +212,21 @@ steps:
       goto: backlog
       max: 1
       feedback: "La generación anterior del backlog falló o excedió el tiempo. Genera un backlog MÁS LEAN y enfocado al MVP: prioriza el happy-path central, agrupa en menos sprints y difiere lo nice-to-have. Mantén el nivel de ESQUELETO (título + user-story + acceptance-scenarios + deps + owner + sprint) — sin specs de implementación; esas las expande el story-detailer just-in-time."
+
+  # Lint the backlog before the human sees it: valid YAML, unique ids, deps that point
+  # at real stories, owners that are known lanes, and a screen_key on every frontend
+  # story. Catches the deadlock-y bugs (a dep pointing at nothing, a typo'd owner that
+  # can't be dispatched) BEFORE publish — where they would silently wedge readiness.
+  - id: validate_backlog
+    type: validate
+    label: Lint backlog
+    inputs:
+      schema: backlog
+      path: docs/backlog.yaml
+    on_fail:
+      goto: backlog
+      max: 2
+      feedback: $validate_backlog.detail
 
   - id: backlog_gate
     type: human_gate

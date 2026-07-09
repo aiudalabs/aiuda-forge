@@ -29,6 +29,15 @@ func readProposals(path string) ([]Proposal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return parseProposalsBytes(raw)
+}
+
+// parseProposalsBytes is the SINGLE proposals parser, shared by registry_apply
+// (via readProposals) and the `validate` step type (via ParseProposals) so the two
+// never diverge. It prefers a fenced yaml block carrying a `proposals:` key, then
+// falls back to the whole doc. No proposals block at all → empty slice (an empty
+// retro is legal, not an error).
+func parseProposalsBytes(raw []byte) ([]Proposal, error) {
 	for _, m := range yamlFenceRe.FindAllSubmatch(raw, -1) {
 		block := m[1]
 		if !containsProposalsKey(block) {
@@ -49,6 +58,11 @@ func readProposals(path string) ([]Proposal, error) {
 	}
 	return nil, nil // no proposals block → empty retro
 }
+
+// ParseProposals is the exported bytes entry point to the shared proposals parser,
+// for the `validate` step type to lint a RETRO doc without a store. Same code as
+// registry_apply's readProposals — one parser.
+func ParseProposals(raw []byte) ([]Proposal, error) { return parseProposalsBytes(raw) }
 
 // containsProposalsKey reports whether a yaml chunk declares a `proposals:` key at the
 // start of a line (so prose mentioning "proposals" does not false-positive).

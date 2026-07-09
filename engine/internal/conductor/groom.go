@@ -250,7 +250,9 @@ func (g *Groomer) screenKeys(ctx context.Context, repo GroomGitHub, repoURL stri
 		return out
 	}
 	for _, s := range bf.Stories {
-		if s.ID != "" && s.ScreenKey != "" {
+		// "none" (the explicit foundation marker) is not a real screen — exclude it so a
+		// foundation story never gets a Visual spec / mockup binding.
+		if s.ID != "" && export.HasScreen(s.ScreenKey) {
 			out[s.ID] = s.ScreenKey
 		}
 	}
@@ -258,9 +260,10 @@ func (g *Groomer) screenKeys(ctx context.Context, repo GroomGitHub, repoURL stri
 }
 
 // uiExtract returns the docs/UI_SCREENS.md section for screenKey (matched by
-// heading), or "" (no screen_key, no doc, or no matching heading).
+// heading), or "" (no real screen — absent or the "none" foundation marker — no doc, or
+// no matching heading).
 func (g *Groomer) uiExtract(ctx context.Context, repo GroomGitHub, repoURL, screenKey string) string {
-	if screenKey == "" {
+	if !export.HasScreen(screenKey) {
 		return ""
 	}
 	raw, err := repo.ReadFile(ctx, repoURL, "docs/UI_SCREENS.md", groomRef)
@@ -325,10 +328,10 @@ func laneComponentDir(owner string) string {
 }
 
 // mockupRawURL is the raw link to the story's mockup, per the task:
-// docs/mockups/<screen_key>.html on the default branch. "" when there is no
-// screen_key or the repo slug can't be resolved.
+// docs/mockups/<screen_key>.html on the default branch. "" when there is no real screen
+// (absent or the "none" foundation marker) or the repo slug can't be resolved.
 func mockupRawURL(repoURL, screenKey string) string {
-	if screenKey == "" {
+	if !export.HasScreen(screenKey) {
 		return ""
 	}
 	slug := repoSlug(repoURL)

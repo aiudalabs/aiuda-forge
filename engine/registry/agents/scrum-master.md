@@ -97,13 +97,22 @@ one story at a time, just before it is built.
    the surface. If `provisioning.yaml` is absent (older project), skip this step entirely
    and produce the backlog exactly as before — it is purely additive.
 
-3d. **Emit `screen_key` on every frontend story.** For each story owned by a frontend lane
-   (`react-dev` / `flutter-dev`) that builds a specific screen/surface, add a stable
-   `screen_key` field — a dotted identifier of the screen in `role.screen` form
-   (`passenger.home`, `provider.bookings`, `admin.users`). It is the stable key that a
-   later phase uses to bind a screen's mockup ↔ spec ↔ route to this story. Use the SAME
-   key the UI spec uses for that screen; keep it lowercase, dotted, and stable. Non-screen
-   stories (backend, a shared primitive, the design-system foundation) omit `screen_key`.
+3d. **Every frontend story MUST declare `screen_key` — a real key or `none`.** Any story
+   owned by a frontend lane (`react-dev` / `flutter-dev`) carries a `screen_key` field with
+   one of two legal values:
+   - the screen's stable key in `role.screen` form (`passenger.home`, `provider.bookings`,
+     `admin.users`) when the story builds a specific screen/surface — use the SAME key the
+     UI spec uses; keep it lowercase, dotted, and stable. This binds the screen's mockup ↔
+     spec ↔ route to the story, and is what lets the ui-verify **art-director** judge the
+     built screen against its mockup.
+   - the literal `none` when the frontend story builds NO screen of its own — the
+     design-system foundation, a shared primitive/component, a router/setup story. `none`
+     is the EXPLICIT opt-out: it means "this frontend story has no mockup to verify", so
+     the visual QA skips it cleanly instead of the omission being silent.
+
+   Backend / non-frontend stories (owner is not a frontend lane) OMIT `screen_key` entirely
+   — the field is a frontend-lane obligation. Never guess a screen for a foundation story;
+   write `screen_key: none`.
 
 4. **Write the LIGHT story body — a user-story, NOT a spec.** Each `body` is a short
    user-story in the form `As a <role>, I want <capability>, so that <value>.` — 1–3 lines.
@@ -119,6 +128,9 @@ one story at a time, just before it is built.
    item fails:
    - Every story has id, title, a user-story body, 2–5 ACs, owner, sprint_id, deps.
    - No cycles in the deps graph; owner is a valid registry agent id.
+   - Every FRONTEND story (owner `react-dev` / `flutter-dev`) declares `screen_key` —
+     a real `role.screen` key, or `none` for a foundation story with no screen of its own.
+     A frontend story missing the field fails the deterministic backlog lint.
    - Every P0 FR has ≥1 story; every data-model entity has a creation story (migration/seed);
      every external integration has an integration-layer story; ≥1 story covers observability
      (logging / metrics / health check).
@@ -170,15 +182,28 @@ stories:
       - The catalog list query runs without a missing-index error.   # ← frontier AC from provisioning.yaml (indexes)
     owner: react-dev
     sprint_id: SP1
-    screen_key: customer.catalog   # ← frontend story: stable role.screen key (omit on non-screen stories)
+    screen_key: customer.catalog   # ← frontend story building a screen: stable role.screen key
     deps: [S1-01]
+  - id: S1-03
+    title: "Design-system foundation (tokens, base components)"
+    body: >
+      As the frontend team, I want the shared design-system tokens and base components,
+      so that every screen is built on a consistent visual foundation.
+    acceptance: |
+      - The token set (color, type, spacing) is defined and importable.
+      - Base components (button, input, card) render with the tokens.
+    owner: react-dev
+    sprint_id: SP1
+    screen_key: none               # ← frontend story with NO screen of its own: explicit opt-out
+    deps: []
 ```
 
 Rules:
 - Every field is required (use empty string for sprint_id, empty list for deps if not applicable).
-- `screen_key` is OPTIONAL: present on frontend stories that build a specific screen
-  (`role.screen` form, lowercase, dotted, stable); omitted on backend / shared-primitive
-  stories. It is additive — a story without it is still valid.
+- `screen_key` is REQUIRED on every frontend story (owner `react-dev` / `flutter-dev`):
+  either the screen's key (`role.screen` form, lowercase, dotted, stable) OR the literal
+  `none` for a foundation story that builds no screen of its own. Backend / non-frontend
+  stories OMIT it. A frontend story missing the field fails the backlog lint.
 - `body` is a SHORT user-story ("As a … I want … so that …"), NOT an implementation spec.
 - `deps` must reference valid `id` values within the same file.
 - IDs must be unique across the entire file.

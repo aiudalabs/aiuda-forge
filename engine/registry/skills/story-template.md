@@ -12,6 +12,7 @@ should never need to read the PRD or architecture doc to implement a story.
 
 **Epic**: <epic name from PRD>
 **Owner**: <agent id that implements this — e.g. dev>
+**Screen key**: <role.screen for a frontend screen story, e.g. customer.catalog — or `none` for a frontend foundation story with no screen of its own; OMIT for backend stories>
 **Depends on**: [<STORY-ID>, …] or none
 **Priority**: P0 | P1 | P2
 **Size**: XS | S | M | L (XS ≤ 1h, S ≤ 4h, M ≤ 1d, L ≤ 3d)
