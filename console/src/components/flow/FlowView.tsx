@@ -32,6 +32,7 @@ import {
   useSprints,
   useProjectSettings,
   useMintPreviewToken,
+  useApiMode,
 } from "@/lib/hooks";
 import { subscribe } from "@/lib/ws";
 import { useQueryClient } from "@tanstack/react-query";
@@ -71,6 +72,7 @@ function FlowInner() {
   const qc = useQueryClient();
   const projectId = useActiveProjectId();
 
+  const { data: mode } = useApiMode();
   const { data: designRuns } = useDesignRuns();
   const picked = useMemo(() => pickDesignRun(designRuns, projectId), [designRuns, projectId]);
   const { data: designRun } = useDesignRun(picked?.id ?? null);
@@ -91,12 +93,12 @@ function FlowInner() {
   // reaccionan a step.status/step.answer sin esperar el poll de 3s.
   useEffect(() => {
     const id = picked?.id;
-    if (!id) return;
+    if (mode !== "real" || !id) return;
     const off = subscribe((ev) => {
       if (ev.runId === id) qc.invalidateQueries({ queryKey: ["designRun", id] });
     });
     return off;
-  }, [picked?.id, qc]);
+  }, [picked?.id, mode, qc]);
 
   const modes: CeremonyModes = useMemo(
     () => ({
