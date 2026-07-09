@@ -209,8 +209,32 @@ func TestCorrectionsPublishAppendIdempotent(t *testing.T) {
 	}
 }
 
+// TestPublishEmptyStoriesList: a corrections doc that declares `stories: []` (the
+// reviewer's feedback needed no code change) publishes ZERO stories and succeeds.
+func TestPublishEmptyStoriesList(t *testing.T) {
+	st := openTemp(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CORRECTIONS.md"), []byte("stories: []\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	r := &tickets.PublishRunner{Store: st}
+	res, err := r.Run(context.Background(), workflow.Step{}, map[string]any{
+		"backlog": "CORRECTIONS.md", "project_id": "p1", "optional": true,
+	}, dir)
+	if err != nil {
+		t.Fatalf("hard error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("empty stories list should succeed, got: %s", res.Detail)
+	}
+	if res.Output["created"] != 0 {
+		t.Fatalf("empty stories list created = %v, want 0", res.Output["created"])
+	}
+}
+
 // TestPublishOptionalMissingFile: with optional=true a MISSING doc is a no-op success
-// (the sprint-review happy path has no corrections doc), not a failure.
+// (the sprint-review happy path skips corrections entirely, so no doc exists), not a
+// failure.
 func TestPublishOptionalMissingFile(t *testing.T) {
 	st := openTemp(t)
 	r := &tickets.PublishRunner{Store: st}

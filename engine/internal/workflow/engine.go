@@ -365,6 +365,14 @@ func (e *Engine) advance(wf *Workflow, task *store.Task, result StepResult) erro
 			return e.Store.SetRunStatus(task.RunID, store.StatusDone)
 		}
 		next, ok := wf.Next(task.StepID)
+		// Skip a guarded step whose skip_if_empty inputs are all empty on this linear
+		// path (e.g. a corrections step reached on the happy path with no reviewer
+		// feedback) — advance past it without a task/runner/LLM call. on_fail.goto and
+		// the answer verb enqueue such a step DIRECTLY (with feedback/answers), so it
+		// still runs when actually reached by a reject/answer.
+		for ok && e.skipStep(next, ctx) {
+			next, ok = wf.Next(next.ID)
+		}
 		if !ok {
 			return e.Store.SetRunStatus(task.RunID, store.StatusDone) // last step done
 		}
@@ -413,6 +421,23 @@ func (e *Engine) advance(wf *Workflow, task *store.Task, result StepResult) erro
 
 	// No on_fail policy: the run fails.
 	return e.Store.SetRunStatus(task.RunID, store.StatusFailed)
+}
+
+// skipStep reports whether step should be skipped on the linear (success) path: it
+// declares skip_if_empty and every named input resolves empty against ctx. A guarded
+// step reached this way is a no-op; only when reached via on_fail/answer (which inject
+// a non-empty feedback/answers input directly, bypassing this check) does it run.
+func (e *Engine) skipStep(step Step, ctx Context) bool {
+	if len(step.SkipIfEmpty) == 0 {
+		return false
+	}
+	inputs := ResolveInputs(step.Inputs, ctx)
+	for _, k := range step.SkipIfEmpty {
+		if v, ok := inputs[k]; ok && asString(v) != "" {
+			return false // a guard input is present and non-empty → run the step
+		}
+	}
+	return true // all guard inputs empty/absent → skip
 }
 
 // advanceAnswer re-enqueues the answered gate's on_fail.goto target (the phase)

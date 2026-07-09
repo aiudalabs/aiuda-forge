@@ -38,31 +38,36 @@ steps:
       preview_url: $release.output.preview_url
       output: $trigger.review   # docs/REVIEW-<sprint_id>.md
 
-  # ── Corrections — the reject-loop body. On the first pass (no feedback) it writes an
-  #    EMPTY corrections doc (`stories: []`) — a no-op the committer skips. When the gate
-  #    rejects, on_fail re-runs THIS step with the reviewer's `feedback` (or `answers`),
-  #    turning it into a small set of correction stories targeting the NEXT sprint.
+  # ── Corrections — the reject-loop body. It sits before the gate so on_fail can loop
+  #    back to it, but `skip_if_empty` makes it a ZERO-COST no-op on the happy path: on
+  #    the first (linear) pass there is no `feedback`/`answers`, so the step is skipped
+  #    entirely — no agent call, no corrections doc. When the gate REJECTS (or is
+  #    answered), on_fail re-runs THIS step directly with the reviewer's `feedback` (or
+  #    `answers`) injected, turning it into a small set of correction stories for the
+  #    NEXT sprint. The committer (publish_corrections) + close both tolerate the absent
+  #    doc on the happy path (optional publish → no-op; close → decision "accepted").
   - id: corrections
     type: design
     label: Correcciones del sprint
     agent: scrum-master
+    skip_if_empty: [feedback, answers]
     inputs:
       sprint_id: $trigger.sprint_id
       next_sprint: $trigger.next_sprint
       stories_snapshot: $trigger.stories_snapshot
       output: $trigger.corrections   # docs/CORRECTIONS-<sprint_id>.md
       instructions: |
-        You are in SPRINT-REVIEW CORRECTIONS mode — NOT designing a new backlog.
-        Write the file at the `output` path in the docs/backlog.yaml contract.
-        If there is NO reviewer `feedback` and NO `answers` (the first pass), write
-        EXACTLY `stories: []` and nothing else — do not invent work.
-        If `feedback`/`answers` IS present, the reviewer rejected sprint `sprint_id`'s
-        increment: convert ONLY that feedback into a SMALL set of correction stories
-        (typically 1–5). Each story: id (stable across re-runs so re-publishing does
-        not duplicate), title, body, acceptance, kind (`bug` for a defect, `story` for
-        missing scope), owner (the lane), screen_key (optional, frontend), and
-        sprint_id set to `next_sprint`. Declare `next_sprint` in a `sprints:` block so
-        it is created if absent. Do NOT re-shard the whole product backlog.
+        You are in SPRINT-REVIEW CORRECTIONS mode — NOT designing a new backlog. This
+        step runs ONLY when the reviewer rejected (or answered) sprint `sprint_id`'s
+        increment, so `feedback` (or `answers`) is present: convert ONLY that feedback
+        into a SMALL set of correction stories (typically 1–5) and write the file at the
+        `output` path in the docs/backlog.yaml contract. Each story: id (stable across
+        re-runs so re-publishing does not duplicate), title, body, acceptance, kind
+        (`bug` for a defect, `story` for missing scope), owner (the lane), screen_key
+        (optional, frontend), and sprint_id set to `next_sprint`. Declare `next_sprint`
+        in a `sprints:` block so it is created if absent. If the feedback genuinely
+        requires no code change, write EXACTLY `stories: []`. Do NOT re-shard the whole
+        product backlog.
 
   # ── Review gate — conversational. Open the preview, review the report. `answer`
   #    re-runs `corrections` with the answer; `reject` re-runs it with feedback (both
