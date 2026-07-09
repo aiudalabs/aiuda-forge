@@ -19,6 +19,22 @@ import (
 // instead of a misleading 200-success on a silent no-op (M3).
 var ErrNoAwaitingStep = errors.New("no step awaiting approval")
 
+// ErrNoAnswerTarget is returned by AnswerStep when the awaiting gate declares no
+// on_fail.goto — there is no phase to loop the answers back into, so answering is
+// meaningless (use approve/reject). Reported as a 409 by the API.
+var ErrNoAnswerTarget = errors.New("gate has no on_fail.goto to receive the answer")
+
+// ErrAnswerCapReached is returned by AnswerStep when a phase has already been
+// answered maxAnswersPerPhase times — a hard anti-loop backstop (a human/agent
+// bouncing answers forever). Reported as a 409 by the API.
+var ErrAnswerCapReached = errors.New("answer cap reached for this phase")
+
+// maxAnswersPerPhase caps how many times one gate can be answered in a run. Answers
+// intentionally do NOT count against on_fail.max (they resolve the gate DONE, not
+// FAILED — see AnswerStep), so on_fail cannot bound them; this const does. Generous
+// (a real Q&A loop is a handful of rounds); it only stops a pathological loop.
+const maxAnswersPerPhase = 50
+
 // ReportStep records a worker's result for a claimed task (enforcing its fence)
 // and advances the workflow. This is what the API's POST /steps/{id}/report
 // calls — the daemon-internal worker→kernel path.
@@ -110,6 +126,54 @@ func (e *Engine) RejectStep(runID, stepID, reason string) error {
 	return e.resolveAwaiting(runID, stepID, store.StatusFailed, StepResult{
 		Success: false, Output: map[string]any{"rejected": true, "reason": reason}, Detail: reason,
 	}, reason)
+}
+
+// AnswerStep is the THIRD gate verb, next to approve/reject: the human ANSWERS the
+// phase's open questions instead of approving or rejecting. It re-runs the phase
+// (the gate's on_fail.goto target) with the text injected as the `answers` input —
+// so the persona UPDATES the existing doc incorporating the answers rather than
+// regenerating it — then the phase re-parks at the SAME gate for approval. Crucially
+// it is NOT a rejection: the gate resolves DONE (not FAILED), so it does NOT consume
+// the reject on_fail.max budget (countFailures only counts FAILED tasks). A separate
+// hard cap (maxAnswersPerPhase) is the only anti-loop bound. No-op error if nothing
+// is awaiting (ErrNoAwaitingStep), the gate has no on_fail.goto (ErrNoAnswerTarget),
+// or the cap is reached (ErrAnswerCapReached).
+func (e *Engine) AnswerStep(runID, stepID, text string) error {
+	// Load the workflow up front so we can reject a gate with no on_fail.goto
+	// BEFORE resolving the AWAITING task — otherwise we'd resolve the gate DONE
+	// with nowhere to re-enqueue, stranding the run RUNNING forever.
+	run, err := e.Store.GetRun(runID)
+	if err != nil {
+		return err
+	}
+	wf, err := e.Loader.Load(run.WorkflowID)
+	if err != nil {
+		return err
+	}
+	step, ok := wf.StepByID(stepID)
+	if !ok || step.OnFail == nil || step.OnFail.Goto == "" {
+		return ErrNoAnswerTarget
+	}
+	// Anti-loop cap (checked before the emit so the Nth answer that would exceed it
+	// is rejected without side effects). Best-effort under concurrency (a race can
+	// let two answers past the same count); the tolerance of ±1 at 50 is harmless.
+	n, err := e.Store.CountAnswers(runID, stepID)
+	if err != nil {
+		return err
+	}
+	if n >= maxAnswersPerPhase {
+		return ErrAnswerCapReached
+	}
+	task, ok, err := e.Store.AnswerAwaiting(runID, stepID, text)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNoAwaitingStep
+	}
+	// The store already transitioned the gate DONE + emitted step.answer; now
+	// re-enqueue the phase with the answers as input (no on_fail, no failure count).
+	return e.advanceAnswer(wf, task, text)
 }
 
 // resolveAwaiting atomically transitions the AWAITING (run, step) task to `to`

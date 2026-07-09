@@ -265,6 +265,15 @@ func buildPrompt(m *Manifest, step workflow.Step, inputs map[string]any) string 
 		b.WriteString(v)
 		b.WriteString("\n\n")
 	}
+	// Answers to the gate's open questions (the `answer` verb). Rendered BEFORE
+	// feedback and with a fixed preservation instruction: the persona must UPDATE
+	// the existing doc, not regenerate it — an answer incorporates, it doesn't reset.
+	if v := asString(inputs["answers"]); v != "" {
+		b.WriteString("## Answers to your open questions\n")
+		b.WriteString("Update the existing document incorporating these answers. Do NOT regenerate it from scratch; preserve everything not affected by the answers.\n\n")
+		b.WriteString(v)
+		b.WriteString("\n\n")
+	}
 	if v := asString(inputs["feedback"]); v != "" {
 		b.WriteString("## Feedback from a previous attempt (address this)\n")
 		b.WriteString(v)
@@ -273,7 +282,7 @@ func buildPrompt(m *Manifest, step workflow.Step, inputs map[string]any) string 
 	// Any other inputs appended generically so nothing is silently dropped.
 	for k, val := range inputs {
 		switch k {
-		case "ticket", "instructions", "feedback", "agent":
+		case "ticket", "instructions", "answers", "feedback", "agent":
 			// "agent" is a routing key (selects the specialist), not prompt content.
 			continue
 		}

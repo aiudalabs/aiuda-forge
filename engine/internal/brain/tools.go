@@ -203,6 +203,13 @@ var registry = map[string]toolDef{
 			return ok(ops.RejectStep(argStr(input, "run_id"), argStr(input, "step"), argStr(input, "reason")))
 		},
 	},
+	"answer_step": {
+		Tool: Tool{Name: "answer_step", Description: "Answer a run's awaiting human-gate open questions (the third verb, next to approve/reject). The phase re-runs incorporating the answers into the EXISTING doc (not a regen) and re-parks at the same gate for approval. NOT a rejection — does not consume the reject on_fail budget. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"run_id": strp("run id"), "step": strp("step id"), "text": strp("the answers to the phase's open questions")}, "run_id", "step", "text")},
+		Kind: Mutating, MinRole: "editor",
+		Run: func(ops ControlOps, _ string, input json.RawMessage) (string, error) {
+			return ok(ops.AnswerStep(argStr(input, "run_id"), argStr(input, "step"), argStr(input, "text")))
+		},
+	},
 	"rerun_step": {
 		Tool: Tool{Name: "rerun_step", Description: "Re-run one design phase IN PLACE with optional feedback — e.g. regenerate `data_model` with feedback \"use Firebase, not Postgres\". Reuses the run's existing docs, does NOT cascade downstream (no GitHub re-publish), and re-parks at the phase's gate for re-approval. The `feedback` is injected as the phase's feedback input so the persona addresses it. MUTATING — proposed for human approval.", InputSchema: obj(map[string]any{"run_id": strp("the run id"), "step": strp("the step to re-run, e.g. mockups | ui | prd | data_model"), "feedback": strp("optional: what to change / what you didn't like")}, "run_id", "step")},
 		Kind: Mutating, MinRole: "editor",

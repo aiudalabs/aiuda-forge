@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"forge/internal/store"
@@ -295,5 +296,49 @@ func TestDesignStepOutputWritesDoc(t *testing.T) {
 	}
 	if outVal != docPath {
 		t.Fatalf("expected output path %q, got %q", docPath, outVal)
+	}
+}
+
+// TestBuildPromptAnswersSection: the `answer` verb injects an `answers` input; the
+// prompt must render a "## Answers to your open questions" section with the fixed
+// preservation instruction, placed BEFORE the feedback section (so an answer updates
+// the doc, it doesn't reset it). Also verifies answers + feedback coexist in order.
+func TestBuildPromptAnswersSection(t *testing.T) {
+	m := &Manifest{Role: "You are the PM."}
+	step := workflow.Step{}
+	inputs := map[string]any{
+		"answers":  "Use Postgres. Region us-east-1.",
+		"feedback": "prior reviewer note",
+	}
+	got := buildPrompt(m, step, inputs)
+
+	const header = "## Answers to your open questions"
+	const instruction = "Update the existing document incorporating these answers. Do NOT regenerate it from scratch; preserve everything not affected by the answers."
+	if !strings.Contains(got, header) {
+		t.Fatalf("prompt missing answers header:\n%s", got)
+	}
+	if !strings.Contains(got, instruction) {
+		t.Fatalf("prompt missing fixed preservation instruction:\n%s", got)
+	}
+	if !strings.Contains(got, "Use Postgres. Region us-east-1.") {
+		t.Fatalf("prompt missing the answer text:\n%s", got)
+	}
+	// Answers section must come BEFORE the feedback section.
+	ai := strings.Index(got, header)
+	fi := strings.Index(got, "## Feedback from a previous attempt")
+	if fi < 0 {
+		t.Fatalf("prompt missing feedback section:\n%s", got)
+	}
+	if ai > fi {
+		t.Fatalf("answers section must precede feedback section (answers@%d feedback@%d)", ai, fi)
+	}
+}
+
+// TestBuildPromptNoAnswers: without an `answers` input the section is absent (no
+// stray header, no leaked preservation instruction).
+func TestBuildPromptNoAnswers(t *testing.T) {
+	got := buildPrompt(&Manifest{Role: "x"}, workflow.Step{}, map[string]any{"instructions": "do the thing"})
+	if strings.Contains(got, "## Answers to your open questions") {
+		t.Fatalf("unexpected answers section without answers input:\n%s", got)
 	}
 }

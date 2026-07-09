@@ -92,6 +92,40 @@ func TestRejectStep(t *testing.T) {
 	}
 }
 
+// TestAnswerStepValidationAndNoTarget exercises the answer endpoint's guards: an
+// empty body is a 400, and answering a gate that declares no on_fail.goto (the
+// `gated` workflow's `approve` gate) maps ErrNoAnswerTarget to a 409. The happy
+// path (phase re-run + re-park) is covered at the engine level with a fake run.
+func TestAnswerStepValidationAndNoTarget(t *testing.T) {
+	base, _, _ := testKernel(t)
+	resp, data := do(t, "POST", base+"/runs", map[string]any{
+		"workflow": "gated",
+		"payload":  map[string]any{"ticket": "implement X"},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /runs gated = %d: %s", resp.StatusCode, data)
+	}
+	var run map[string]any
+	_ = json.Unmarshal(data, &run)
+	id := run["id"].(string)
+
+	if step := waitAwaitingStep(t, base, id); step != "approve" {
+		t.Fatalf("expected 'approve' step awaiting, got %q", step)
+	}
+
+	// Empty text → 400.
+	resp, data = do(t, "POST", base+"/runs/"+id+"/steps/approve/answer", map[string]any{"text": "   "})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty answer should be 400, got %d: %s", resp.StatusCode, data)
+	}
+
+	// gated's approve gate has NO on_fail.goto → ErrNoAnswerTarget → 409.
+	resp, data = do(t, "POST", base+"/runs/"+id+"/steps/approve/answer", map[string]any{"text": "use Postgres"})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("answer on a gate with no on_fail should be 409, got %d: %s", resp.StatusCode, data)
+	}
+}
+
 // TestMetricsCost: /metrics exposes the cost-breakdown shape (total + by_workflow
 // + by_step) and acceptance rate. Value is 0 with the free fake backend — the
 // point is the aggregation plumbing exists and is correct.

@@ -53,6 +53,9 @@ function badgeLabel(e: RunEvent, kind: string): string {
 // fullContent devuelve el contenido expandible completo de un evento.
 // Retorna "" cuando no hay nada extra útil que mostrar.
 function fullContent(e: RunEvent): string {
+  // A human answer to a gate's open questions — surface the answer text (this is
+  // NOT a reject; its own event type keeps it distinguishable in the stream).
+  if (e.type === "step.answer") return (e.data?.text as string) || "";
   if (e.type !== "step.event") return "";
   const d = e.data;
   if (!d) return "";

@@ -117,6 +117,9 @@ export function useApprove() {
 export function useReject() {
   return useRunAction((id: string, step: string, reason: string) => api.rejectStep(id, step, reason));
 }
+export function useAnswer() {
+  return useRunAction((id: string, step: string, text: string) => api.answerStep(id, step, text));
+}
 export function useRerunStep() {
   return useRunAction((id: string, step: string, feedback?: string) => api.rerunStep(id, step, feedback ?? ""));
 }

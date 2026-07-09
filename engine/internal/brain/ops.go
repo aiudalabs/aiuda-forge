@@ -26,6 +26,7 @@ type ControlOps interface {
 	StartRun(workflow string, payload map[string]any) (string, error)
 	ApproveStep(runID, step string) error
 	RejectStep(runID, step, reason string) error
+	AnswerStep(runID, step, text string) error
 	Metrics(projectID string) (map[string]any, error)
 	ActiveState(projectID string) (map[string]any, error)
 
@@ -192,6 +193,9 @@ func (o EngineOps) StartRun(wf string, payload map[string]any) (string, error) {
 func (o EngineOps) ApproveStep(runID, step string) error { return o.Engine.ApproveStep(runID, step) }
 func (o EngineOps) RejectStep(runID, step, reason string) error {
 	return o.Engine.RejectStep(runID, step, reason)
+}
+func (o EngineOps) AnswerStep(runID, step, text string) error {
+	return o.Engine.AnswerStep(runID, step, text)
 }
 
 // Metrics returns a compact status summary for a project (counts by run status).
