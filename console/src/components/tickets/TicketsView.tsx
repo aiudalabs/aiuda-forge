@@ -124,6 +124,9 @@ export function TicketsView() {
     if (tk) setOpenTicketId(tk);
     const r = p.get("run");
     if (r) setOpenRunId(r);
+    // Deep-link de sprint (ej. desde el header de un sprint en la vista Flow).
+    const sp = p.get("sprint");
+    if (sp) setFSprint(sp);
   }, []);
 
   // Reflejar estado a la URL (replaceState: sin entradas de history por click).
@@ -135,9 +138,11 @@ export function TicketsView() {
     else p.delete("ticket");
     if (openRunId) p.set("run", openRunId);
     else p.delete("run");
+    if (fSprint !== "all") p.set("sprint", fSprint);
+    else p.delete("sprint");
     const qs = p.toString();
     window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
-  }, [view, openTicketId, openRunId]);
+  }, [view, openTicketId, openRunId, fSprint]);
 
   // Escape cierra el drawer superior (run > ticket), espejo del Board.
   useEffect(() => {

@@ -188,6 +188,13 @@ export interface ProjectSettings {
   workflow_approval: "manual" | "auto_if_safe";
   // Tope de stories con agente trabajando a la vez. Entero ≥0; 0 = sin límite.
   max_concurrency: number;
+  // Ceremonias de sprint (readiness gates). "auto" (default) = el scheduler avanza
+  // sin ceremonia; "ceremony" = inserta un run + gate humano (planning antes de cada
+  // sprint, review/retro al cerrarlo). La vista Flow pinta los sellos de sprint SOLO
+  // en modo "ceremony" (en "auto" no hay sello que mostrar).
+  planning_mode: "auto" | "ceremony";
+  review_mode: "auto" | "ceremony";
+  retro_mode: "auto" | "ceremony";
 }
 
 // ── Despacho a agentes de GitHub (pivote F2) ──────────────────────────────────
@@ -353,6 +360,17 @@ export interface Sprint {
   id: string;
   name: string;
   goal: string;
+  project_id?: string;
+  // Sellos de ceremonia (unix-millis; 0/ausente = nunca). *_at = ceremonia aplicada;
+  // *_run_id = el run de control-plane de la ceremonia (idempotencia persistida:
+  // presente = una ceremonia arrancó — feature-detect de la vista Flow). En modo
+  // "auto" el scheduler los ignora; en "ceremony" bloquea hasta que *_at != 0.
+  planned_at?: number;
+  planning_run_id?: string;
+  reviewed_at?: number;
+  review_run_id?: string;
+  retro_at?: number;
+  retro_run_id?: string;
 }
 
 export interface OrchestratorTicket {
@@ -370,6 +388,8 @@ export interface OrchestratorTicket {
   session_url?: string; // GitHub agent session executing it (Copilot task / Actions run)
   external_ref?: string; // espejo GitHub (github:owner/repo#N) — presente = story exportada
   repo?: string;        // owner/repo the story lands in
+  kind?: string;        // "story" (default) | "bug" — el grafo/board pintan los bugs distinto
+  screen_key?: string;  // la pantalla/mockup que una story de frontend implementa → docs/mockups/<screen_key>.html
 }
 
 // ─── Vista Agentes (pivote GitHub-native, PLAN §4 "Vistas nuevas") ───────────

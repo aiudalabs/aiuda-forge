@@ -4144,3 +4144,276 @@ main:has(.studio-shell) > .studio-shell {
   max-height: 172px;
   border-radius: 8px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Vista Flow — el proyecto entero como grafo. Reusa el shell .dag-* (toolbar,
+   canvas, legend, fullscreen). Nodos custom abajo. Estados de FASE mapean los 5
+   PhaseState; los de STORY vienen inline de statusToken. Solo el borde del nodo
+   running se anima (box-shadow/border, NUNCA transform — regla del repo).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.flow-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  padding: 24px;
+}
+.flow-empty h3 {
+  font-family: var(--display);
+  font-size: 20px;
+  color: var(--ink);
+  margin: 0;
+}
+.flow-empty p {
+  max-width: 460px;
+  color: var(--ink3);
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Anillo de selección + animación de running (compartidos). */
+@keyframes flowRunPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(20, 40, 80, 0.0), 0 2px 8px rgba(13, 13, 15, 0.07); }
+  50% { box-shadow: 0 0 0 3px rgba(20, 40, 80, 0.22), 0 2px 8px rgba(13, 13, 15, 0.07); }
+}
+.react-flow__node.selected .flow-node,
+.react-flow__node.selected .flow-gate,
+.react-flow__node.selected .flow-ceremony,
+.react-flow__node.selected .flow-sprint-head {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Nodo de fase ─────────────────────────────────────────────────────────── */
+.flow-node {
+  box-sizing: border-box;
+  border: 1.5px solid var(--stroke-strong);
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(13, 13, 15, 0.06);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--display);
+}
+.flow-node.phase {
+  width: 156px;
+  height: 54px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.flow-phase-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.2;
+  color: var(--ink);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.flow-glyph {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  background: var(--bg3);
+  color: var(--ink4);
+}
+/* Estado de la fase/gate (5 PhaseState). */
+.flow-node.st-pending, .flow-gate.st-pending { border-color: rgba(13,13,15,0.14); }
+.flow-node.st-running, .flow-gate.st-running { border-color: rgba(20,40,80,0.35); background: var(--navy-soft); }
+.flow-node.st-awaiting, .flow-gate.st-awaiting { border-color: var(--accent-line); background: var(--accent-soft); }
+.flow-node.st-approved, .flow-gate.st-approved { border-color: var(--emerald); background: var(--emerald-soft); }
+.flow-node.st-failed, .flow-gate.st-failed { border-color: #c55; background: var(--danger-soft); }
+.flow-glyph.ph-ok { background: var(--emerald); color: #fff; }
+.flow-glyph.ph-run { background: var(--navy); color: #fff; }
+.flow-glyph.ph-await { background: var(--accent); color: #fff; }
+.flow-glyph.ph-fail { background: #9a2020; color: #fff; }
+.flow-glyph.ph-pend { background: var(--bg3); color: var(--ink4); }
+.flow-node.running, .flow-gate.running, .flow-ceremony.running {
+  animation: flowRunPulse 1.8s var(--ease) infinite;
+}
+
+/* ── Gate (rombo) ─────────────────────────────────────────────────────────── */
+.flow-gate {
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  transform: rotate(45deg);
+  border: 1.5px solid var(--stroke-strong);
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(13, 13, 15, 0.06);
+}
+.flow-gate .flow-glyph {
+  transform: rotate(-45deg);
+  background: transparent;
+}
+.flow-gate.awaiting { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ── Story ────────────────────────────────────────────────────────────────── */
+.flow-node.story {
+  width: 188px;
+  height: 70px;
+  padding: 7px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.flow-story-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.flow-story-id {
+  font-family: var(--mono);
+  font-size: 10px;
+  opacity: 0.7;
+}
+.flow-story-glyph { font-size: 11px; }
+.flow-story-title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: inherit;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.flow-story-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+}
+.flow-kind.bug {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--danger);
+  border-radius: 4px;
+  padding: 1px 5px;
+  letter-spacing: 0.03em;
+}
+.flow-screen {
+  font-size: 11px;
+  color: var(--ink4);
+}
+
+/* ── Ceremonia ────────────────────────────────────────────────────────────── */
+.flow-ceremony {
+  box-sizing: border-box;
+  width: 132px;
+  height: 54px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1.5px dashed var(--navy);
+  border-radius: 27px;
+  background: var(--navy-soft);
+  color: var(--navy);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(13, 13, 15, 0.06);
+  font-family: var(--display);
+}
+.flow-ceremony.seal-pending { border-style: dashed; opacity: 0.62; }
+.flow-ceremony.seal-done { border-style: solid; }
+.flow-cer-glyph { font-size: 16px; flex: none; }
+.flow-cer-body { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.flow-cer-kind { font-size: 12px; font-weight: 700; text-transform: capitalize; }
+.flow-cer-sprint { font-family: var(--mono); font-size: 9.5px; opacity: 0.7; }
+.flow-cer-preview { margin-left: auto; font-size: 11px; color: var(--accent); }
+
+/* ── Header de sprint + backdrop del grupo ────────────────────────────────── */
+.flow-sprint-head {
+  box-sizing: border-box;
+  height: 40px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--stroke-strong);
+  border-radius: 9px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(13, 13, 15, 0.06);
+}
+.flow-sprint-name {
+  font-family: var(--display);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flow-seals { display: inline-flex; gap: 4px; flex: none; }
+.flow-seal {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  border: 1.5px solid;
+}
+.flow-seal.seal-done { background: var(--emerald-soft); border-color: var(--emerald); color: var(--emerald); }
+.flow-seal.seal-running { background: var(--navy-soft); border-color: var(--navy); color: var(--navy); }
+.flow-seal.seal-pending { background: var(--bg3); border-color: rgba(13,13,15,0.14); color: var(--ink4); }
+
+.flow-sprint-group {
+  width: 100%;
+  height: 100%;
+  border: 1.5px dashed rgba(13, 13, 15, 0.14);
+  border-radius: 14px;
+  background: rgba(13, 13, 15, 0.015);
+}
+
+/* ── Backdrops de banda ───────────────────────────────────────────────────── */
+.flow-band {
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+}
+.flow-band-label {
+  position: absolute;
+  top: 8px;
+  left: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink4);
+}
+.flow-band.band-design { background: rgba(20, 40, 80, 0.035); }
+.flow-band.band-handoff { background: rgba(122, 93, 0, 0.05); }
+.flow-band.band-execution { background: rgba(10, 123, 90, 0.035); }
+
+/* Drawer de fase: reusa .drawer/.db; el panel del Studio (PhasePanel) va dentro. */
+.flow-phase-drawer .db { padding-top: 4px; }

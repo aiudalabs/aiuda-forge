@@ -4,7 +4,7 @@
 // propuesto (revisar antes de aprobar), costo por paso, y acciones aprobar/rechazar-con-motivo,
 // cancelar, reintentar, borrar. Todas = endpoints del contrato.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { RunStep, StepStatus } from "@/lib/types";
@@ -96,7 +96,16 @@ function StepRow({ step }: { step: RunStep }) {
   );
 }
 
-export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: () => void }) {
+export function RunDrawer({
+  runId,
+  onClose,
+  footer,
+}: {
+  runId: string | null;
+  onClose: () => void;
+  // Acciones extra al pie del drawer (ej. abrir la preview de un review aceptado).
+  footer?: ReactNode;
+}) {
   const t = useT();
   const { data: run, isLoading, isError } = useRun(runId);
   const events = useLiveEvents(runId, run?.status === "RUNNING");
@@ -263,6 +272,8 @@ export function RunDrawer({ runId, onClose }: { runId: string | null; onClose: (
                   </a>
                 )}
               </div>
+
+              {footer}
             </div>
           </>
         )}

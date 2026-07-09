@@ -28,6 +28,7 @@ import {
   mockRuns,
   mockSettings,
   mockSpendToday,
+  mockSprints,
   mockStats,
   mockTicketsByProject,
 } from "./mock";
@@ -503,7 +504,7 @@ export async function retryRun(id: string): Promise<void> {
 // Sprints (the planned increments, with name + goal). Used by the Sprints backlog
 // view; scoped to the active project client-side via the project's tickets.
 export async function listSprints(): Promise<import("./types").Sprint[]> {
-  if (await isMock()) return [];
+  if (await isMock()) return [...mockSprints];
   const res = await http<{ sprints: import("./types").Sprint[] }>(`/sprints`);
   return res.sprints ?? [];
 }
@@ -806,6 +807,11 @@ function projectSettingsFrom(r: Partial<ProjectSettings>): ProjectSettings {
       typeof r.max_concurrency === "number" && r.max_concurrency > 0
         ? Math.floor(r.max_concurrency)
         : 0,
+    // Modos de ceremonia (default "auto"): el normalizador es allowlist, así que sin
+    // esto los campos del backend se caían y la vista Flow nunca vería "ceremony".
+    planning_mode: r.planning_mode === "ceremony" ? "ceremony" : "auto",
+    review_mode: r.review_mode === "ceremony" ? "ceremony" : "auto",
+    retro_mode: r.retro_mode === "ceremony" ? "ceremony" : "auto",
   };
 }
 
@@ -829,6 +835,29 @@ export async function saveProjectSettings(
     body: JSON.stringify(payload),
   });
   return projectSettingsFrom(saved);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Preview token (#23) — POST /projects/{id}/previews/{run}/token mints a short-lived
+// token authorizing ONLY /pv/{token}/ (previewTokenTTL). Returns the ready-to-open
+// preview URL for a reviewed sprint's increment. Membership (viewer+) is enforced
+// server-side. 404 = previews not configured for this deployment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PreviewToken {
+  token: string;
+  url: string; // la URL a abrir en una tab nueva
+  expires_in: number; // segundos
+}
+
+export async function mintPreviewToken(projectId: string, runId: string): Promise<PreviewToken> {
+  if (await isMock()) {
+    return { token: "mock-preview-token", url: "about:blank", expires_in: 600 };
+  }
+  return http<PreviewToken>(
+    `/projects/${encodeURIComponent(projectId)}/previews/${encodeURIComponent(runId)}/token`,
+    { method: "POST" },
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
