@@ -174,8 +174,17 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []projects.Project{}
 	}
+	for i := range list {
+		redactProjectSecrets(&list[i])
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": list})
 }
+
+// redactProjectSecrets clears secret fields (the firebase deploy token) from a
+// project before it is serialized to a client. The token is write-only over the
+// API: it is set via SetReleaseConfig and consumed by the release runner, but never
+// echoed back (mirrors the settings store masking its secrets).
+func redactProjectSecrets(p *projects.Project) { p.FirebaseToken = "" }
 
 // ---- GET /projects/{id}/settings, PUT /projects/{id}/settings ---------------
 
@@ -237,6 +246,7 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	redactProjectSecrets(&p)
 	writeJSON(w, http.StatusOK, p)
 }
 

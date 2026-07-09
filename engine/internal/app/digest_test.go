@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -113,5 +114,56 @@ func TestSendDigestsRespectsChannel(t *testing.T) {
 	poff, _ := proj.Get("off")
 	if poff.LastDigestAt != 0 {
 		t.Fatalf("off project watermark moved to %d, want 0 (no-op)", poff.LastDigestAt)
+	}
+}
+
+// TestReleaseRunnerRegistered proves app.Build wires the `release` step runner: a
+// release run reaches a terminal state via the runner's own validation ("no repo")
+// rather than the executor's "no runner for step type" — the latter would mean the
+// step type was never registered.
+func TestReleaseRunnerRegistered(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	dir := t.TempDir()
+	wfDir := filepath.Join(dir, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := "id: release\nversion: 1.0.0\nsteps:\n  - id: release\n    type: release\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "release.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := Build(Config{
+		DBPath:       filepath.Join(dir, "control.db"),
+		RegistryRoot: dir,
+		WorkdirRoot:  filepath.Join(dir, "runs"),
+		EngineMode:   "echo",
+		Backend:      agent.FakeBackend{Reply: "ok"},
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer a.Close()
+
+	runID, err := a.Engine.StartRun("release", map[string]any{}) // no repo → runner fails cleanly
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	status, err := a.Engine.RunToCompletion(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if status != store.StatusFailed {
+		t.Fatalf("run status = %s, want failed (no repo)", status)
+	}
+	tasks, _ := a.Store.TasksForRun(runID)
+	if len(tasks) == 0 {
+		t.Fatal("no tasks recorded")
+	}
+	last := tasks[len(tasks)-1]
+	if strings.Contains(last.Error, "no runner for step type") {
+		t.Fatalf("release runner not registered: %q", last.Error)
+	}
+	if !strings.Contains(last.Error, "no repo") {
+		t.Fatalf("expected the release runner's own failure, got %q", last.Error)
 	}
 }

@@ -28,6 +28,7 @@ import (
 	"forge/internal/github"
 	"forge/internal/pr"
 	"forge/internal/projects"
+	"forge/internal/release"
 	"forge/internal/sandbox"
 	"forge/internal/store"
 	"forge/internal/tickets"
@@ -206,6 +207,31 @@ func Build(cfg Config) (*App, error) {
 	eng.Register("human_gate", agent.HumanGateRunner{})
 	eng.Register("pr", pr.NewRunner())
 
+	// Release step (sprint-review preview): builds a project's branch and publishes a
+	// navigable preview. The BUILD runs in the SAME docker sandbox as the agent (image
+	// + egress allowlist + RequireDocker) so untrusted repo code never runs on the host
+	// (audit C2). Static artifacts are served by the control plane from previewsRoot;
+	// firebase deploys a Hosting preview channel. proj may be nil (config via inputs).
+	previewsRoot := resolvePreviewsRoot(cfg.WorkdirRoot)
+	releaseRunner := &release.Runner{
+		PreviewsRoot: previewsRoot,
+		BaseURL:      os.Getenv("VIBEFORGE_PUBLIC_URL"),
+		SandboxTemplate: sandbox.Config{
+			Runtime:       cfg.SandboxRuntime,
+			OCIRuntime:    os.Getenv("VIBEFORGE_SANDBOX_RUNTIME"),
+			Image:         os.Getenv("VIBEFORGE_AGENT_IMAGE"),
+			Network:       envOr("VIBEFORGE_SANDBOX_NETWORK", sandbox.DefaultEgressNetwork),
+			UID:           os.Getenv("VIBEFORGE_SANDBOX_UID"),
+			RequireDocker: requireDocker,
+			// EgressDeny stays false: the build needs the npm registry / firebase via the proxy.
+		},
+		BuildTimeout:     time.Duration(envIntOr("VIBEFORGE_RELEASE_BUILD_TIMEOUT_MIN", 10)) * time.Minute,
+		MaxArtifactBytes: int64(envIntOr("VIBEFORGE_RELEASE_MAX_MB", 200)) << 20,
+		KeepPreviews:     envIntOr("VIBEFORGE_RELEASE_KEEP", 5),
+		SecretSink:       agent.RegisterSecret, // firebase token → live-log redactor
+	}
+	eng.Register("release", releaseRunner)
+
 	// Ticket store — optional. When TicketsDB is set, open the store, register
 	// the ticket_publish step runner, and pass the store to the API server so
 	// the HTTP ticket routes become active. When empty, the runner is not
@@ -238,6 +264,8 @@ func Build(cfg Config) (*App, error) {
 			}
 			return nil, fmt.Errorf("open projects db: %w", projErr)
 		}
+		// The release runner resolves each project's release_target + firebase token.
+		releaseRunner.Projects = proj
 	}
 
 	// Auth store — optional. When AuthDB is set, open it and seed the first admin
@@ -274,6 +302,7 @@ func Build(cfg Config) (*App, error) {
 	bus := api.NewBus(st)
 	reg := api.NewRegistry(cfg.RegistryRoot)
 	srv := api.NewServer(st, eng, bus, reg, tix, proj, au)
+	srv.PreviewsRoot = previewsRoot // serve the release step's static previews
 
 	var appApprover *conductor.Approver
 	// GitHub projection (F1 pivot): mirror exported stories' state (issue/PR) into
@@ -485,6 +514,36 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envIntOr reads an int env var, falling back to def on absent/unparseable.
+func envIntOr(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+// resolvePreviewsRoot picks the directory the release step publishes static previews
+// to (and the API serves from). VIBEFORGE_PREVIEWS_DIR overrides; the default is a
+// sibling of the workdir root (NOT under it — the retention GC prunes workdirs, and a
+// preview must outlive its ephemeral run). Absolute so the API/serve paths are stable.
+func resolvePreviewsRoot(workdirRoot string) string {
+	dir := os.Getenv("VIBEFORGE_PREVIEWS_DIR")
+	if dir == "" {
+		base := filepath.Dir(workdirRoot)
+		if base == "" || base == "." {
+			dir = ".vibeforge-previews"
+		} else {
+			dir = filepath.Join(base, "vibeforge-previews")
+		}
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
 }
 
 // dockerRequired decides whether the agent/gate must hard-fail when docker

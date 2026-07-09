@@ -60,6 +60,9 @@ type Server struct {
 	// deshabilita el endpoint POST /projects/{id}/prs/{number}/resolve-conflicts.
 	Resolver        *conductor.ConflictResolver
 	GHWebhookSecret func() string
+	// PreviewsRoot is the directory the `release` step publishes static previews to;
+	// GET /previews/{project_id}/{run_id}/... serves it. Empty disables the route.
+	PreviewsRoot    string
 	linkCodes       *linkCodeStore // short-lived codes binding a channel user to an account
 	mux             *http.ServeMux
 	// exportMus serializa los exports a GitHub por proyecto (ver exportLock).
@@ -160,6 +163,11 @@ func (s *Server) routes() {
 	// §B — events.
 	m.HandleFunc("GET /runs/{id}/events", s.events)
 	m.HandleFunc("GET /ws", s.websocket)
+
+	// Static previews published by the `release` step. Authenticated (session or
+	// service token) and project-scoped in the handler; guarded to 404 when no
+	// PreviewsRoot is configured. Subtree pattern (trailing slash).
+	m.HandleFunc("GET /previews/{project}/{run}/{path...}", s.servePreview)
 
 	// §C — daemon-internal worker↔kernel.
 	m.HandleFunc("POST /runs/claim", s.claim)

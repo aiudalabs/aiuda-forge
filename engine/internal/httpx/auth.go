@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"strings"
 )
 
 // ctxKey is the private context key type for values httpx stashes on a request.
@@ -119,10 +120,11 @@ func Auth(cfg AuthConfig, next http.Handler) http.Handler {
 // per-user identity). A failed auth returns (false, "").
 func (c AuthConfig) authorize(r *http.Request) (ok bool, userID string) {
 	tok := bearerToken(r)
-	// Browser WebSockets cannot set an Authorization header, so the WS upgrade
-	// (and only that path) may carry the token as a ?token= query param. This is
-	// the standard accepted pattern; the token is still validated identically.
-	if tok == "" && r.URL.Path == "/ws" {
+	// Browser WebSockets cannot set an Authorization header, and neither can a plain
+	// navigation/iframe to a static preview. Those two paths (and only those) may
+	// carry the token as a ?token= query param — the standard accepted pattern; the
+	// token is still validated identically.
+	if tok == "" && (r.URL.Path == "/ws" || strings.HasPrefix(r.URL.Path, "/previews/")) {
 		tok = r.URL.Query().Get("token")
 	}
 	if tok == "" {

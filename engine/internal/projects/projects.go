@@ -40,6 +40,12 @@ const (
 	ExecutorCopilot      = "copilot"       // Copilot cloud agent via the Agent tasks REST API (default)
 	ExecutorClaudeAction = "claude_action" // claude-code-action via workflow_dispatch (user's Claude plan)
 
+	// Release target of the `release` step (sprint-review preview build). "static"
+	// builds the branch in the sandbox and serves the artifact from the control
+	// plane; "firebase" deploys a Firebase Hosting preview channel. Default static.
+	ReleaseTargetStatic   = "static"
+	ReleaseTargetFirebase = "firebase"
+
 	// Aprobación de workflows action_required en PRs de agentes (caveat de
 	// seguridad del ADR: NUNCA auto si el diff toca .github/workflows/**).
 	WorkflowApprovalManual   = "manual"       // el humano clickea "Approve and run workflows" (default)
@@ -93,7 +99,15 @@ type Project struct {
 	// LastDigestAt is the unix-millis timestamp of the most recent digest sent for
 	// this project — the "since" watermark the next digest reports from. 0 = never.
 	LastDigestAt int64 `json:"last_digest_at"`
-	CreatedAt    int64 `json:"created_at"`
+	// ReleaseTarget selects how the `release` step publishes a preview: "static"
+	// (build in sandbox, serve from the control plane) or "firebase" (Hosting
+	// preview channel). Empty is treated as "static".
+	ReleaseTarget string `json:"release_target"`
+	// FirebaseToken is the CI token the firebase release target deploys with. It is
+	// a SECRET: masked/omitted by the HTTP layer and never logged. Empty = firebase
+	// releases are not configured for this project.
+	FirebaseToken string `json:"firebase_token,omitempty"`
+	CreatedAt     int64  `json:"created_at"`
 }
 
 const schema = `
@@ -113,6 +127,8 @@ CREATE TABLE IF NOT EXISTS projects (
   max_concurrency   INTEGER NOT NULL DEFAULT 0,
   digest_channel    TEXT NOT NULL DEFAULT '',
   last_digest_at    INTEGER NOT NULL DEFAULT 0,
+  release_target    TEXT NOT NULL DEFAULT 'static',
+  firebase_token    TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS project_members (
@@ -157,6 +173,9 @@ var migrations = []string{
 	// Daily digest (standup push): where to send it, and the last-sent watermark.
 	`ALTER TABLE projects ADD COLUMN digest_channel TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE projects ADD COLUMN last_digest_at INTEGER NOT NULL DEFAULT 0`,
+	// Release step (sprint-review preview): target + firebase credential.
+	`ALTER TABLE projects ADD COLUMN release_target TEXT NOT NULL DEFAULT 'static'`,
+	`ALTER TABLE projects ADD COLUMN firebase_token TEXT NOT NULL DEFAULT ''`,
 }
 
 // validExecutionUnit / validMergeMode bound the accepted settings values so the
@@ -167,6 +186,9 @@ func validDispatchMode(v string) bool {
 	return v == DispatchApprove || v == DispatchAuto || v == DispatchOff
 }
 func validExecutor(v string) bool { return v == ExecutorCopilot || v == ExecutorClaudeAction }
+func validReleaseTarget(v string) bool {
+	return v == ReleaseTargetStatic || v == ReleaseTargetFirebase
+}
 
 // Store is the project store backed by a sqlite database.
 type Store struct {
@@ -272,11 +294,11 @@ func (s *Store) Create(p Project) (Project, error) {
 	return p, nil
 }
 
-const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, executor_by_lane, workflow_approval, max_concurrency, digest_channel, last_digest_at, created_at FROM projects`
+const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, executor_by_lane, workflow_approval, max_concurrency, digest_channel, last_digest_at, release_target, firebase_token, created_at FROM projects`
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.ExecutorByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.DigestChannel, &p.LastDigestAt, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.ExecutorByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.DigestChannel, &p.LastDigestAt, &p.ReleaseTarget, &p.FirebaseToken, &p.CreatedAt)
 	return p, err
 }
 
@@ -459,6 +481,37 @@ func (s *Store) PutSettings(id string, in Settings) (Settings, error) {
 // connector). Returns ErrNotFound for an unknown project.
 func (s *Store) SetDigestChannel(id, channel string) error {
 	res, err := s.db.Exec(`UPDATE projects SET digest_channel=? WHERE id=?`, channel, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetReleaseConfig sets the project's release target and (for firebase) its deploy
+// token. An empty target defaults to "static"; an invalid target is ErrInvalid. The
+// token is stored as-is (a secret) and is left UNCHANGED when firebaseToken is "" so
+// callers can update the target without having to re-send the token. Returns
+// ErrNotFound for an unknown project.
+func (s *Store) SetReleaseConfig(id, target, firebaseToken string) error {
+	if target == "" {
+		target = ReleaseTargetStatic
+	}
+	if !validReleaseTarget(target) {
+		return fmt.Errorf("%w: release_target %q must be %q or %q",
+			ErrInvalid, target, ReleaseTargetStatic, ReleaseTargetFirebase)
+	}
+	var (
+		res sql.Result
+		err error
+	)
+	if firebaseToken == "" {
+		res, err = s.db.Exec(`UPDATE projects SET release_target=? WHERE id=?`, target, id)
+	} else {
+		res, err = s.db.Exec(`UPDATE projects SET release_target=?, firebase_token=? WHERE id=?`, target, firebaseToken, id)
+	}
 	if err != nil {
 		return err
 	}

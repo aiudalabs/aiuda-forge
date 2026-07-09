@@ -1,0 +1,14 @@
+# Release preview: build a project's branch and publish a navigable preview, exposing
+# preview_url for a downstream sprint-review. NOT a CD pipeline — no prod, no rollback,
+# no version tags. The build runs in the docker sandbox (untrusted repo code never runs
+# on the host, audit C2). Trigger payload: project_id (+ optional repo/branch/target).
+id: release
+version: 1.0.0
+steps:
+  - id: release
+    type: release
+    inputs:
+      project_id: $trigger.project_id   # resolves release_target + firebase token + repo
+      repo: $trigger.repo               # optional override; else the project's repo
+      branch: $trigger.branch           # optional; default "dev"
+      target: $trigger.target           # optional; static|firebase, else project's release_target
