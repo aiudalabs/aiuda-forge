@@ -17,18 +17,24 @@ func TestRetroYAMLParses(t *testing.T) {
 	if wf.ID != "retro" {
 		t.Errorf("id: got %q, want retro", wf.ID)
 	}
-	if len(wf.Steps) != 3 {
-		t.Fatalf("step count: got %d, want 3 (analyze, retro_gate, apply)", len(wf.Steps))
+	if len(wf.Steps) != 4 {
+		t.Fatalf("step count: got %d, want 4 (analyze, validate_proposals, retro_gate, apply)", len(wf.Steps))
 	}
 	if wf.Steps[0].ID != "analyze" || wf.Steps[0].Type != "design" || wf.Steps[0].Agent != "retro-analyst" {
 		t.Errorf("step 0: got id=%s type=%s agent=%s, want analyze/design/retro-analyst",
 			wf.Steps[0].ID, wf.Steps[0].Type, wf.Steps[0].Agent)
 	}
-	gate := wf.Steps[1]
+	// validate_proposals lints the method proposals BEFORE the human approves them; a
+	// malformed doc loops back to analyze.
+	val := wf.Steps[1]
+	if val.ID != "validate_proposals" || val.Type != "validate" || val.OnFail == nil || val.OnFail.Goto != "analyze" {
+		t.Errorf("step 1: want validate_proposals/validate looping back to analyze, got id=%s type=%s onfail=%+v", val.ID, val.Type, val.OnFail)
+	}
+	gate := wf.Steps[2]
 	if gate.Type != "human_gate" || gate.OnFail == nil || gate.OnFail.Goto != "analyze" {
 		t.Errorf("retro_gate must loop back to analyze on reject/answer, got %+v", gate.OnFail)
 	}
-	last := wf.Steps[2]
+	last := wf.Steps[3]
 	if last.ID != "apply" || last.Type != "registry_apply" {
 		t.Errorf("last step: got id=%s type=%s, want apply/registry_apply", last.ID, last.Type)
 	}

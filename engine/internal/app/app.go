@@ -34,6 +34,7 @@ import (
 	"forge/internal/sandbox"
 	"forge/internal/store"
 	"forge/internal/tickets"
+	"forge/internal/validate"
 	"forge/internal/workflow"
 )
 
@@ -212,6 +213,13 @@ func Build(cfg Config) (*App, error) {
 
 	eng.Register("human_gate", agent.HumanGateRunner{})
 	eng.Register("pr", pr.NewRunner())
+
+	// validate — the deterministic spec linter (no LLM, no store): it runs between a
+	// design/ceremony phase and its human gate to catch a malformed doc (a PRD FR with
+	// no scenario, a backlog dep pointing at nothing, a plan/retro block that won't
+	// parse) BEFORE the reviewer's attention is spent. Known lanes for the backlog owner
+	// check are derived from the registry agents dir (methodology stays in DATA).
+	eng.Register("validate", &validate.Runner{AgentsDir: filepath.Join(cfg.RegistryRoot, "agents")})
 
 	// Release step (sprint-review preview): builds a project's branch and publishes a
 	// navigable preview. The BUILD runs in the SAME docker sandbox as the agent (image

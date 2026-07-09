@@ -23,6 +23,21 @@ steps:
       backlog_snapshot: $trigger.backlog_snapshot
       output: $trigger.plan   # docs/PLAN-<sprint_id>.md
 
+  # ── Validate — deterministic lint of the plan's `actions:` block using the SAME
+  #    parser plan_apply uses (tickets.ParseActions + known-op check). A plan with an
+  #    unparseable block or an unknown op loops back to `plan` with the error named,
+  #    BEFORE the human reviews it — so the gate always sees a plan apply can consume.
+  - id: validate_plan
+    type: validate
+    label: Lint plan
+    inputs:
+      schema: plan
+      path: $trigger.plan
+    on_fail:
+      goto: plan
+      max: 2
+      feedback: $validate_plan.detail
+
   # ── Gate — conversational. `answer` re-runs `plan` with the answer as input (the
   #    persona UPDATES the doc); reject re-runs `plan` with feedback; approve advances
   #    to apply. on_fail.goto=plan is what makes the answer verb (#22) work here.

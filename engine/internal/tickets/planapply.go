@@ -396,6 +396,25 @@ func parseActions(raw []byte) ([]PlanAction, error) {
 	return nil, fmt.Errorf("no `actions:` block found")
 }
 
+// ParseActions is the exported entry point to the SINGLE plan-actions parser (the
+// plan_apply step uses the unexported parseActions; the `validate` step type reuses
+// this one to lint a plan doc WITHOUT a store). There is one parser — do not add a
+// second. It returns the doc's actions, or an error if the `actions:` block is absent
+// or unparseable.
+func ParseActions(raw []byte) ([]PlanAction, error) { return parseActions(raw) }
+
+// IsKnownPlanOp reports whether op is one of the sprint-planning primitives. The
+// `validate` step uses it to reject a plan declaring an unknown op BEFORE the doc ever
+// reaches plan_apply (which rejects the same op, but only at apply time against the
+// store). Keeping the op set here — next to the constants — keeps it single-sourced.
+func IsKnownPlanOp(op string) bool {
+	switch op {
+	case planOpMove, planOpDefer, planOpCancel, planOpEdit, planOpSplit:
+		return true
+	}
+	return false
+}
+
 // containsActionsKey reports whether a yaml chunk declares an `actions:` key at the
 // start of a line (so `# actions:` in prose or an `actions` substring inside a value
 // does not false-positive).

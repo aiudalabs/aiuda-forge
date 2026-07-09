@@ -23,6 +23,21 @@ steps:
       telemetry: $trigger.telemetry
       output: $trigger.retro   # docs/RETRO-<sprint_id>.md
 
+  # ── Validate — deterministic lint of the `proposals:` block using the SAME parser +
+  #    guardrails registry_apply uses (method.ParseProposals + method.ValidateProposal):
+  #    legal kind, path-safe id, not the retro's own protected method, parseable content.
+  #    A doc that fails loops back to `analyze` BEFORE the human approves method edits.
+  - id: validate_proposals
+    type: validate
+    label: Lint propuestas
+    inputs:
+      schema: retro
+      path: $trigger.retro
+    on_fail:
+      goto: analyze
+      max: 2
+      feedback: $validate_proposals.detail
+
   # ── Gate — conversational. `answer` re-runs analyze with the answer; reject re-runs it
   #    with feedback (both loop back to analyze); approve advances to apply. The human is
   #    approving METHOD EDITS — they take effect on the next sprint.

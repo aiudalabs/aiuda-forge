@@ -109,7 +109,7 @@ func (r *ApplyRunner) Run(_ context.Context, _ workflow.Step, inputs map[string]
 	// Phase 1 — validate ALL (guardrails + parse). A failure here means NOTHING has
 	// been written yet: the apply is atomic.
 	for i, p := range proposals {
-		if err := r.validate(p); err != nil {
+		if err := validateProposal(p); err != nil {
 			return failResult(fmt.Sprintf("registry_apply: proposal %d (%s %q): %v", i+1, p.Kind, p.ID, err)), nil
 		}
 	}
@@ -139,10 +139,17 @@ func (r *ApplyRunner) Run(_ context.Context, _ workflow.Step, inputs map[string]
 	}, nil
 }
 
-// validate enforces the guardrails and parses the proposed content with the kernel's
-// own parser — read-only, so ApplyRunner can reject an illegal proposal before any
-// write. It never touches disk.
-func (r *ApplyRunner) validate(p Proposal) error {
+// ValidateProposal is the exported guardrail check for a single method proposal,
+// reused by the `validate` step type to lint a RETRO doc's proposals BEFORE they reach
+// the human gate. It is the SAME check registry_apply applies at write time (kind/id/
+// protected guardrails + content parse) — one rule, so a doc that passes validate is a
+// doc registry_apply will accept.
+func ValidateProposal(p Proposal) error { return validateProposal(p) }
+
+// validateProposal enforces the guardrails and parses the proposed content with the
+// kernel's own parser — read-only, so both registry_apply and the validate step can
+// reject an illegal proposal before any write. It never touches disk.
+func validateProposal(p Proposal) error {
 	if !idRe.MatchString(p.ID) {
 		return fmt.Errorf("%w: id must match %s (no path separators)", errInvalid, idRe.String())
 	}
