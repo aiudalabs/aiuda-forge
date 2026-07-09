@@ -14,11 +14,13 @@ import (
 // Preview tokens are the capability that guards a served preview (audit C2 extended
 // to serving). A preview runs UNTRUSTED repo JS; if the URL carried a session/service
 // token, that JS could read its own location and replay the token against the API
-// from the same origin. So /previews is authorized by a DIFFERENT credential: a
-// short-lived HMAC token scoped to EXACTLY one /previews/{project}/{run}/ path and
-// useless anywhere else. The console mints one (session-authenticated) to open a
-// preview; httpx.Auth accepts only this type on /previews — never a session/service
-// token by query.
+// from the same origin. So a preview is served under /pv/{token}/… and authorized by
+// a DIFFERENT credential: a short-lived HMAC token that encodes EXACTLY one
+// {project, run} and is useless anywhere else. It rides in the PATH so the browser
+// carries it on every relative subresource (a cookie cannot — the CSP-sandbox opaque
+// origin drops SameSite cookies on subresources). The console mints one
+// (session-authenticated) to open a preview; httpx.Auth accepts only this type on
+// /pv — never a session/service token.
 
 // previewClaims is a preview token's payload: the one preview it authorizes + expiry.
 type previewClaims struct {
@@ -30,9 +32,9 @@ type previewClaims struct {
 // ErrPreviewToken is returned when a preview token is malformed, forged, or expired.
 var ErrPreviewToken = errors.New("invalid preview token")
 
-// MintPreviewToken signs a capability for /previews/{project}/{run}/ valid for ttl
-// from now. The returned token authorizes ONLY that preview path — it is not a
-// session token and carries no user identity or broader access.
+// MintPreviewToken signs a capability for one {project, run} preview, valid for ttl
+// from now. The returned token authorizes ONLY /pv/{token}/… for that preview — it is
+// not a session token and carries no user identity or broader access.
 func MintPreviewToken(secret []byte, project, run string, ttl time.Duration, now time.Time) string {
 	body, _ := json.Marshal(previewClaims{Project: project, Run: run, Exp: now.Add(ttl).Unix()})
 	b := base64.RawURLEncoding.EncodeToString(body)

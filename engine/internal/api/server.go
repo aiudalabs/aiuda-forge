@@ -169,10 +169,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /runs/{id}/events", s.events)
 	m.HandleFunc("GET /ws", s.websocket)
 
-	// Static previews published by the `release` step. Authenticated (session or
-	// service token) and project-scoped in the handler; guarded to 404 when no
-	// PreviewsRoot is configured. Subtree pattern (trailing slash).
-	m.HandleFunc("GET /previews/{project}/{run}/{path...}", s.servePreview)
+	// Static previews published by the `release` step, served under /pv/{token}/…
+	// The path-embedded preview token is the sole credential (the auth middleware
+	// validates it; a session/service token is never accepted here) — untrusted repo
+	// JS must not be able to replay a broad token. Guarded to 404 when unconfigured.
+	m.HandleFunc("GET /pv/{token}/{path...}", s.servePreview)
 	// Mint a short-lived, path-scoped preview token (session-authenticated, member-
 	// gated) so the console opens a preview without a session token in the URL.
 	m.HandleFunc("POST /projects/{id}/previews/{run}/token", s.needProjects(s.mintPreviewToken))

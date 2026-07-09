@@ -12,17 +12,20 @@ import (
 )
 
 // previewTokenTTL bounds how long a minted preview token is usable — short, because
-// it rides in a URL the untrusted preview can read. Long enough to open + navigate.
+// it rides in the URL (path) the untrusted preview can read. Long enough to open +
+// navigate a preview.
 const previewTokenTTL = 10 * time.Minute
 
-// servePreview serves a static preview published by the `release` step from
-// PreviewsRoot/{project}/{run}/... The route sits behind the mandatory-auth
-// middleware (a session or the service token is required; the browser passes the
-// session as ?token= for a plain navigation, mirroring /ws), and the caller must be
-// a member of {project}. There is NO directory listing: a directory resolves to its
-// index.html or 404. Path traversal outside the run's dir is refused.
+// servePreview serves a static preview published by the `release` step, under
+// /pv/{token}/… The token (validated by the auth middleware, re-decoded here) is the
+// capability: it encodes the one {project, run} it authorizes, so a valid token can
+// only ever serve its own preview. The token lives in the PATH — not a query or
+// cookie — so the browser carries it automatically on every relative subresource
+// (app.js, style.css…); a cookie cannot, because the CSP-sandbox opaque origin drops
+// SameSite cookies on subresources (verified empirically). There is NO directory
+// listing (a directory resolves to index.html or 404), and traversal is contained.
 func (s *Server) servePreview(w http.ResponseWriter, r *http.Request) {
-	if s.PreviewsRoot == "" {
+	if s.PreviewsRoot == "" || len(s.PreviewSecret) == 0 {
 		httpErr(w, http.StatusNotFound, "previews are not configured")
 		return
 	}
@@ -31,24 +34,22 @@ func (s *Server) servePreview(w http.ResponseWriter, r *http.Request) {
 	//   · CSP `sandbox allow-scripts allow-forms` — the document runs in a UNIQUE
 	//     OPAQUE origin (no allow-same-origin). Its scripts run, but every request it
 	//     makes is cross-origin from Origin: null, so it cannot make a same-origin
-	//     authenticated call back to this control-plane API (and CORS rejects null).
-	//     This is the second lock behind preview-scoped tokens: even if the JS reads
-	//     its own ?token=, that token is useless off /previews AND the call is blocked.
-	//   · X-Content-Type-Options: nosniff — no MIME sniffing, so a file cannot be
-	//     coerced into executing as a different, more dangerous type.
+	//     authenticated call back to this control-plane API (CORS rejects null). Even
+	//     if the JS reads its own path-embedded token, that token is useless off /pv
+	//     (it authorizes only its own preview) AND the call is blocked.
+	//   · X-Content-Type-Options: nosniff — no MIME sniffing. (Correctly-typed 200
+	//     subresources still load fine under the sandbox — verified empirically.)
 	w.Header().Set("Content-Security-Policy", "sandbox allow-scripts allow-forms")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	project := r.PathValue("project")
-	run := r.PathValue("run")
-	if !s.canAccessProject(r.Context(), project) {
-		// 404, not 403 — no existence leak (same contract as the runs routes).
-		httpErr(w, http.StatusNotFound, "preview not found")
+	project, run, err := httpx.VerifyPreviewToken(s.PreviewSecret, r.PathValue("token"), time.Now())
+	if err != nil {
+		httpErr(w, http.StatusNotFound, "preview not found") // 401 already handled upstream; defense in depth
 		return
 	}
 
-	// Resolve the on-disk path and confirm it stays inside this run's directory
-	// (defense in depth on top of the segment-sanitizing done when publishing).
+	// Resolve the on-disk path and confirm it stays inside this preview's directory
+	// (defense in depth on top of filepath.Base on the token-decoded ids).
 	base := filepath.Join(s.PreviewsRoot, filepath.Base(project), filepath.Base(run))
 	rel := filepath.Clean("/" + r.PathValue("path")) // leading slash neutralizes ".."
 	target := filepath.Join(base, rel)
@@ -70,9 +71,6 @@ func (s *Server) servePreview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// http.ServeFile would honor its own redirect/index behavior and could list a
-	// dir; we resolved the file ourselves, so serve the content directly with the
-	// correct type inferred from the extension.
 	f, err := os.Open(target)
 	if err != nil {
 		httpErr(w, http.StatusNotFound, "preview not found")
@@ -84,14 +82,16 @@ func (s *Server) servePreview(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, "preview read error")
 		return
 	}
+	// We resolved the file ourselves (http.ServeFile would honor its own dir/index
+	// behavior); ServeContent infers the Content-Type from the extension.
 	http.ServeContent(w, r, filepath.Base(target), fi.ModTime(), f)
 }
 
 // mintPreviewToken issues a short-lived, path-scoped preview token so the console can
 // open a preview WITHOUT ever putting a session/service token in the URL. This route
 // IS session-authenticated (the mandatory-auth middleware) and gated on project
-// membership; the token it returns authorizes ONLY /previews/{project}/{run}/ for
-// previewTokenTTL. POST /projects/{id}/previews/{run}/token.
+// membership; the token it returns authorizes ONLY /pv/{token}/ for previewTokenTTL.
+// POST /projects/{id}/previews/{run}/token → {token, url, expires_in}.
 func (s *Server) mintPreviewToken(w http.ResponseWriter, r *http.Request) {
 	if len(s.PreviewSecret) == 0 || s.PreviewsRoot == "" {
 		httpErr(w, http.StatusServiceUnavailable, "previews are not configured")
@@ -104,8 +104,7 @@ func (s *Server) mintPreviewToken(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusNotFound, "preview not found") // 404, no existence leak
 		return
 	}
-	// The preview must actually exist on disk (a token for a missing preview is useless
-	// and misleading). filepath.Base defends the lookup against odd ids.
+	// The preview must actually exist on disk. filepath.Base defends the lookup.
 	dir := filepath.Join(s.PreviewsRoot, filepath.Base(project), filepath.Base(run))
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		httpErr(w, http.StatusNotFound, "preview not found")
@@ -113,10 +112,9 @@ func (s *Server) mintPreviewToken(w http.ResponseWriter, r *http.Request) {
 	}
 	tok := httpx.MintPreviewToken(s.PreviewSecret, project, run, previewTokenTTL, time.Now())
 	base := strings.TrimRight(s.PreviewsBaseURL, "/")
-	url := base + "/previews/" + project + "/" + run + "/?token=" + tok
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      tok,
-		"url":        url,
+		"url":        base + "/pv/" + tok + "/",
 		"expires_in": int(previewTokenTTL.Seconds()),
 	})
 }
