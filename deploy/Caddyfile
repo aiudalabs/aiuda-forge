@@ -3,6 +3,10 @@
 #   https://<domain>/            -> console  (Next.js)
 #   https://<domain>/forge-api/* -> control  (API; the /forge-api prefix is stripped)
 #   https://<domain>/forge-api/ws -> control WebSocket (Caddy upgrades it automatically)
+# Release previews (PR #23) need NO extra route: the control mints preview URLs off
+# VIBEFORGE_PUBLIC_URL, which in prod is https://<domain>/forge-api, so a preview opens at
+# https://<domain>/forge-api/pv/<token>/ and rides the same handle_path below (stripped to
+# /pv/<token>/ for the control). Likewise the live-log WS at /forge-api/ws.
 # The browser talks only to <domain> (same origin → no CORS), so the console must be built
 # with NEXT_PUBLIC_VIBEFORGE_API_URL=https://<domain>/forge-api (the prod override does this).
 

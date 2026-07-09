@@ -7,3 +7,9 @@
 ^(.*\.)?registry\.npmjs\.org$
 ^(.*\.)?pypi\.org$
 ^(.*\.)?files\.pythonhosted\.org$
+# Firebase Hosting deploy (release step, target=firebase). The firebase CLI hits several
+# Google API subdomains — hosting upload (firebasehosting.googleapis.com), project lookup
+# (firebase.googleapis.com, cloudresourcemanager.googleapis.com) and token refresh
+# (oauth2.googleapis.com) — so we allow the *.googleapis.com surface rather than an
+# enumerated, brittle list. Only relevant to firebase releases; static releases don't use it.
+^(.*\.)?googleapis\.com$
