@@ -53,6 +53,14 @@ const (
 	PlanningModeAuto     = "auto"
 	PlanningModeCeremony = "ceremony"
 
+	// Sprint-review ceremony (readiness gate). "auto" (default) is the historical
+	// behavior: once a sprint's increment lands, the project advances to the next
+	// sprint with no review. "ceremony" inserts a sprint-review run + human gate for
+	// each DONE sprint (accept the increment against its goal, or reject with feedback
+	// that becomes correction stories) and HOLDS the next sprint until it is accepted.
+	ReviewModeAuto     = "auto"
+	ReviewModeCeremony = "ceremony"
+
 	// Aprobación de workflows action_required en PRs de agentes (caveat de
 	// seguridad del ADR: NUNCA auto si el diff toca .github/workflows/**).
 	WorkflowApprovalManual   = "manual"       // el humano clickea "Approve and run workflows" (default)
@@ -83,6 +91,11 @@ type Settings struct {
 	// default) or goes through a planning run + human gate first ("ceremony"). The
 	// native scheduler reads it per-project each cycle.
 	PlanningMode string `json:"planning_mode"`
+	// ReviewMode selects whether a DONE sprint's increment is accepted automatically
+	// ("auto", default) or goes through a sprint-review run + human gate ("ceremony")
+	// that holds the next sprint until the increment is accepted. Read per-project
+	// each cycle by the native scheduler.
+	ReviewMode string `json:"review_mode"`
 }
 
 // Project holds the metadata for a single project. OwnerID is the auth user id
@@ -121,7 +134,10 @@ type Project struct {
 	// PlanningMode selects the sprint-firing discipline ("auto" | "ceremony"); see
 	// the Settings field of the same name. Empty is treated as "auto".
 	PlanningMode string `json:"planning_mode"`
-	CreatedAt    int64  `json:"created_at"`
+	// ReviewMode selects the sprint-acceptance discipline ("auto" | "ceremony"); see
+	// the Settings field of the same name. Empty is treated as "auto".
+	ReviewMode string `json:"review_mode"`
+	CreatedAt  int64  `json:"created_at"`
 }
 
 const schema = `
@@ -144,6 +160,7 @@ CREATE TABLE IF NOT EXISTS projects (
   release_target    TEXT NOT NULL DEFAULT 'static',
   firebase_token    TEXT NOT NULL DEFAULT '',
   planning_mode     TEXT NOT NULL DEFAULT 'auto',
+  review_mode       TEXT NOT NULL DEFAULT 'auto',
   created_at     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS project_members (
@@ -193,6 +210,8 @@ var migrations = []string{
 	`ALTER TABLE projects ADD COLUMN firebase_token TEXT NOT NULL DEFAULT ''`,
 	// Sprint-planning ceremony: per-project firing discipline (auto|ceremony).
 	`ALTER TABLE projects ADD COLUMN planning_mode TEXT NOT NULL DEFAULT 'auto'`,
+	// Sprint-review ceremony: per-project increment-acceptance discipline (auto|ceremony).
+	`ALTER TABLE projects ADD COLUMN review_mode TEXT NOT NULL DEFAULT 'auto'`,
 }
 
 // validExecutionUnit / validMergeMode bound the accepted settings values so the
@@ -208,6 +227,9 @@ func validReleaseTarget(v string) bool {
 }
 func validPlanningMode(v string) bool {
 	return v == PlanningModeAuto || v == PlanningModeCeremony
+}
+func validReviewMode(v string) bool {
+	return v == ReviewModeAuto || v == ReviewModeCeremony
 }
 
 // Store is the project store backed by a sqlite database.
@@ -314,11 +336,11 @@ func (s *Store) Create(p Project) (Project, error) {
 	return p, nil
 }
 
-const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, executor_by_lane, workflow_approval, max_concurrency, digest_channel, last_digest_at, release_target, firebase_token, planning_mode, created_at FROM projects`
+const projectCols = `SELECT id, name, description, repo, owner_id, execution_unit, merge_mode, dispatch_mode, executor, model_by_lane, executor_by_lane, workflow_approval, max_concurrency, digest_channel, last_digest_at, release_target, firebase_token, planning_mode, review_mode, created_at FROM projects`
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.ExecutorByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.DigestChannel, &p.LastDigestAt, &p.ReleaseTarget, &p.FirebaseToken, &p.PlanningMode, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Repo, &p.OwnerID, &p.ExecutionUnit, &p.MergeMode, &p.DispatchMode, &p.Executor, &p.ModelByLane, &p.ExecutorByLane, &p.WorkflowApproval, &p.MaxConcurrency, &p.DigestChannel, &p.LastDigestAt, &p.ReleaseTarget, &p.FirebaseToken, &p.PlanningMode, &p.ReviewMode, &p.CreatedAt)
 	return p, err
 }
 
@@ -400,6 +422,7 @@ func (s *Store) GetSettings(id string) (Settings, error) {
 		WorkflowApproval: p.WorkflowApproval,
 		MaxConcurrency:   p.MaxConcurrency,
 		PlanningMode:     p.PlanningMode,
+		ReviewMode:       p.ReviewMode,
 	}
 	// Rows predating the F2 migration defaults (or hand-edited to '') fall back to
 	// the safe vocabulary instead of leaking "".
@@ -414,6 +437,9 @@ func (s *Store) GetSettings(id string) (Settings, error) {
 	}
 	if out.PlanningMode == "" {
 		out.PlanningMode = PlanningModeAuto
+	}
+	if out.ReviewMode == "" {
+		out.ReviewMode = ReviewModeAuto
 	}
 	return out, nil
 }
@@ -488,6 +514,13 @@ func (s *Store) PutSettings(id string, in Settings) (Settings, error) {
 		}
 		cur.PlanningMode = in.PlanningMode
 	}
+	if in.ReviewMode != "" {
+		if !validReviewMode(in.ReviewMode) {
+			return Settings{}, fmt.Errorf("%w: review_mode %q must be %q or %q",
+				ErrInvalid, in.ReviewMode, ReviewModeAuto, ReviewModeCeremony)
+		}
+		cur.ReviewMode = in.ReviewMode
+	}
 	mbl, err := json.Marshal(cur.ModelByLane)
 	if err != nil {
 		return Settings{}, err
@@ -496,8 +529,8 @@ func (s *Store) PutSettings(id string, in Settings) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
-	res, err := s.db.Exec(`UPDATE projects SET execution_unit=?, merge_mode=?, dispatch_mode=?, executor=?, model_by_lane=?, executor_by_lane=?, workflow_approval=?, max_concurrency=?, planning_mode=? WHERE id=?`,
-		cur.ExecutionUnit, cur.MergeMode, cur.DispatchMode, cur.Executor, string(mbl), string(ebl), cur.WorkflowApproval, cur.MaxConcurrency, cur.PlanningMode, id)
+	res, err := s.db.Exec(`UPDATE projects SET execution_unit=?, merge_mode=?, dispatch_mode=?, executor=?, model_by_lane=?, executor_by_lane=?, workflow_approval=?, max_concurrency=?, planning_mode=?, review_mode=? WHERE id=?`,
+		cur.ExecutionUnit, cur.MergeMode, cur.DispatchMode, cur.Executor, string(mbl), string(ebl), cur.WorkflowApproval, cur.MaxConcurrency, cur.PlanningMode, cur.ReviewMode, id)
 	if err != nil {
 		return Settings{}, err
 	}

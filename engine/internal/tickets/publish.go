@@ -38,6 +38,10 @@ type backlogStory struct {
 	Acceptance string   `yaml:"acceptance"`
 	Owner      string   `yaml:"owner"`
 	SprintID   string   `yaml:"sprint_id"`
+	// Kind is "story" (default) or "bug". The sprint-review corrections step emits
+	// `kind: bug` for defect fixes; a plain design backlog omits it (defaults to story
+	// in the store). Carried through so a corrections story is badged as a bug.
+	Kind string `yaml:"kind"`
 	// ScreenKey names the mockup a frontend story implements. It was previously read
 	// only from this committed snapshot by the groomer; now it is persisted into the
 	// store so the store becomes the source of truth after mid-sprint moves.
@@ -101,6 +105,18 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 	full := filepath.Join(workdir, backlogPath)
 	raw, err := os.ReadFile(full)
 	if err != nil {
+		// optional=true: a missing doc is "nothing to publish", not a failure. The
+		// sprint-review corrections step publishes on every gate loop but the doc is
+		// absent on the happy (no-corrections) path — a missing file there must not
+		// fail the run. Only a MISSING file is tolerated; a present-but-malformed doc
+		// still fails so a real parse error is never masked.
+		if optional(inputs) && os.IsNotExist(err) {
+			return workflow.StepResult{
+				Success: true,
+				Output:  map[string]any{"created": 0, "skipped": 0, "optional_absent": true},
+				Detail:  fmt.Sprintf("ticket_publish: %s absent (optional) — nothing to publish", backlogPath),
+			}, nil
+		}
 		return workflow.StepResult{
 			Success: false,
 			Detail:  fmt.Sprintf("ticket_publish: read %s: %v", backlogPath, err),
@@ -174,6 +190,7 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 			Body:      s.Body,
 			Accept:    s.Acceptance,
 			Owner:     s.Owner,
+			Kind:      s.Kind,
 			ScreenKey: s.ScreenKey,
 			Deps:      s.deps(),
 			Status:    StatusBacklog,
@@ -229,6 +246,19 @@ func (r *PublishRunner) Run(_ context.Context, step workflow.Step, inputs map[st
 		},
 		Detail: detail,
 	}, nil
+}
+
+// optional reports whether inputs["optional"] is set truthy — accepting a bool true
+// or the string "true" (workflow inputs arrive as strings after YAML resolution).
+func optional(inputs map[string]any) bool {
+	switch v := inputs["optional"].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	default:
+		return false
+	}
 }
 
 // createSprint inserts a sprint, treating an "already exists" UNIQUE conflict as

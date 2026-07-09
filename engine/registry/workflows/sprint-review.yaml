@@ -1,0 +1,105 @@
+# Sprint-review ceremony — fired by the native scheduler for a DONE sprint when the
+# project's review_mode is "ceremony" and the sprint hasn't been reviewed yet
+# (reviewed_at == 0). The scheduler injects the trigger payload: sprint_id, project_id,
+# sprint_goal, stories_snapshot (JSON of the sprint's stories from the LIVE store),
+# next_sprint (where the reject path publishes corrections), and the doc paths
+# review (docs/REVIEW-<id>.md) + corrections (docs/CORRECTIONS-<id>.md). The project's
+# next sprint does NOT advance until the close step below stamps reviewed_at.
+#
+# Shape (the #24 [generate]→[gate]→[commit] pattern): the reviewed artifact (report)
+# and the reject-loop body (corrections) are generated BEFORE the gate, because the
+# executor loops on_fail back to a step and then runs linearly forward to the gate
+# again. Approve advances to the committers (publish_corrections → close); reject loops
+# back to `corrections` (regenerate with the reviewer's feedback) and re-parks the gate.
+#
+# release → report → corrections → review_gate(answer|approve|reject) → publish_corrections → close
+id: sprint-review
+version: 1.0.0
+steps:
+  # ── Release — build the integrated branch and serve a navigable preview. Its
+  #    preview_url is the report's headline evidence. Untrusted repo code builds in
+  #    the sandbox (audit C2). branch defaults to "dev"; target/repo from the project.
+  - id: release
+    type: release
+    inputs:
+      project_id: $trigger.project_id
+
+  # ── Report — the reporter reads the sprint's stories + the preview and writes an
+  #    evidence-based increment report against the sprint goal. Generated ONCE (it is
+  #    before `corrections`, so a reject loop does not regenerate it or rebuild the preview).
+  - id: report
+    type: design
+    label: Reporte del incremento
+    agent: demo-reporter
+    inputs:
+      sprint_id: $trigger.sprint_id
+      sprint_goal: $trigger.sprint_goal
+      stories_snapshot: $trigger.stories_snapshot
+      preview_url: $release.output.preview_url
+      output: $trigger.review   # docs/REVIEW-<sprint_id>.md
+
+  # ── Corrections — the reject-loop body. It sits before the gate so on_fail can loop
+  #    back to it, but `skip_if_empty` makes it a ZERO-COST no-op on the happy path: on
+  #    the first (linear) pass there is no `feedback`/`answers`, so the step is skipped
+  #    entirely — no agent call, no corrections doc. When the gate REJECTS (or is
+  #    answered), on_fail re-runs THIS step directly with the reviewer's `feedback` (or
+  #    `answers`) injected, turning it into a small set of correction stories for the
+  #    NEXT sprint. The committer (publish_corrections) + close both tolerate the absent
+  #    doc on the happy path (optional publish → no-op; close → decision "accepted").
+  - id: corrections
+    type: design
+    label: Correcciones del sprint
+    agent: scrum-master
+    skip_if_empty: [feedback, answers]
+    inputs:
+      sprint_id: $trigger.sprint_id
+      next_sprint: $trigger.next_sprint
+      stories_snapshot: $trigger.stories_snapshot
+      output: $trigger.corrections   # docs/CORRECTIONS-<sprint_id>.md
+      instructions: |
+        You are in SPRINT-REVIEW CORRECTIONS mode — NOT designing a new backlog. This
+        step runs ONLY when the reviewer rejected (or answered) sprint `sprint_id`'s
+        increment, so `feedback` (or `answers`) is present: convert ONLY that feedback
+        into a SMALL set of correction stories (typically 1–5) and write the file at the
+        `output` path in the docs/backlog.yaml contract. Each story: id (stable across
+        re-runs so re-publishing does not duplicate), title, body, acceptance, kind
+        (`bug` for a defect, `story` for missing scope), owner (the lane), screen_key
+        (optional, frontend), and sprint_id set to `next_sprint`. Declare `next_sprint`
+        in a `sprints:` block so it is created if absent. If the feedback genuinely
+        requires no code change, write EXACTLY `stories: []`. Do NOT re-shard the whole
+        product backlog.
+
+  # ── Review gate — conversational. Open the preview, review the report. `answer`
+  #    re-runs `corrections` with the answer; `reject` re-runs it with feedback (both
+  #    loop back here); `approve` advances to the committers.
+  - id: review_gate
+    type: human_gate
+    inputs:
+      reason: "Abre la preview y revisa el incremento contra el objetivo del sprint (docs/REVIEW-…md). Aprueba para ACEPTAR el incremento, responde preguntas abiertas con `answer`, o rechaza con feedback (se convierte en stories de corrección en el sprint siguiente)."
+    on_fail:
+      goto: corrections
+      max: 20
+      feedback: $review_gate.detail
+
+  # ── Publish corrections — committer, runs only AFTER approval. Appends the approved
+  #    correction stories to the next sprint (idempotent by id; the sprint is created if
+  #    absent). optional=true: the empty (no-corrections) doc is a no-op, not a failure.
+  - id: publish_corrections
+    type: ticket_publish
+    label: Publicar correcciones
+    inputs:
+      backlog: $trigger.corrections
+      project_id: $trigger.project_id
+      repo: $trigger.repo
+      optional: true
+
+  # ── Close — deterministic. Stamp reviewed_at (unblocks the scheduler to advance to
+  #    the next sprint) and record the decision (accepted | accepted_with_corrections +
+  #    the correction ids) as a run event.
+  - id: close
+    type: review_close
+    label: Cerrar review
+    inputs:
+      sprint_id: $trigger.sprint_id
+      project_id: $trigger.project_id
+      corrections: $trigger.corrections

@@ -21,6 +21,10 @@ type fakeStoryProvider struct {
 	sprintPlanned     map[string]int64  // sprint id → planned_at (0 = not planned)
 	sprintPlanningRun map[string]string // sprint id → the recorded planning run id
 	planningRunCalls  int               // how many times SetSprintPlanningRun was called
+	// Sprint-review ceremony state (per sprint id).
+	sprintReviewed  map[string]int64  // sprint id → reviewed_at (0 = not reviewed)
+	sprintReviewRun map[string]string // sprint id → the recorded review run id
+	reviewRunCalls  int               // how many times SetSprintReviewRun was called
 }
 
 type fakeStory struct {
@@ -43,6 +47,8 @@ func newFakeProvider(stories ...*fakeStory) *fakeStoryProvider {
 		stories:           make(map[string]*fakeStory),
 		sprintPlanned:     map[string]int64{},
 		sprintPlanningRun: map[string]string{},
+		sprintReviewed:    map[string]int64{},
+		sprintReviewRun:   map[string]string{},
 	}
 	for _, s := range stories {
 		p.stories[s.id] = s
@@ -326,6 +332,91 @@ func (p *fakeStoryProvider) markSprintPlanned(sprintID string, ts int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sprintPlanned[sprintID] = ts
+}
+
+// SprintsAwaitingReview returns the fake's DONE sprints (every story done, ≥1 story)
+// whose reviewed_at is still 0 — the global sweep source, in insertion order.
+func (p *fakeStoryProvider) SprintsAwaitingReview(_ context.Context) ([]NativeSprint, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var sprintOrder []string
+	seen := map[string]bool{}
+	members := map[string][]*fakeStory{}
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID == "" {
+			continue
+		}
+		if !seen[s.sprintID] {
+			seen[s.sprintID] = true
+			sprintOrder = append(sprintOrder, s.sprintID)
+		}
+		members[s.sprintID] = append(members[s.sprintID], s)
+	}
+	var out []NativeSprint
+	for _, sid := range sprintOrder {
+		if p.sprintReviewed[sid] != 0 {
+			continue
+		}
+		ms := members[sid]
+		allDone := len(ms) > 0
+		for _, s := range ms {
+			if s.status != "done" {
+				allDone = false
+				break
+			}
+		}
+		if allDone {
+			out = append(out, NativeSprint{
+				ID:          sid,
+				Name:        sid,
+				ProjectID:   ms[0].projectID,
+				ReviewedAt:  p.sprintReviewed[sid],
+				ReviewRunID: p.sprintReviewRun[sid],
+			})
+		}
+	}
+	return out, nil
+}
+
+// SprintStorySnapshot returns a canned JSON snapshot of the sprint's stories.
+func (p *fakeStoryProvider) SprintStorySnapshot(_ context.Context, sprintID, _ string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var b strings.Builder
+	b.WriteString("[")
+	first := true
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID != sprintID {
+			continue
+		}
+		if !first {
+			b.WriteString(",")
+		}
+		first = false
+		fmt.Fprintf(&b, `{"id":%q,"status":%q}`, s.id, s.status)
+	}
+	b.WriteString("]")
+	return b.String(), nil
+}
+
+// SetSprintReviewRun records the review run id for a sprint (the persisted idempotency
+// reference) and counts the calls so a test can assert idempotency.
+func (p *fakeStoryProvider) SetSprintReviewRun(_ context.Context, sprintID, _, runID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sprintReviewRun[sprintID] = runID
+	p.reviewRunCalls++
+	return nil
+}
+
+// markSprintReviewed simulates review_close stamping reviewed_at, unblocking the
+// project's next sprint.
+func (p *fakeStoryProvider) markSprintReviewed(sprintID string, ts int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sprintReviewed[sprintID] = ts
 }
 
 // SprintStories returns the sprint's stories in insertion order (good enough for

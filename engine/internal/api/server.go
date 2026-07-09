@@ -260,9 +260,11 @@ func (s *Server) routes() {
 	// Sprint-batched (goal-mode) endpoints the orchestrator polls. "/sprints/ready"
 	// is a more specific pattern than "/sprints/{id}/..." so it routes correctly.
 	m.HandleFunc("GET /sprints/ready", s.needTickets(s.readySprints))
+	m.HandleFunc("GET /sprints/awaiting-review", s.needTickets(s.awaitingReviewSprints))
 	m.HandleFunc("GET /sprints/{id}/stories", s.needTickets(s.sprintStories))
 	m.HandleFunc("POST /sprints/{id}/claim", s.needTickets(s.claimSprint))
 	m.HandleFunc("POST /sprints/{id}/planning-run", s.needTickets(s.setSprintPlanningRun))
+	m.HandleFunc("POST /sprints/{id}/review-run", s.needTickets(s.setSprintReviewRun))
 	m.HandleFunc("PUT /sprints/{id}/status", s.needTickets(s.updateSprintStatus))
 	m.HandleFunc("POST /sprints/{id}/requeue", s.needTickets(s.requeueSprint))
 	m.HandleFunc("POST /sprints/{id}/cancel", s.needTickets(s.cancelSprint))

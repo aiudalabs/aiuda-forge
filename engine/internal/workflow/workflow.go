@@ -39,6 +39,15 @@ type Step struct {
 	// generic
 	Inputs map[string]any `yaml:"inputs"`
 	OnFail *OnFail        `yaml:"on_fail"`
+	// SkipIfEmpty names input keys that gate this step on the LINEAR (success) path:
+	// when the step is reached by normal advance and ALL of these inputs resolve empty,
+	// the step is skipped as a zero-cost no-op (no task, no runner, no LLM call) and
+	// the flow advances past it. A step reached via on_fail.goto or the answer verb is
+	// enqueued DIRECTLY (with feedback/answers injected), so it still runs there. This
+	// is what lets a reject-loop body (e.g. a corrections step) sit before its gate for
+	// the loop-back to work, yet cost nothing on the happy path where it is never
+	// rejected. Generic + data-driven — no step-id knowledge in the executor.
+	SkipIfEmpty []string `yaml:"skip_if_empty"`
 }
 
 // OnFail is the generalized retry/loop primitive: on failure, jump to `Goto` up

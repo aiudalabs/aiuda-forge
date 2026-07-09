@@ -268,6 +268,55 @@ func (s *Server) setSprintPlanningRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sprint_id": id, "planning_run_id": req.RunID})
 }
 
+// setSprintReviewRun handles POST /sprints/{id}/review-run. The native scheduler
+// records the sprint-review run it started so the ceremony is idempotent (it won't
+// start a second one while this is live). Editor-scoped, twin of setSprintPlanningRun.
+func (s *Server) setSprintReviewRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	projectID := r.URL.Query().Get("project_id")
+	if s.sprintDenied(w, r.Context(), id, projects.RoleEditor) {
+		return
+	}
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := s.Tickets.SetSprintReviewRun(id, projectID, req.RunID); err != nil {
+		if errors.Is(err, tickets.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sprint_id": id, "review_run_id": req.RunID})
+}
+
+// awaitingReviewSprints handles GET /sprints/awaiting-review — DONE sprints (every
+// story done) whose reviewed_at is still 0. The native scheduler's global review
+// sweep reads this (across all projects, service token) so even a project's LAST
+// sprint is reviewed. A user session is scoped to its own projects (C1).
+func (s *Server) awaitingReviewSprints(w http.ResponseWriter, r *http.Request) {
+	project := r.URL.Query().Get("project")
+	if project != "" && s.crossTenantDenied(w, r.Context(), project, map[string]any{"sprints": []tickets.Sprint{}}) {
+		return
+	}
+	sprints, err := s.Tickets.DoneSprintsAwaitingReview(project)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if allowed, scoped := s.memberProjects(r.Context()); scoped && project == "" {
+		sprints = filterSprints(sprints, allowed)
+	}
+	if sprints == nil {
+		sprints = []tickets.Sprint{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sprints": sprints})
+}
+
 // updateSprintStatus handles PUT /sprints/{id}/status. It advances every running
 // story in the sprint to done|failed (goal-mode completion) and, when a run_id is
 // supplied, records it on all the sprint's stories so the UI can link them.

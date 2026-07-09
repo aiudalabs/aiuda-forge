@@ -102,6 +102,22 @@ type StoryProvider interface {
 	// SetSprintPlanningRun persists the planning run the scheduler started for a
 	// sprint — the idempotency reference that prevents starting a second one.
 	SetSprintPlanningRun(ctx context.Context, sprintID, projectID, runID string) error
+
+	// ---- Sprint-review ceremony ---------------------------------------------
+
+	// SprintsAwaitingReview returns every sprint whose increment is complete (all
+	// stories done) but not yet accepted (reviewed_at == 0), across ALL projects —
+	// the scheduler filters to review-ceremony projects. This is a GLOBAL sweep, not
+	// gated on ready work, so the LAST sprint (which has no ready successor to trigger
+	// it) is still reviewed. Each carries reviewed_at + review_run_id for idempotency.
+	SprintsAwaitingReview(ctx context.Context) ([]NativeSprint, error)
+	// SprintStorySnapshot returns a JSON snapshot of ONE sprint's stories
+	// (id/title/status/acceptance/owner/screen_key) — the increment the reporter
+	// reasons over. The scheduler injects it into the review run's payload.
+	SprintStorySnapshot(ctx context.Context, sprintID, projectID string) (string, error)
+	// SetSprintReviewRun persists the review run the scheduler started for a sprint —
+	// the idempotency reference (twin of SetSprintPlanningRun) that prevents a second.
+	SetSprintReviewRun(ctx context.Context, sprintID, projectID, runID string) error
 }
 
 // NativeSprint is the scheduler's view of a sprint for goal-mode batching.
@@ -118,6 +134,13 @@ type NativeSprint struct {
 	// the persisted idempotency reference that stops a second planning run starting
 	// while this one is live. Empty = none started yet.
 	PlanningRunID string `json:"planning_run_id"`
+	// ReviewedAt is 0 until the sprint-review ceremony accepts this DONE sprint's
+	// increment. In "ceremony" review mode the scheduler holds the project's next
+	// sprint while this is 0; "auto" mode ignores it.
+	ReviewedAt int64 `json:"reviewed_at"`
+	// ReviewRunID is the review run the scheduler last started for this sprint — the
+	// persisted idempotency reference (twin of PlanningRunID). Empty = none started yet.
+	ReviewRunID string `json:"review_run_id"`
 }
 
 // NativeStory is the full story the scheduler passes to a run as context.
@@ -520,6 +543,102 @@ func (p *NativeHTTPProvider) SetSprintPlanningRun(ctx context.Context, sprintID,
 	return nil
 }
 
+// SprintsAwaitingReview GETs /sprints/awaiting-review — DONE sprints whose reviewed_at
+// is still 0, across all projects (the scheduler filters to review-ceremony projects).
+func (p *NativeHTTPProvider) SprintsAwaitingReview(ctx context.Context) ([]NativeSprint, error) {
+	req, err := p.newReq(ctx, http.MethodGet, p.baseURL+"/sprints/awaiting-review", nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get /sprints/awaiting-review: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("get /sprints/awaiting-review: status %d", resp.StatusCode)
+	}
+	var body sprintsListResp
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode /sprints/awaiting-review: %w", err)
+	}
+	return body.Sprints, nil
+}
+
+// reviewSnapshotStory is the trimmed per-story shape the reporter reasons over for a
+// sprint-review — the increment's stories with their acceptance criteria and status.
+type reviewSnapshotStory struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Status     string `json:"status"`
+	Acceptance string `json:"acceptance,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	ScreenKey  string `json:"screen_key,omitempty"`
+}
+
+// SprintStorySnapshot GETs /sprints/{id}/stories and returns a compact JSON array of
+// that sprint's stories (review-relevant fields only) for the review run's payload.
+func (p *NativeHTTPProvider) SprintStorySnapshot(ctx context.Context, sprintID, projectID string) (string, error) {
+	url := p.baseURL + "/sprints/" + sprintID + "/stories"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
+	req, err := p.newReq(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get /sprints/%s/stories: %w", sprintID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get /sprints/%s/stories: status %d", sprintID, resp.StatusCode)
+	}
+	var body struct {
+		Stories []reviewSnapshotStory `json:"stories"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode sprint stories: %w", err)
+	}
+	out := body.Stories
+	if out == nil {
+		out = []reviewSnapshotStory{}
+	}
+	j, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("marshal snapshot: %w", err)
+	}
+	return string(j), nil
+}
+
+// SetSprintReviewRun POSTs /sprints/{id}/review-run with the review run id so the
+// store persists the ceremony's idempotency reference (twin of SetSprintPlanningRun).
+func (p *NativeHTTPProvider) SetSprintReviewRun(ctx context.Context, sprintID, projectID, runID string) error {
+	url := p.baseURL + "/sprints/" + sprintID + "/review-run"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
+	body, err := json.Marshal(map[string]string{"run_id": runID})
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	req, err := p.newReq(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("post /sprints/%s/review-run: %w", sprintID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("post /sprints/%s/review-run: status %d", sprintID, resp.StatusCode)
+	}
+	return nil
+}
+
 func (p *NativeHTTPProvider) putStatus(ctx context.Context, id string, payload storyStatusReq) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -631,6 +750,7 @@ type projectMode struct {
 	executionUnit string
 	mergeMode     string
 	planningMode  string
+	reviewMode    string
 }
 
 // modeFor returns project's settings, fetching them from the control plane the
@@ -641,24 +761,26 @@ func (s *NativeScheduler) modeFor(ctx context.Context, cache map[string]projectM
 	if m, ok := cache[projectID]; ok {
 		return m
 	}
-	unit, mode, planning, err := s.cp.ProjectSettings(ctx, projectID)
+	unit, mode, planning, review, err := s.cp.ProjectSettings(ctx, projectID)
 	if err != nil {
 		// D6: do NOT cache a failed read. Caching the sprint/manual default on a
 		// transient API blip pinned the project to manual for the rest of the cycle,
 		// silently pausing `auto` merges. Use defaults for THIS lookup only; the
-		// next cycle retries the real settings. planning defaults to "auto" so a
-		// settings blip never silently STARTS holding sprints behind the ceremony.
+		// next cycle retries the real settings. planning/review default to "auto" so a
+		// settings blip never silently STARTS holding sprints behind a ceremony.
 		log.Printf("native-scheduler: read settings for project %q (using defaults this cycle, not caching): %v", projectID, err)
 		return projectMode{
 			executionUnit: orDefault(unit, "sprint"),
 			mergeMode:     orDefault(mode, "manual"),
 			planningMode:  orDefault(planning, planningModeAuto),
+			reviewMode:    orDefault(review, reviewModeAuto),
 		}
 	}
 	m := projectMode{
 		executionUnit: orDefault(unit, "sprint"),
 		mergeMode:     orDefault(mode, "manual"),
 		planningMode:  orDefault(planning, planningModeAuto),
+		reviewMode:    orDefault(review, reviewModeAuto),
 	}
 	cache[projectID] = m
 	return m
@@ -679,6 +801,11 @@ const (
 	planningModeCeremony = "ceremony"
 	// planningWorkflow is the registry workflow the ceremony fires per sprint.
 	planningWorkflow = "sprint-planning"
+
+	reviewModeAuto     = "auto"
+	reviewModeCeremony = "ceremony"
+	// reviewWorkflow is the registry workflow the review ceremony fires per DONE sprint.
+	reviewWorkflow = "sprint-review"
 )
 
 // RunOnce executes a single poll-and-fire cycle, PER PROJECT (audit A2). Each
@@ -760,15 +887,29 @@ func (s *NativeScheduler) fireByProject(ctx context.Context, modeCache map[strin
 		projectIDs[pid] = true
 	}
 
+	// Sprint-review readiness gate (audit A2, per project). BEFORE firing any ready
+	// sprint, ensure a review run for every DONE sprint a review-ceremony project has
+	// not yet accepted, and learn which projects are HELD (a completed increment
+	// awaits acceptance). This is a GLOBAL sweep — independent of `projectIDs` — so a
+	// project's LAST sprint is reviewed even though no ready successor would gate it.
+	reviewActions, held := s.reconcileSprintReviews(ctx, modeCache)
+	actions += reviewActions
+
 	for pid := range projectIDs {
 		mode := s.modeFor(ctx, modeCache, pid)
 		if mode.executionUnit == "story" {
 			actions += s.fireReadyStories(ctx, readyByProject[pid])
 			continue
 		}
-		// Sprint (goal) mode: fire this project's ready sprints. In "ceremony"
-		// planning mode a sprint is NOT fired until its plan has been approved
-		// (planned_at != 0); until then it runs the planning ceremony instead.
+		// Sprint (goal) mode. In "ceremony" review mode, HOLD the whole project while
+		// a prior increment awaits acceptance: neither plan nor fire the next sprint
+		// until reviewed_at is stamped (order: review(N-1) → planning(N) → fire(N)).
+		if held[pid] {
+			continue
+		}
+		// Fire this project's ready sprints. In "ceremony" planning mode a sprint is
+		// NOT fired until its plan has been approved (planned_at != 0); until then it
+		// runs the planning ceremony instead.
 		for _, sp := range sprintsByProject[pid] {
 			if mode.planningMode == planningModeCeremony && sp.PlannedAt == 0 {
 				if s.ensureSprintPlanning(ctx, sp) {
@@ -782,6 +923,127 @@ func (s *NativeScheduler) fireByProject(ctx context.Context, modeCache map[strin
 		}
 	}
 	return actions, nil
+}
+
+// reconcileSprintReviews is the sprint-review readiness gate's derivation. It sweeps
+// every DONE-but-unreviewed sprint (across all projects), and for each whose project
+// is in "ceremony" review mode it ensures ONE live sprint-review run and marks the
+// project HELD (its next sprint must wait for acceptance). A project in "auto" review
+// mode is skipped entirely — no review run, never held — so auto behavior is
+// byte-for-byte unchanged. Returns the number of review runs started this cycle and
+// the set of held project ids. This lives here (not tied to `projectIDs`) precisely
+// so the LAST sprint of a project — which no ready successor would gate — is reviewed.
+func (s *NativeScheduler) reconcileSprintReviews(ctx context.Context, modeCache map[string]projectMode) (int, map[string]bool) {
+	held := map[string]bool{}
+	awaiting, err := s.provider.SprintsAwaitingReview(ctx)
+	if err != nil {
+		log.Printf("native-scheduler: list sprints awaiting review: %v", err)
+		return 0, held
+	}
+	actions := 0
+	for _, sp := range awaiting {
+		if s.modeFor(ctx, modeCache, sp.ProjectID).reviewMode != reviewModeCeremony {
+			continue // auto review mode: the increment is accepted implicitly
+		}
+		// A completed increment awaits acceptance → hold the project's next sprint,
+		// whether or not we (re-)start a review run this cycle.
+		held[sp.ProjectID] = true
+		if s.ensureSprintReview(ctx, sp) {
+			actions++
+		}
+	}
+	return actions, held
+}
+
+// ensureSprintReview guarantees ONE live sprint-review run for a DONE sprint awaiting
+// acceptance (review mode "ceremony", reviewed_at == 0). It is idempotent via the
+// PERSISTED review_run_id — the exact twin of ensureSprintPlanning: a still-live run
+// is a no-op; only when there is no review run, or the last one ended terminally
+// without accepting (reviewed_at still 0), does it start a fresh one and persist the
+// reference. Returns true when it started a run this cycle. It never advances the
+// project — the next sprint proceeds only after review_close stamps reviewed_at.
+func (s *NativeScheduler) ensureSprintReview(ctx context.Context, sp NativeSprint) bool {
+	if sp.ReviewRunID != "" {
+		status, err := s.cp.RunStatus(ctx, sp.ReviewRunID)
+		if err != nil {
+			// Can't tell if the recorded run is still alive — do NOT start a second one
+			// this cycle (avoid duplicate review runs); retry next cycle.
+			log.Printf("native-scheduler: sprint %s: review run %s status unreadable (%v) — skipping this cycle", sp.ID, sp.ReviewRunID, err)
+			return false
+		}
+		if !isTerminalStatus(status) {
+			return false // a review run is live (running or gated) — idempotent no-op
+		}
+		log.Printf("native-scheduler: sprint %s: prior review run %s ended %s without acceptance — re-reviewing", sp.ID, sp.ReviewRunID, status)
+	}
+
+	// Budget gate: a review run spends tokens, so honor the same entitlement check.
+	if allowed, reason, _ := s.cp.Entitlement(ctx, sp.ProjectID); !allowed {
+		log.Printf("native-scheduler: sprint %s: billing denied (%s) — not starting review run", sp.ID, reason)
+		return false
+	}
+
+	snapshot, err := s.provider.SprintStorySnapshot(ctx, sp.ID, sp.ProjectID)
+	if err != nil {
+		log.Printf("native-scheduler: sprint %s: story snapshot failed (%v) — deferring review", sp.ID, err)
+		return false
+	}
+	// Derive the repo from the sprint's stories (they share one) so the reject path's
+	// correction stories carry a repo the factory can clone — same peek fireSprint does.
+	repo := ""
+	if peek, perr := s.provider.SprintStories(ctx, sp.ID, sp.ProjectID); perr == nil {
+		for _, st := range peek {
+			if st.Repo != "" {
+				repo = st.Repo
+				break
+			}
+		}
+	}
+	payload := map[string]any{
+		"sprint_id":        sp.ID,
+		"project_id":       sp.ProjectID,
+		"sprint_goal":      sp.Goal,
+		"stories_snapshot": snapshot,
+		"repo":             repo,
+		// next_sprint is where the reject path publishes correction stories (the sprint
+		// AFTER this one; created by ticket_publish if absent — the defer pattern).
+		"next_sprint": nextSprintID(sp.ID),
+		"review":      "docs/REVIEW-" + sp.ID + ".md",
+		"corrections": "docs/CORRECTIONS-" + sp.ID + ".md",
+	}
+	runID, err := s.cp.FireRun(ctx, reviewWorkflow, payload)
+	if err != nil {
+		log.Printf("native-scheduler: sprint %s: fire review run: %v", sp.ID, err)
+		return false
+	}
+	if err := s.provider.SetSprintReviewRun(ctx, sp.ID, sp.ProjectID, runID); err != nil {
+		// The run is already firing; failing to persist the reference risks a duplicate
+		// review run next cycle. Log loudly — the review_gate still gates acceptance, so
+		// a duplicate is wasteful but not unsafe.
+		log.Printf("native-scheduler: sprint %s: record review run %s: %v (may duplicate next cycle)", sp.ID, runID, err)
+	}
+	log.Printf("native-scheduler: sprint %s: review ceremony started — run %s", sp.ID, runID)
+	return true
+}
+
+// nextSprintID increments the trailing number of a sprint id (SP2 → SP3) — the sprint
+// the review's corrections publish into. Mirrors tickets.bumpSprintID (the scheduler
+// holds its own copy so the orchestrator package does not import tickets); ticket_publish
+// creates the target idempotently, so whether SP3 already exists does not matter here.
+// An id with no trailing number gets a "-2" suffix so a distinct id is always produced.
+func nextSprintID(id string) string {
+	end := len(id)
+	for end > 0 && id[end-1] >= '0' && id[end-1] <= '9' {
+		end--
+	}
+	if end == len(id) {
+		return id + "-2" // no trailing number
+	}
+	n, err := strconv.Atoi(id[end:])
+	if err != nil {
+		return id + "-2"
+	}
+	return id[:end] + strconv.Itoa(n+1)
 }
 
 // groupByProject partitions tickets by project_id. An empty project_id (legacy /

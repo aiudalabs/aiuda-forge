@@ -150,6 +150,16 @@ type Sprint struct {
 	// reference (not process memory): the scheduler will not start a second planning
 	// run while this one is still live. Empty = no planning run started yet.
 	PlanningRunID string `json:"planning_run_id"`
+	// ReviewedAt is the unix-millis timestamp the sprint-review ceremony accepted this
+	// DONE sprint's increment (0 = never reviewed). In "ceremony" review mode the
+	// native scheduler holds the project's next sprint until ReviewedAt != 0; in
+	// "auto" mode it is ignored. Set by the review_close step.
+	ReviewedAt int64 `json:"reviewed_at"`
+	// ReviewRunID is the control-plane run of the sprint-review workflow the scheduler
+	// last started for this sprint — the PERSISTED idempotency reference (twin of
+	// PlanningRunID): the scheduler will not start a second review run while this one
+	// is still live. Empty = no review run started yet.
+	ReviewRunID string `json:"review_run_id"`
 }
 
 // Story is the unit of work. epic_id and sprint_id are optional. deps is the
@@ -237,6 +247,8 @@ CREATE TABLE IF NOT EXISTS sprints (
   project_id      TEXT NOT NULL DEFAULT 'default',
   planned_at      INTEGER NOT NULL DEFAULT 0,
   planning_run_id TEXT NOT NULL DEFAULT '',
+  reviewed_at     INTEGER NOT NULL DEFAULT 0,
+  review_run_id   TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (id, project_id)
 );
 
@@ -332,6 +344,11 @@ const migrationAddScreenKey = `ALTER TABLE stories ADD COLUMN screen_key TEXT NO
 var sprintPlanningMigrations = []string{
 	`ALTER TABLE sprints ADD COLUMN planned_at INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE sprints ADD COLUMN planning_run_id TEXT NOT NULL DEFAULT ''`,
+	// Sprint-review ceremony columns — same "AFTER migrateSprintsCompositePK"
+	// contract as the planning columns above (the composite-PK rebuild copies an
+	// EXPLICIT column list, so columns added before it would be silently dropped).
+	`ALTER TABLE sprints ADD COLUMN reviewed_at INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE sprints ADD COLUMN review_run_id TEXT NOT NULL DEFAULT ''`,
 }
 
 // Store is the ticket store backed by a sqlite database.
@@ -680,6 +697,86 @@ func (s *Store) SetSprintPlanned(sprintID, projectID string) error {
 	return nil
 }
 
+// SetSprintReviewRun records the sprint-review run the scheduler started for a
+// sprint — the persisted idempotency reference (twin of SetSprintPlanningRun) that
+// keeps a second review run from starting while this one is live. projectID empty
+// defaults to the default project. Returns ErrNotFound when the sprint does not exist.
+func (s *Store) SetSprintReviewRun(sprintID, projectID, runID string) error {
+	if projectID == "" {
+		projectID = DefaultProjectID
+	}
+	res, err := s.db.Exec(`UPDATE sprints SET review_run_id=? WHERE id=? AND project_id=?`, runID, sprintID, projectID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSprintReviewed stamps a sprint's reviewed_at with the current time — the signal
+// the ceremony accepted this increment, which unblocks the scheduler from advancing
+// the project to the next sprint. projectID empty defaults to the default project.
+// Returns ErrNotFound when the sprint does not exist.
+func (s *Store) SetSprintReviewed(sprintID, projectID string) error {
+	if projectID == "" {
+		projectID = DefaultProjectID
+	}
+	res, err := s.db.Exec(`UPDATE sprints SET reviewed_at=? WHERE id=? AND project_id=?`, time.Now().UnixMilli(), sprintID, projectID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DoneSprintsAwaitingReview returns the sprints whose increment is complete but not
+// yet accepted by the sprint-review ceremony: every story done (≥1 story) and
+// reviewed_at == 0. projectID empty = all projects (the scheduler's global sweep).
+// A sprint is "done" only when ALL its stories are done — a failed/mixed sprint is
+// not an accepted increment, so it is not offered for review.
+func (s *Store) DoneSprintsAwaitingReview(projectID string) ([]Sprint, error) {
+	sprints, err := s.listSprints(projectID)
+	if err != nil {
+		return nil, err
+	}
+	var out []Sprint
+	for _, sp := range sprints {
+		if sp.ReviewedAt != 0 {
+			continue
+		}
+		done, err := s.sprintAllDone(sp.ID, sp.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			out = append(out, sp)
+		}
+	}
+	return out, nil
+}
+
+// sprintAllDone reports whether the sprint has ≥1 story and every story is done —
+// the completed-increment predicate DoneSprintsAwaitingReview gates on.
+func (s *Store) sprintAllDone(sprintID, projectID string) (bool, error) {
+	stories, err := s.storiesBySprint(sprintID, projectID)
+	if err != nil {
+		return false, err
+	}
+	if len(stories) == 0 {
+		return false, nil
+	}
+	for _, st := range stories {
+		if st.Status != StatusDone {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // ListSprints returns all sprints ordered by id.
 func (s *Store) ListSprints() ([]Sprint, error) {
 	return s.listSprints("")
@@ -715,7 +812,7 @@ func (s *Store) SprintProjects(id string) ([]string, error) {
 // listSprints returns sprints, optionally scoped to projectID (empty = all
 // projects, for admin/back-compat), ordered by id.
 func (s *Store) listSprints(projectID string) ([]Sprint, error) {
-	q := `SELECT id, name, goal, project_id, planned_at, planning_run_id FROM sprints`
+	q := `SELECT id, name, goal, project_id, planned_at, planning_run_id, reviewed_at, review_run_id FROM sprints`
 	var args []any
 	if projectID != "" {
 		q += ` WHERE project_id=?`
@@ -730,7 +827,7 @@ func (s *Store) listSprints(projectID string) ([]Sprint, error) {
 	var out []Sprint
 	for rows.Next() {
 		var sp Sprint
-		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Goal, &sp.ProjectID, &sp.PlannedAt, &sp.PlanningRunID); err != nil {
+		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Goal, &sp.ProjectID, &sp.PlannedAt, &sp.PlanningRunID, &sp.ReviewedAt, &sp.ReviewRunID); err != nil {
 			return nil, err
 		}
 		out = append(out, sp)
