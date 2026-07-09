@@ -167,3 +167,55 @@ func TestReleaseRunnerRegistered(t *testing.T) {
 		t.Fatalf("expected the release runner's own failure, got %q", last.Error)
 	}
 }
+
+// TestReviewCloseRunnerRegistered proves app.Build wires the `review_close` step
+// runner (the sprint-review ceremony's apply step): a run reaches a terminal state via
+// the runner's own validation ("missing sprint_id") rather than the executor's "no
+// runner for step type", which would mean the step type was never registered.
+func TestReviewCloseRunnerRegistered(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	dir := t.TempDir()
+	wfDir := filepath.Join(dir, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := "id: rc\nversion: 1.0.0\nsteps:\n  - id: close\n    type: review_close\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "rc.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := Build(Config{
+		DBPath:       filepath.Join(dir, "control.db"),
+		TicketsDB:    filepath.Join(dir, "tickets.db"), // enables the tickets step runners
+		RegistryRoot: dir,
+		WorkdirRoot:  filepath.Join(dir, "runs"),
+		EngineMode:   "echo",
+		Backend:      agent.FakeBackend{Reply: "ok"},
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer a.Close()
+
+	runID, err := a.Engine.StartRun("rc", map[string]any{}) // no sprint_id → runner fails cleanly
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	status, err := a.Engine.RunToCompletion(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if status != store.StatusFailed {
+		t.Fatalf("run status = %s, want failed (no sprint_id)", status)
+	}
+	tasks, _ := a.Store.TasksForRun(runID)
+	if len(tasks) == 0 {
+		t.Fatal("no tasks recorded")
+	}
+	last := tasks[len(tasks)-1]
+	if strings.Contains(last.Error, "no runner for step type") {
+		t.Fatalf("review_close runner not registered: %q", last.Error)
+	}
+	if !strings.Contains(last.Error, "sprint_id") {
+		t.Fatalf("expected the review_close runner's own failure, got %q", last.Error)
+	}
+}
