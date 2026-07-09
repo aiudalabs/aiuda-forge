@@ -172,6 +172,60 @@ func TestPlanApplyIllegalAtomic(t *testing.T) {
 	}
 }
 
+// TestPlanApplyRevalidatesAtApplyTime is the staleness case that WILL happen in
+// production: the planner emits actions while a story is backlog, hours pass at the
+// gate, and the store moves underneath (here: the story gets claimed → running).
+// ApplyPlan validates against the store state AT APPLY TIME — inheriting the #15
+// mutator guards — so the now-illegal action aborts the whole plan naming it, with
+// NOTHING applied and planned_at left unset.
+func TestPlanApplyRevalidatesAtApplyTime(t *testing.T) {
+	st := openTemp(t)
+	mkSprint(t, st, "SP1")
+	mkSprint(t, st, "SP2")
+	mkStory(t, st, "A", "SP1")
+	if err := st.CreateStory(tickets.Story{ID: "B", SprintID: "SP1", ProjectID: "p1", Title: "B-original"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Plan generated while A and B are backlog: move A → SP2, then rename B. Both legal
+	// at generation time.
+	doc := yamlActions(strings.Join([]string{
+		"actions:",
+		"  - op: move",
+		"    story_id: A",
+		"    args:",
+		"      sprint_id: SP2",
+		"  - op: edit",
+		"    story_id: B",
+		"    args:",
+		"      title: B-CHANGED",
+	}, "\n"))
+
+	// External change AFTER the plan was written, BEFORE approval: A is claimed
+	// (backlog → running) by something else (a mid-sprint op / a racing claim).
+	if _, err := st.ClaimStoryInProject("p1", "A"); err != nil {
+		t.Fatalf("simulate external claim of A: %v", err)
+	}
+
+	res := runPlan(t, st, "SP1", doc)
+	if res.Success {
+		t.Fatal("apply must abort: the move became illegal after A went running")
+	}
+	if !strings.Contains(res.Detail, "A") || !strings.Contains(res.Detail, "move") {
+		t.Errorf("detail should name the offending action (move A), got: %s", res.Detail)
+	}
+	// Atomic: the still-legal edit of B must NOT have applied.
+	if got := storyIn(t, st, "B").Title; got != "B-original" {
+		t.Errorf("B title = %q, want B-original — nothing must apply when one action is stale", got)
+	}
+	if got := storyIn(t, st, "A").SprintID; got != "SP1" {
+		t.Errorf("A sprint = %q, want SP1 — the stale move must not apply", got)
+	}
+	if plannedAt(t, st, "SP1") != 0 {
+		t.Error("SP1 planned_at must remain 0 after an aborted (stale) plan")
+	}
+}
+
 // TestPlanApplyUnknownOp rejects an unrecognized op with nothing applied.
 func TestPlanApplyUnknownOp(t *testing.T) {
 	st := openTemp(t)

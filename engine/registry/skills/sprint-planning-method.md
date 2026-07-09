@@ -16,6 +16,16 @@ verbatim, so they must be concrete and individually legal.
   read them for signal (what slipped, what was harder than expected, what got deferred).
   They will NOT exist for the first sprint — that's fine; plan from the backlog alone.
 
+> **Snapshot currency.** `backlog_snapshot` is a point-in-time copy taken when the
+> ceremony was triggered — the moment the sprint became ready — NOT a live view. Hours
+> may pass at the approval gate, and the store can move underneath (a mid-sprint move, a
+> bug that entered via an iteration). If your plan hinges on a story's exact state
+> (its sprint, status, or deps) and you're unsure it's still current, SAY SO in the
+> plan's rationale so the reviewer can double-check before approving. The apply step is
+> the safety net — it re-validates every action against the LIVE store at apply time and
+> aborts the whole plan (nothing applied) if any action went stale — but a plan that
+> flags its own assumptions is easier to approve with confidence.
+
 ## 2. Define the sprint goal
 
 State, in one or two sentences, the single coherent outcome this sprint delivers — a
