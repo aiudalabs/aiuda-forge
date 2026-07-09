@@ -1,0 +1,48 @@
+# Sprint-planning ceremony — fired by the native scheduler for a READY sprint when
+# the project's planning_mode is "ceremony" and the sprint hasn't been planned yet
+# (planned_at == 0). The scheduler injects the trigger payload: sprint_id, project_id,
+# sprint_goal, backlog_snapshot (JSON of the LIVE ticket store — NOT docs/backlog.yaml),
+# and plan (the doc path, docs/PLAN-<sprint_id>.md). The sprint does NOT fire until the
+# apply step below stamps planned_at.
+#
+# plan (design agent) → plan_gate (human, conversational: answer or approve or reject)
+# → apply (plan_apply: parse the doc's actions and mutate the store transactionally,
+# then stamp planned_at, which unblocks the scheduler to fire the sprint).
+id: sprint-planning
+version: 1.0.0
+steps:
+  # ── Plan — the planner reads the live backlog snapshot and writes a PLAN doc with
+  #    a sprint goal + an `actions:` block (may be empty = confirm the plan as-is).
+  - id: plan
+    type: design
+    label: Planificación del sprint
+    agent: planner
+    inputs:
+      sprint_id: $trigger.sprint_id
+      sprint_goal: $trigger.sprint_goal
+      backlog_snapshot: $trigger.backlog_snapshot
+      output: $trigger.plan   # docs/PLAN-<sprint_id>.md
+
+  # ── Gate — conversational. `answer` re-runs `plan` with the answer as input (the
+  #    persona UPDATES the doc); reject re-runs `plan` with feedback; approve advances
+  #    to apply. on_fail.goto=plan is what makes the answer verb (#22) work here.
+  - id: plan_gate
+    type: human_gate
+    inputs:
+      reason: "Revisa el plan del sprint (docs/PLAN-…md): el objetivo y las acciones propuestas (mover/partir/diferir/cancelar/editar). Responde preguntas abiertas con `answer`, aprueba para APLICAR el plan al backlog, o rechaza con feedback."
+    on_fail:
+      goto: plan
+      max: 100
+      feedback: $plan_gate.detail
+
+  # ── Apply — parse the approved plan's actions and execute them against the ticket
+  #    store transactionally (validate-all → apply-all → stamp planned_at). A malformed
+  #    or illegal plan FAILS this step with a detail naming the offending action, and
+  #    planned_at stays unset so the sprint is not fired on a bad plan.
+  - id: apply
+    type: plan_apply
+    label: Aplicar plan
+    inputs:
+      sprint_id: $trigger.sprint_id
+      project_id: $trigger.project_id
+      plan: $trigger.plan

@@ -68,11 +68,12 @@ type ControlPlane interface {
 	// "FAILED", …) so the orchestrator can advance a ticket once its run finishes.
 	RunStatus(ctx context.Context, runID string) (status string, err error)
 	// ProjectSettings returns a project's per-project execution settings
-	// (execution_unit "sprint"|"story", merge_mode "manual"|"auto") from
-	// GET /projects/{id}/settings (audit A2). The native scheduler reads it
-	// per-project each cycle so two projects can run under different modes in the
-	// same cycle. An empty projectID resolves to the default project's settings.
-	ProjectSettings(ctx context.Context, projectID string) (executionUnit, mergeMode string, err error)
+	// (execution_unit "sprint"|"story", merge_mode "manual"|"auto", planning_mode
+	// "auto"|"ceremony") from GET /projects/{id}/settings (audit A2). The native
+	// scheduler reads it per-project each cycle so two projects can run under
+	// different modes in the same cycle. An empty projectID resolves to the default
+	// project's settings.
+	ProjectSettings(ctx context.Context, projectID string) (executionUnit, mergeMode, planningMode string, err error)
 	// RunPRURL returns the pull-request URL a run opened (parsed from its pr step's
 	// detail, "pr(github): opened <url>"). Empty (with nil error) when the run has
 	// no GitHub PR yet — e.g. a local-mode pr step that only pushed a branch.

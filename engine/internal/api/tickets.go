@@ -241,6 +241,33 @@ func (s *Server) claimSprint(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"claimed": claimed})
 }
 
+// setSprintPlanningRun handles POST /sprints/{id}/planning-run. The native
+// scheduler records the sprint-planning run it started so the ceremony is
+// idempotent (it won't start a second one while this is live). Editor-scoped like
+// the other sprint mutations.
+func (s *Server) setSprintPlanningRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	projectID := r.URL.Query().Get("project_id")
+	if s.sprintDenied(w, r.Context(), id, projects.RoleEditor) {
+		return
+	}
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := s.Tickets.SetSprintPlanningRun(id, projectID, req.RunID); err != nil {
+		if errors.Is(err, tickets.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sprint_id": id, "planning_run_id": req.RunID})
+}
+
 // updateSprintStatus handles PUT /sprints/{id}/status. It advances every running
 // story in the sprint to done|failed (goal-mode completion) and, when a run_id is
 // supplied, records it on all the sprint's stories so the UI can link them.
