@@ -60,6 +60,14 @@ type Server struct {
 	// deshabilita el endpoint POST /projects/{id}/prs/{number}/resolve-conflicts.
 	Resolver        *conductor.ConflictResolver
 	GHWebhookSecret func() string
+	// PreviewsRoot is the directory the `release` step publishes static previews to;
+	// GET /previews/{project_id}/{run_id}/... serves it. Empty disables the route.
+	PreviewsRoot string
+	// PreviewSecret is the HMAC key for minting preview capability tokens (must match
+	// the AuthConfig.PreviewSecret the middleware verifies with). PreviewsBaseURL is
+	// the public origin the minted preview URL is built on ("" → root-relative).
+	PreviewSecret   []byte
+	PreviewsBaseURL string
 	linkCodes       *linkCodeStore // short-lived codes binding a channel user to an account
 	mux             *http.ServeMux
 	// exportMus serializa los exports a GitHub por proyecto (ver exportLock).
@@ -160,6 +168,15 @@ func (s *Server) routes() {
 	// §B — events.
 	m.HandleFunc("GET /runs/{id}/events", s.events)
 	m.HandleFunc("GET /ws", s.websocket)
+
+	// Static previews published by the `release` step, served under /pv/{token}/…
+	// The path-embedded preview token is the sole credential (the auth middleware
+	// validates it; a session/service token is never accepted here) — untrusted repo
+	// JS must not be able to replay a broad token. Guarded to 404 when unconfigured.
+	m.HandleFunc("GET /pv/{token}/{path...}", s.servePreview)
+	// Mint a short-lived, path-scoped preview token (session-authenticated, member-
+	// gated) so the console opens a preview without a session token in the URL.
+	m.HandleFunc("POST /projects/{id}/previews/{run}/token", s.needProjects(s.mintPreviewToken))
 
 	// §C — daemon-internal worker↔kernel.
 	m.HandleFunc("POST /runs/claim", s.claim)

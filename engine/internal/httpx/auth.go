@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"strings"
+	"time"
 )
 
 // ctxKey is the private context key type for values httpx stashes on a request.
@@ -42,6 +44,15 @@ type AuthConfig struct {
 	// Sessions validates per-user session tokens (the console's login flow).
 	// Nil disables session auth (no auth DB configured).
 	Sessions SessionValidator
+	// PreviewSecret is the HMAC key that signs/verifies preview capability tokens.
+	// A preview is served under /pv/{token}/… and authorized SOLELY by that
+	// path-embedded token — never a session or service token — because a preview
+	// runs untrusted repo JS that could otherwise replay a leaked token against the
+	// API (audit C2). The token rides in the PATH (not a query or cookie) so the
+	// browser carries it automatically on every relative subresource request; a
+	// cookie cannot, because the CSP-sandbox opaque origin drops SameSite cookies on
+	// subresources (verified empirically). Empty leaves /pv unauthorizable (401).
+	PreviewSecret []byte
 }
 
 // Enabled reports whether any auth mechanism is configured. When false the
@@ -99,6 +110,18 @@ func Auth(cfg AuthConfig, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// /pv is the preview-serving origin: authorized ONLY by the path-embedded
+		// preview token (never a session/service token), because it serves untrusted
+		// repo JS. The token in the path means subresources carry it automatically.
+		if strings.HasPrefix(r.URL.Path, "/pv/") {
+			if cfg.authorizePreview(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("WWW-Authenticate", `Bearer realm="vibeforge-preview"`)
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
 		ok, userID := cfg.authorize(r)
 		if ok {
 			// Stash the resolved user id (empty for a service-token caller) so
@@ -122,6 +145,8 @@ func (c AuthConfig) authorize(r *http.Request) (ok bool, userID string) {
 	// Browser WebSockets cannot set an Authorization header, so the WS upgrade
 	// (and only that path) may carry the token as a ?token= query param. This is
 	// the standard accepted pattern; the token is still validated identically.
+	// (/previews does NOT fall through here — it has its own preview-token path in
+	// Auth so a session/service token is never accepted by query for a preview.)
 	if tok == "" && r.URL.Path == "/ws" {
 		tok = r.URL.Query().Get("token")
 	}
@@ -139,6 +164,36 @@ func (c AuthConfig) authorize(r *http.Request) (ok bool, userID string) {
 		}
 	}
 	return false, ""
+}
+
+// PreviewTokenFromPath extracts the token segment from a /pv/{token}/… path, or ""
+// if p is not a /pv path. Exported so the serving handler resolves the same segment.
+func PreviewTokenFromPath(p string) string {
+	rest := strings.TrimPrefix(p, "/pv/")
+	if rest == p {
+		return "" // not a /pv path
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return rest[:i]
+	}
+	return rest
+}
+
+// authorizePreview reports whether the /pv/{token}/… request carries a valid,
+// unexpired preview token in its path. The token itself is the capability — it
+// encodes the one preview it authorizes, so a valid token can only ever serve its
+// own project/run (the handler re-decodes it). A session or service token is NEVER
+// accepted here: untrusted preview JS must not be able to replay a broad token.
+func (c AuthConfig) authorizePreview(r *http.Request) bool {
+	if len(c.PreviewSecret) == 0 {
+		return false // previews not configured for authorization
+	}
+	tok := PreviewTokenFromPath(r.URL.Path)
+	if tok == "" {
+		return false
+	}
+	_, _, err := VerifyPreviewToken(c.PreviewSecret, tok, time.Now())
+	return err == nil
 }
 
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header,

@@ -201,3 +201,48 @@ func mustCreate(t *testing.T, st *projects.Store, p projects.Project) {
 		t.Fatalf("create %s: %v", p.ID, err)
 	}
 }
+
+func TestReleaseConfig(t *testing.T) {
+	st := openTemp(t)
+	if _, err := st.Create(projects.Project{ID: "p1", Repo: "https://github.com/o/r"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh project defaults to the static release target, no firebase token.
+	got, err := st.Get("p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReleaseTarget != projects.ReleaseTargetStatic {
+		t.Fatalf("default release_target = %q, want %q", got.ReleaseTarget, projects.ReleaseTargetStatic)
+	}
+	if got.FirebaseToken != "" {
+		t.Fatalf("default firebase_token should be empty, got %q", got.FirebaseToken)
+	}
+
+	// Set firebase + token.
+	if err := st.SetReleaseConfig("p1", projects.ReleaseTargetFirebase, "tok-123"); err != nil {
+		t.Fatalf("SetReleaseConfig: %v", err)
+	}
+	got, _ = st.Get("p1")
+	if got.ReleaseTarget != projects.ReleaseTargetFirebase || got.FirebaseToken != "tok-123" {
+		t.Fatalf("after set: target=%q token=%q", got.ReleaseTarget, got.FirebaseToken)
+	}
+
+	// A target-only update (empty token) preserves the stored token.
+	if err := st.SetReleaseConfig("p1", projects.ReleaseTargetStatic, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.Get("p1")
+	if got.ReleaseTarget != projects.ReleaseTargetStatic || got.FirebaseToken != "tok-123" {
+		t.Fatalf("target-only update: target=%q token=%q (token should persist)", got.ReleaseTarget, got.FirebaseToken)
+	}
+
+	// Invalid target → ErrInvalid; unknown project → ErrNotFound.
+	if err := st.SetReleaseConfig("p1", "s3", ""); !errors.Is(err, projects.ErrInvalid) {
+		t.Fatalf("invalid target err = %v, want ErrInvalid", err)
+	}
+	if err := st.SetReleaseConfig("nope", projects.ReleaseTargetStatic, ""); !errors.Is(err, projects.ErrNotFound) {
+		t.Fatalf("unknown project err = %v, want ErrNotFound", err)
+	}
+}

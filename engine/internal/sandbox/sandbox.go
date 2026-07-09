@@ -46,6 +46,14 @@ type Config struct {
 	// UID runs the container as a non-root user "uid:gid" (defense in depth).
 	UID string
 
+	// ExtraEnv is injected verbatim ("KEY=VALUE") into the sandboxed process, in
+	// ADDITION to the allowlisted host env. Unlike AllowEnv (which copies values
+	// FROM the host environment by key), ExtraEnv carries values the caller supplies
+	// directly — e.g. a deploy token that must reach the build without ever being
+	// placed in the daemon's own environment or in the command string. Callers are
+	// responsible for treating these as secrets (never logging them).
+	ExtraEnv []string
+
 	// RequireDocker hard-fails (no LocalSandbox fallback) when real docker
 	// isolation is unavailable. The agent and gate run untrusted repo code, so in
 	// any non-dev deployment this MUST be set: a silent host fallback runs that
@@ -195,6 +203,11 @@ func dockerArgs(cfg Config, command string, env []string) ([]string, error) {
 	for _, kv := range FilterEnv(env, cfg.allowSet()) {
 		args = append(args, "-e", kv)
 	}
+	// Caller-supplied env (e.g. a deploy token) — passed as -e like the agent's auth,
+	// so it reaches the container without ever entering the daemon's own environment.
+	for _, kv := range cfg.ExtraEnv {
+		args = append(args, "-e", kv)
+	}
 	args = append(args, image, "sh", "-c", command)
 	return args, nil
 }
@@ -210,7 +223,7 @@ func (l *LocalSandbox) Kind() string { return "local" }
 func (l *LocalSandbox) Exec(ctx context.Context, command string) (string, int, error) {
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	cmd.Dir = l.cfg.Workdir
-	cmd.Env = FilterEnv(os.Environ(), l.cfg.allowSet()) // secrets scrubbed even locally
+	cmd.Env = append(FilterEnv(os.Environ(), l.cfg.allowSet()), l.cfg.ExtraEnv...) // secrets scrubbed; caller extras appended
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err := cmd.Run()
