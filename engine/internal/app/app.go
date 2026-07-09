@@ -6,6 +6,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log"
 	"os"
@@ -62,6 +63,10 @@ type App struct {
 	Bus      *api.Bus
 	Server   *api.Server
 	workers  int
+	// PreviewSecret is the HMAC key that mints/verifies preview capability tokens.
+	// cmd/control wires it into the auth middleware so /previews is authorized ONLY
+	// by preview-scoped tokens (never a session/service token).
+	PreviewSecret []byte
 
 	// Daily digest scheduler (standup push). digester + channels + the parsed cron
 	// are wired in Build; the loop runs from StartBackground when all three exist.
@@ -213,6 +218,7 @@ func Build(cfg Config) (*App, error) {
 	// (audit C2). Static artifacts are served by the control plane from previewsRoot;
 	// firebase deploys a Hosting preview channel. proj may be nil (config via inputs).
 	previewsRoot := resolvePreviewsRoot(cfg.WorkdirRoot)
+	previewSecret := resolvePreviewSecret()
 	releaseRunner := &release.Runner{
 		PreviewsRoot: previewsRoot,
 		BaseURL:      os.Getenv("VIBEFORGE_PUBLIC_URL"),
@@ -303,6 +309,8 @@ func Build(cfg Config) (*App, error) {
 	reg := api.NewRegistry(cfg.RegistryRoot)
 	srv := api.NewServer(st, eng, bus, reg, tix, proj, au)
 	srv.PreviewsRoot = previewsRoot // serve the release step's static previews
+	srv.PreviewSecret = previewSecret
+	srv.PreviewsBaseURL = os.Getenv("VIBEFORGE_PUBLIC_URL")
 
 	var appApprover *conductor.Approver
 	// GitHub projection (F1 pivot): mirror exported stories' state (issue/PR) into
@@ -490,9 +498,26 @@ func Build(cfg Config) (*App, error) {
 	}
 	return &App{
 		Store: st, Tickets: tix, Projects: proj, Auth: au, Engine: eng, Bus: bus, Server: srv,
-		workers: workers, approver: appApprover,
+		workers: workers, approver: appApprover, PreviewSecret: previewSecret,
 		digester: digester, digestChannels: digestChannels, digestCron: digestSchedule,
 	}, nil
+}
+
+// resolvePreviewSecret returns the HMAC key for preview capability tokens.
+// VIBEFORGE_PREVIEW_SECRET pins it (required for multi-instance deploys so tokens
+// verify across replicas); otherwise a random per-process key is generated — tokens
+// then simply stop verifying after a restart, which is fine given their ~10m TTL.
+func resolvePreviewSecret() []byte {
+	if v := os.Getenv("VIBEFORGE_PREVIEW_SECRET"); v != "" {
+		return []byte(v)
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failure is catastrophic and near-impossible; fail loud rather
+		// than sign tokens with a predictable key.
+		log.Fatalf("app: cannot generate preview-token secret: %v", err)
+	}
+	return b
 }
 
 // digestSince converts a stored last_digest_at (unix millis; 0 = never) into the

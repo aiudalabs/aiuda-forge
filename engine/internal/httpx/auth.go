@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"path"
 	"strings"
+	"time"
 )
 
 // ctxKey is the private context key type for values httpx stashes on a request.
@@ -43,6 +45,12 @@ type AuthConfig struct {
 	// Sessions validates per-user session tokens (the console's login flow).
 	// Nil disables session auth (no auth DB configured).
 	Sessions SessionValidator
+	// PreviewSecret is the HMAC key that signs/verifies preview capability tokens.
+	// /previews is authorized SOLELY by a preview token bound to the requested
+	// path — never a session or service token — because a preview runs untrusted
+	// repo JS that could otherwise replay a leaked token against the API (audit C2).
+	// Empty leaves /previews unauthorizable (401) when auth is enabled.
+	PreviewSecret []byte
 }
 
 // Enabled reports whether any auth mechanism is configured. When false the
@@ -100,6 +108,17 @@ func Auth(cfg AuthConfig, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// /previews is a special origin: authorized ONLY by a preview-scoped token
+		// (never a session/service token), because it serves untrusted repo JS.
+		if strings.HasPrefix(r.URL.Path, "/previews/") {
+			if cfg.authorizePreview(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("WWW-Authenticate", `Bearer realm="vibeforge-preview"`)
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
 		ok, userID := cfg.authorize(r)
 		if ok {
 			// Stash the resolved user id (empty for a service-token caller) so
@@ -120,11 +139,12 @@ func Auth(cfg AuthConfig, next http.Handler) http.Handler {
 // per-user identity). A failed auth returns (false, "").
 func (c AuthConfig) authorize(r *http.Request) (ok bool, userID string) {
 	tok := bearerToken(r)
-	// Browser WebSockets cannot set an Authorization header, and neither can a plain
-	// navigation/iframe to a static preview. Those two paths (and only those) may
-	// carry the token as a ?token= query param — the standard accepted pattern; the
-	// token is still validated identically.
-	if tok == "" && (r.URL.Path == "/ws" || strings.HasPrefix(r.URL.Path, "/previews/")) {
+	// Browser WebSockets cannot set an Authorization header, so the WS upgrade
+	// (and only that path) may carry the token as a ?token= query param. This is
+	// the standard accepted pattern; the token is still validated identically.
+	// (/previews does NOT fall through here — it has its own preview-token path in
+	// Auth so a session/service token is never accepted by query for a preview.)
+	if tok == "" && r.URL.Path == "/ws" {
 		tok = r.URL.Query().Get("token")
 	}
 	if tok == "" {
@@ -141,6 +161,35 @@ func (c AuthConfig) authorize(r *http.Request) (ok bool, userID string) {
 		}
 	}
 	return false, ""
+}
+
+// authorizePreview reports whether r carries a valid preview token bound to EXACTLY
+// this request's /previews/{project}/{run}/ path. The token comes from ?token= (a
+// browser navigation/iframe cannot set a header) or, as a convenience, an
+// Authorization bearer. A session or service token is NEVER accepted here — that is
+// the whole point: untrusted preview JS must not be able to replay a broad token.
+func (c AuthConfig) authorizePreview(r *http.Request) bool {
+	if len(c.PreviewSecret) == 0 {
+		return false // previews not configured for authorization
+	}
+	tok := r.URL.Query().Get("token")
+	if tok == "" {
+		tok = bearerToken(r)
+	}
+	if tok == "" {
+		return false
+	}
+	project, run, err := VerifyPreviewToken(c.PreviewSecret, tok, time.Now())
+	if err != nil {
+		return false
+	}
+	// The token authorizes one exact preview; the request path must fall under it.
+	// Clean the path FIRST (this middleware runs before the mux), so a crafted
+	// "/previews/p1/r1/../../p2/r2/" cannot ride a p1/r1 token — it cleans to
+	// /previews/p2/r2 and fails the scope check below.
+	clean := path.Clean(r.URL.Path)
+	scope := "/previews/" + project + "/" + run // no trailing slash (Clean drops it)
+	return clean == scope || strings.HasPrefix(clean, scope+"/")
 }
 
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header,

@@ -62,7 +62,12 @@ type Server struct {
 	GHWebhookSecret func() string
 	// PreviewsRoot is the directory the `release` step publishes static previews to;
 	// GET /previews/{project_id}/{run_id}/... serves it. Empty disables the route.
-	PreviewsRoot    string
+	PreviewsRoot string
+	// PreviewSecret is the HMAC key for minting preview capability tokens (must match
+	// the AuthConfig.PreviewSecret the middleware verifies with). PreviewsBaseURL is
+	// the public origin the minted preview URL is built on ("" → root-relative).
+	PreviewSecret   []byte
+	PreviewsBaseURL string
 	linkCodes       *linkCodeStore // short-lived codes binding a channel user to an account
 	mux             *http.ServeMux
 	// exportMus serializa los exports a GitHub por proyecto (ver exportLock).
@@ -168,6 +173,9 @@ func (s *Server) routes() {
 	// service token) and project-scoped in the handler; guarded to 404 when no
 	// PreviewsRoot is configured. Subtree pattern (trailing slash).
 	m.HandleFunc("GET /previews/{project}/{run}/{path...}", s.servePreview)
+	// Mint a short-lived, path-scoped preview token (session-authenticated, member-
+	// gated) so the console opens a preview without a session token in the URL.
+	m.HandleFunc("POST /projects/{id}/previews/{run}/token", s.needProjects(s.mintPreviewToken))
 
 	// §C — daemon-internal worker↔kernel.
 	m.HandleFunc("POST /runs/claim", s.claim)

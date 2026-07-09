@@ -171,7 +171,7 @@ func main() {
 	if a.Auth != nil {
 		sessions = a.Auth
 	}
-	authCfg := httpx.AuthConfig{ServiceToken: apiToken, Sessions: sessions}
+	authCfg := httpx.AuthConfig{ServiceToken: apiToken, Sessions: sessions, PreviewSecret: a.PreviewSecret}
 	authActive := apiToken != "" || userCount > 0
 
 	if authActive {

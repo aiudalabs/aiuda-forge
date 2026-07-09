@@ -334,6 +334,10 @@ func (r *Runner) previewPath(projectID, runID string) string {
 	return filepath.Join(r.PreviewsRoot, safeSeg(projectID), safeSeg(runID))
 }
 
+// previewURL is the canonical (tokenless) path to the published preview. Opening it
+// requires a short-lived preview capability token minted by the control plane
+// (POST /projects/{id}/previews/{run}/token) — the served content is untrusted repo
+// JS, so it must never ride a session/service token in its URL (audit C2 at serving).
 func (r *Runner) previewURL(projectID, runID string) string {
 	base := strings.TrimRight(r.BaseURL, "/")
 	return base + "/previews/" + safeSeg(projectID) + "/" + safeSeg(runID) + "/"

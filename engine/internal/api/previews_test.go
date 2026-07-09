@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"forge/internal/httpx"
 	"forge/internal/projects"
@@ -44,15 +46,23 @@ func preview(s *Server, ctx context.Context, proj, run, path string) *httptest.R
 }
 
 // With no projects store, enforcement is off: the handler serves files, resolves a
-// directory to its index.html, refuses a directory with no index (no listing), and
-// contains path traversal within the run dir.
+// directory to its index.html, refuses a directory with no index (no listing),
+// contains path traversal, and stamps the C2 serving headers on every response.
 func TestServePreviewServesAndContains(t *testing.T) {
 	root := t.TempDir()
 	stagePreview(t, root, "proj", "run1")
 	s := &Server{PreviewsRoot: root}
 
-	if rec := preview(s, nil, "proj", "run1", ""); rec.Code != 200 || rec.Body.String() != "<h1>preview</h1>" {
+	rec := preview(s, nil, "proj", "run1", "")
+	if rec.Code != 200 || rec.Body.String() != "<h1>preview</h1>" {
 		t.Fatalf("dir → index.html: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	// C2 serving headers: opaque-origin sandbox + no MIME sniffing.
+	if got := rec.Header().Get("Content-Security-Policy"); got != "sandbox allow-scripts allow-forms" {
+		t.Fatalf("missing/incorrect CSP: %q", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("missing nosniff: %q", got)
 	}
 	if rec := preview(s, nil, "proj", "run1", "asset.txt"); rec.Code != 200 || rec.Body.String() != "asset" {
 		t.Fatalf("file: code=%d body=%q", rec.Code, rec.Body.String())
@@ -71,32 +81,6 @@ func TestServePreviewServesAndContains(t *testing.T) {
 	}
 }
 
-// With a projects store, a non-member gets 404 (no existence leak); a member is served.
-func TestServePreviewProjectScoped(t *testing.T) {
-	root := t.TempDir()
-	stagePreview(t, root, "p1", "r1")
-	pr, err := projects.Open(filepath.Join(t.TempDir(), "projects.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pr.Close() })
-	if _, err := pr.Create(projects.Project{ID: "p1", OwnerID: "usr-owner"}); err != nil {
-		t.Fatal(err)
-	}
-	s := &Server{PreviewsRoot: root, Projects: pr}
-
-	// A stranger (valid session, not a member) → 404.
-	strangerCtx := httpx.WithUserID(context.Background(), "usr-stranger")
-	if rec := preview(s, strangerCtx, "p1", "r1", ""); rec.Code != 404 {
-		t.Fatalf("non-member should 404, got %d", rec.Code)
-	}
-	// The owner → served.
-	ownerCtx := httpx.WithUserID(context.Background(), "usr-owner")
-	if rec := preview(s, ownerCtx, "p1", "r1", ""); rec.Code != 200 {
-		t.Fatalf("owner should be served, got %d body=%q", rec.Code, rec.Body.String())
-	}
-}
-
 // fakeSessions validates a session token to a user id (a stand-in for the auth store).
 type fakeSessions map[string]string
 
@@ -107,37 +91,133 @@ func (f fakeSessions) UserIDForToken(tok string) (string, error) {
 	return "", errors.New("bad token")
 }
 
-// Behind the mandatory-auth middleware the previews route rejects an unauthenticated
-// request (401) and accepts the session token as ?token= (browser navigation cannot
-// set an Authorization header), mirroring /ws.
-func TestServePreviewAuthMiddleware(t *testing.T) {
+// Behind the mandatory-auth middleware, /previews is authorized ONLY by a preview
+// capability token scoped to the exact path — never a session or service token — and
+// serves the artifact when a valid one is presented.
+func TestPreviewAuthAcceptsOnlyPreviewToken(t *testing.T) {
 	root := t.TempDir()
 	stagePreview(t, root, "p1", "r1")
-	// Projects nil → enforcement off, so a valid session alone reaches the file.
-	s := &Server{PreviewsRoot: root, linkCodes: newLinkCodeStore(), mux: http.NewServeMux()}
+	secret := []byte("preview-hmac-secret-for-tests-0001")
+	s := &Server{PreviewsRoot: root, PreviewSecret: secret, linkCodes: newLinkCodeStore(), mux: http.NewServeMux()}
 	s.routes()
-
-	cfg := httpx.AuthConfig{Sessions: fakeSessions{"good-token": "usr-1"}}
+	cfg := httpx.AuthConfig{ServiceToken: "svc-token", Sessions: fakeSessions{"sess": "usr-1"}, PreviewSecret: secret}
 	handler := httpx.Auth(cfg, s)
 
-	// No credentials → 401.
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/previews/p1/r1/", nil))
-	if rec.Code != 401 {
-		t.Fatalf("unauthenticated preview should be 401, got %d", rec.Code)
+	get := func(url string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", url, nil))
+		return rec
 	}
 
-	// ?token= carries the session for a plain browser navigation → 200.
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/previews/p1/r1/?token=good-token", nil))
+	// No creds → 401.
+	if rec := get("/previews/p1/r1/"); rec.Code != 401 {
+		t.Fatalf("no creds should be 401, got %d", rec.Code)
+	}
+	// A SESSION token via ?token= is rejected (the whole point of the fix).
+	if rec := get("/previews/p1/r1/?token=sess"); rec.Code != 401 {
+		t.Fatalf("session token on /previews must be rejected, got %d", rec.Code)
+	}
+	// The SERVICE token via ?token= is rejected too.
+	if rec := get("/previews/p1/r1/?token=svc-token"); rec.Code != 401 {
+		t.Fatalf("service token on /previews must be rejected, got %d", rec.Code)
+	}
+	// A valid preview token → served, with the C2 headers.
+	good := httpx.MintPreviewToken(secret, "p1", "r1", 10*time.Minute, time.Now())
+	rec := get("/previews/p1/r1/?token=" + good)
 	if rec.Code != 200 || rec.Body.String() != "<h1>preview</h1>" {
-		t.Fatalf("token-authed preview should serve index, got %d body=%q", rec.Code, rec.Body.String())
+		t.Fatalf("valid preview token should serve, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Content-Security-Policy") == "" {
+		t.Fatalf("served preview missing CSP header")
+	}
+	// A token scoped to a DIFFERENT preview does not authorize this path.
+	other := httpx.MintPreviewToken(secret, "p1", "other", 10*time.Minute, time.Now())
+	if rec := get("/previews/p1/r1/?token=" + other); rec.Code != 401 {
+		t.Fatalf("cross-preview token must be rejected, got %d", rec.Code)
+	}
+	// An EXPIRED preview token → 401.
+	expired := httpx.MintPreviewToken(secret, "p1", "r1", -1*time.Minute, time.Now())
+	if rec := get("/previews/p1/r1/?token=" + expired); rec.Code != 401 {
+		t.Fatalf("expired preview token must be 401, got %d", rec.Code)
+	}
+	// A traversal that would ride the p1/r1 token into another preview is rejected at
+	// the auth layer (the path is cleaned before the scope check).
+	if rec := get("/previews/p1/r1/../../p1/other/?token=" + good); rec.Code == 200 {
+		t.Fatalf("traversal out of the token scope must not serve 200")
+	}
+}
+
+// A preview token is useless anywhere but /previews: presenting it on /runs or
+// /projects is rejected (it is not a session or service token).
+func TestPreviewTokenDoesNotAuthorizeAPI(t *testing.T) {
+	secret := []byte("preview-hmac-secret-for-tests-0002")
+	s := &Server{PreviewSecret: secret, linkCodes: newLinkCodeStore(), mux: http.NewServeMux()}
+	s.routes()
+	cfg := httpx.AuthConfig{ServiceToken: "svc-token", Sessions: fakeSessions{"sess": "usr-1"}, PreviewSecret: secret}
+	handler := httpx.Auth(cfg, s)
+
+	tok := httpx.MintPreviewToken(secret, "p1", "r1", 10*time.Minute, time.Now())
+	for _, path := range []string{"/runs", "/projects"} {
+		for _, url := range []string{path + "?token=" + tok, path} {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", url, nil)
+			if url == path { // also try it as a bearer header
+				req.Header.Set("Authorization", "Bearer "+tok)
+			}
+			handler.ServeHTTP(rec, req)
+			if rec.Code != 401 {
+				t.Fatalf("preview token must NOT authorize %s (url=%s), got %d", path, url, rec.Code)
+			}
+		}
+	}
+}
+
+// mintPreviewToken is session-authenticated and member-gated, and the token it
+// returns verifies for exactly that preview.
+func TestMintPreviewToken(t *testing.T) {
+	root := t.TempDir()
+	stagePreview(t, root, "p1", "r1")
+	pr, err := projects.Open(filepath.Join(t.TempDir(), "projects.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pr.Close() })
+	if _, err := pr.Create(projects.Project{ID: "p1", OwnerID: "usr-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	secret := []byte("preview-hmac-secret-for-tests-0003")
+	s := &Server{PreviewsRoot: root, PreviewSecret: secret, PreviewsBaseURL: "https://app.example", Projects: pr}
+
+	mint := func(uid, run string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/projects/p1/previews/"+run+"/token", nil)
+		req.SetPathValue("id", "p1")
+		req.SetPathValue("run", run)
+		req = req.WithContext(httpx.WithUserID(context.Background(), uid))
+		s.mintPreviewToken(rec, req)
+		return rec
 	}
 
-	// A bad token → 401.
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/previews/p1/r1/?token=nope", nil))
-	if rec.Code != 401 {
-		t.Fatalf("bad-token preview should be 401, got %d", rec.Code)
+	// A stranger (valid session, not a member) → 404 (no existence leak).
+	if rec := mint("usr-stranger", "r1"); rec.Code != 404 {
+		t.Fatalf("non-member mint should 404, got %d", rec.Code)
+	}
+	// A missing preview → 404 even for the owner.
+	if rec := mint("usr-owner", "does-not-exist"); rec.Code != 404 {
+		t.Fatalf("mint for missing preview should 404, got %d", rec.Code)
+	}
+	// The owner gets a token that verifies for exactly p1/r1.
+	rec := mint("usr-owner", "r1")
+	if rec.Code != 200 {
+		t.Fatalf("owner mint should 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := out["token"].(string)
+	proj, run, verr := httpx.VerifyPreviewToken(secret, tok, time.Now())
+	if verr != nil || proj != "p1" || run != "r1" {
+		t.Fatalf("minted token did not verify to p1/r1: proj=%q run=%q err=%v", proj, run, verr)
 	}
 }
