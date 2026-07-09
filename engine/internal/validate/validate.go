@@ -142,9 +142,13 @@ func checkPRD(raw []byte) error {
 // ── backlog ──────────────────────────────────────────────────────────────────────
 
 // frontendLaneRe matches the owner lanes that build user-facing screens (per the
-// scrum-master persona: react-dev / flutter-dev). A story owned by one of these that
-// builds a screen carries a screen_key — the key that lets ui-verify's art-director
-// judge it against its mockup. Missing it means that screen silently escapes visual QA.
+// scrum-master persona: react-dev / flutter-dev). Every such story MUST declare a
+// screen_key — either the screen's real key (so ui-verify's art-director can judge it
+// against its mockup) or the explicit literal "none" for a foundation story that builds
+// no screen of its own (design system, a shared primitive). Requiring the field either
+// way — instead of tolerating its absence — is what makes the visual-QA coverage
+// explicit: a frontend story is EITHER visually verified or explicitly opted out, never
+// silently skipped by omission.
 var frontendLaneRe = regexp.MustCompile(`(?i)\b(react-dev|flutter-dev)\b`)
 
 // checkBacklog lints docs/backlog.yaml against the ticket store's structural contract,
@@ -193,10 +197,12 @@ func (r *Runner) checkBacklog(raw []byte) error {
 			}
 		}
 	}
-	// Frontend stories must carry a screen_key (the anchor the art-director QA needs).
+	// Frontend stories must DECLARE a screen_key — a real key (the anchor the art-director
+	// QA binds to the mockup) or the explicit "none" for a foundation story with no screen
+	// of its own. The field being present either way is the contract; only omission fails.
 	for _, s := range bf.Stories {
 		if frontendLaneRe.MatchString(s.Owner) && strings.TrimSpace(s.ScreenKey) == "" {
-			return fmt.Errorf("frontend story %q (owner %q) has no screen_key — a screen-building story needs one so its UI can be verified against its mockup", s.ID, s.Owner)
+			return fmt.Errorf("frontend story %q (owner %q) must declare screen_key: either the screen's key (role.screen form, e.g. customer.login) or \"none\" for a foundation story that builds no screen of its own", s.ID, s.Owner)
 		}
 	}
 	return nil

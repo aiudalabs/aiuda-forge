@@ -200,6 +200,9 @@ jobs:
           fi
           # Sanea: solo un slug de pantalla (sin `/` ni traversal) que ademas tenga mockup.
           if ! printf '%s' "$key" | grep -qE '^[A-Za-z0-9._-]+$'; then key=""; fi
+          # "none" es el marcador explicito de story de fundacion (sin pantalla
+          # propia): se trata como AUSENCIA -> art-director skip limpio.
+          if [ "$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')" = "none" ]; then key=""; fi
           if [ -n "$key" ] && [ -f "docs/mockups/${key}.html" ]; then
             echo "key=$key" >> "$GITHUB_OUTPUT"
             echo "Art-director activo para la pantalla '$key'."

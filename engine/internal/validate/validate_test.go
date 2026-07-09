@@ -96,6 +96,16 @@ func TestCheckBacklog(t *testing.T) {
 		t.Fatalf("valid backlog rejected: %v", err)
 	}
 
+	// A frontend foundation story with the explicit `screen_key: none` opt-out is legal
+	// (it declares the field, it just builds no screen of its own).
+	foundation := `stories:
+  - {id: S1, title: Design system, owner: react-dev, screen_key: none}
+  - {id: S2, title: Login, owner: flutter-dev, screen_key: passenger.login}
+`
+	if err := r.checkBacklog([]byte(foundation)); err != nil {
+		t.Errorf("frontend story with screen_key: none must pass: %v", err)
+	}
+
 	cases := []struct {
 		name, doc, want string
 	}{

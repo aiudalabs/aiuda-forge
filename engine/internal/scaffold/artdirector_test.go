@@ -50,6 +50,11 @@ func TestArtDirectorStepPresentAndGated(t *testing.T) {
 			if !strings.Contains(c, "steps.artdir.outputs.key != ''") {
 				t.Errorf("%s: art-director steps must condition on the resolved screen_key", stack)
 			}
+			// The explicit "none" foundation marker is treated as absence → the
+			// art-director skips it cleanly (the resolve step blanks a "none" key).
+			if !strings.Contains(c, `= "none" ]; then key=""`) {
+				t.Errorf("%s: the resolve step must treat screen_key \"none\" as no-screen (skip)", stack)
+			}
 			// Gated by the flag (on) — the resolve step reads `!= 'off'`.
 			if !strings.Contains(c, "'on' != 'off'") {
 				t.Errorf("%s: with art_director=on the step guard should read 'on' != 'off'", stack)

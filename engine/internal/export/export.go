@@ -216,12 +216,26 @@ func SpecSection(spec string) string {
 	return "## Spec (dev-ready)\n\n" + spec + "\n\n"
 }
 
+// HasScreen reports whether a story's screen_key denotes a REAL screen with a mockup to
+// bind. An empty key means a non-frontend story; the literal "none" is the EXPLICIT
+// frontend-foundation marker (a design-system / shared-primitive story that builds no
+// screen of its own). Both mean "no screen to visually verify", so every screen_key
+// consumer treats them identically — the backlog contract REQUIRES a frontend story to
+// declare one or the other, so a missing key is a lint failure upstream (validate), not
+// a silent skip here.
+func HasScreen(screenKey string) bool {
+	k := strings.ToLower(strings.TrimSpace(screenKey))
+	return k != "" && k != "none"
+}
+
 // VisualSpecSection renders the "## Visual spec" block for a frontend story: a raw
 // link to its mockup + the UI_SCREENS extract for that screen + the explicit
-// instruction that the mockup is the source of truth for the look. "" when there
-// is no screen_key (non-screen story) so backend stories never get it.
+// instruction that the mockup is the source of truth for the look. "" when there is no
+// real screen (a non-screen story, or the explicit "none" foundation marker) so backend
+// and foundation stories never get it — and the art-director QA that reads this section
+// from the issue therefore skips them cleanly.
 func VisualSpecSection(screenKey, mockupURL, uiExtract string) string {
-	if strings.TrimSpace(screenKey) == "" {
+	if !HasScreen(screenKey) {
 		return ""
 	}
 	var b strings.Builder

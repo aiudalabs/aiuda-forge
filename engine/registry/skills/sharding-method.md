@@ -11,7 +11,10 @@ Walk the architecture document's module list. For each module:
 1. Is there a data model change? → one migration/schema story.
 2. Is there a service/API? → one story per endpoint group (CRUD for one entity = one story).
 3. Is there a background job? → one story per job.
-4. Is there frontend? → one story per screen or component group.
+4. Is there frontend? → one story per screen or component group. A per-screen story
+   carries its `screen_key` (`role.screen`); a component-group / design-system foundation
+   story that builds no screen of its own carries `screen_key: none` (the explicit opt-out
+   — every frontend story declares the field, real key or `none`).
 5. Is there glue (integration, auth middleware, event bus)? → one story per integration point.
 
 Avoid mixing layers in one story (e.g. "add DB table AND build the API" → split into two).
