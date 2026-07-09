@@ -373,7 +373,14 @@ func (s *Server) awaitingRetroSprints(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sprintTelemetry(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	projectID := r.URL.Query().Get("project_id")
-	if projectID != "" && s.crossTenantDenied(w, r.Context(), projectID, map[string]any{}) {
+	// Telemetry carries operator data (gate feedback text, spend), so it is scoped like
+	// every other per-project read (C1): a USER session must name a project it belongs
+	// to — an empty or non-member project_id is denied (empty body, no existence leak)
+	// BEFORE the cross-project aggregation runs. The service token (uid-less context,
+	// e.g. the native scheduler) is unrestricted. This must run UNCONDITIONALLY — a bare
+	// `GET /sprints/{id}/telemetry` with no project_id would otherwise aggregate every
+	// tenant's runs matching that sprint id.
+	if s.crossTenantDenied(w, r.Context(), projectID, map[string]any{}) {
 		return
 	}
 	agg := s.telemetryAggregator()
