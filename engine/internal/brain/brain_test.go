@@ -49,9 +49,12 @@ func (o *fakeOps) Resume()                                   { o.mu.Lock(); o.pa
 func (o *fakeOps) ListRuns(string) ([]map[string]any, error) { return nil, nil }
 func (o *fakeOps) GetRun(string) (map[string]any, error)     { return map[string]any{}, nil }
 func (o *fakeOps) CancelRun(string) error                    { return nil }
-func (o *fakeOps) RetryRun(string) error                     { return nil }
-func (o *fakeOps) RerunStep(string, string, string) error    { return nil }
-func (o *fakeOps) RequeueRun(string) (int, error)            { return 0, nil }
+func (o *fakeOps) GetSprintTelemetry(_, sprintID string) (string, error) {
+	return `{"sprint_id":"` + sprintID + `"}`, nil
+}
+func (o *fakeOps) RetryRun(string) error                  { return nil }
+func (o *fakeOps) RerunStep(string, string, string) error { return nil }
+func (o *fakeOps) RequeueRun(string) (int, error)         { return 0, nil }
 func (o *fakeOps) StartRun(wf string, _ map[string]any) (string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -62,7 +65,7 @@ func (o *fakeOps) ApproveStep(string, string) error            { return nil }
 func (o *fakeOps) RejectStep(string, string, string) error     { return nil }
 func (o *fakeOps) AnswerStep(string, string, string) error     { return nil }
 func (o *fakeOps) Metrics(string) (map[string]any, error)      { return map[string]any{}, nil }
-func (o *fakeOps) Digest(string) (string, error)              { return "🗓️ Standup", nil }
+func (o *fakeOps) Digest(string) (string, error)               { return "🗓️ Standup", nil }
 func (o *fakeOps) ListRegistry(string) ([]string, error)       { return nil, nil }
 func (o *fakeOps) ReadRegistry(string, string) (string, error) { return "", nil }
 func (o *fakeOps) WriteRegistry(string, string, string) error  { return nil }

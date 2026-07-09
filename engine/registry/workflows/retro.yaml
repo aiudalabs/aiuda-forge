@@ -1,0 +1,52 @@
+# Sprint-retrospective ceremony — fired by the native scheduler for a REVIEWED sprint
+# (reviewed_at != 0) when the project's retro_mode is "ceremony" and the sprint hasn't
+# been retro'd yet (retro_at == 0). Order review(N-1) → retro(N-1) → planning(N) →
+# fire(N). The scheduler injects the trigger payload: sprint_id, project_id, telemetry
+# (bounded JSON of the sprint's runs), and retro (the doc path, docs/RETRO-<id>.md). The
+# project's next sprint does NOT advance until the apply step below stamps retro_at.
+#
+# analyze (retro-analyst reads telemetry → proposals) → retro_gate (human: answer|approve|
+# reject) → apply (registry_apply: validate + write the approved method edits to the
+# registry, guardrailed, then stamp retro_at). This is the method's self-improvement loop.
+id: retro
+version: 1.0.0
+steps:
+  # ── Analyze — the retro-analyst reads the sprint TELEMETRY and writes a RETRO doc:
+  #    what worked / what didn't (evidence-cited) / a `proposals:` block of concrete
+  #    method edits (may be empty = the method held up). Loops back here on reject/answer.
+  - id: analyze
+    type: design
+    label: Retrospectiva
+    agent: retro-analyst
+    inputs:
+      sprint_id: $trigger.sprint_id
+      telemetry: $trigger.telemetry
+      output: $trigger.retro   # docs/RETRO-<sprint_id>.md
+
+  # ── Gate — conversational. `answer` re-runs analyze with the answer; reject re-runs it
+  #    with feedback (both loop back to analyze); approve advances to apply. The human is
+  #    approving METHOD EDITS — they take effect on the next sprint.
+  - id: retro_gate
+    type: human_gate
+    inputs:
+      reason: "Revisa la retro (docs/RETRO-…md): las causas identificadas y las propuestas de edición al método. Las propuestas APROBADAS EDITARÁN el método (personas/skills/workflows) y regirán el sprint siguiente. Responde preguntas abiertas con `answer`, aprueba para APLICAR, o rechaza con feedback."
+    on_fail:
+      goto: analyze
+      max: 20
+      feedback: $retro_gate.detail
+
+  # ── Apply — deterministic (registry_apply). Parse the approved proposals and apply
+  #    each by the SAME validate-before-write path the registry uses (a proposal that
+  #    doesn't parse = the whole apply aborts naming it, atomic like plan_apply). Only
+  #    registry/{agents,skills,workflows}/ may be touched; the retro's own method
+  #    (retro-analyst / retro-method / this workflow) is rejected. Each applied edit emits
+  #    an auditable event. On success stamps retro_at. An EMPTY proposals block stamps
+  #    retro_at and writes nothing — a retro that found no method problem still completes
+  #    (the deterministic equivalent of skip_if_empty for a step that must record done).
+  - id: apply
+    type: registry_apply
+    label: Aplicar método
+    inputs:
+      sprint_id: $trigger.sprint_id
+      project_id: $trigger.project_id
+      retro: $trigger.retro

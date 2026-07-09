@@ -25,6 +25,10 @@ type fakeStoryProvider struct {
 	sprintReviewed  map[string]int64  // sprint id → reviewed_at (0 = not reviewed)
 	sprintReviewRun map[string]string // sprint id → the recorded review run id
 	reviewRunCalls  int               // how many times SetSprintReviewRun was called
+	// Sprint-retrospective ceremony state (per sprint id).
+	sprintRetroed  map[string]int64  // sprint id → retro_at (0 = not retro'd)
+	sprintRetroRun map[string]string // sprint id → the recorded retro run id
+	retroRunCalls  int               // how many times SetSprintRetroRun was called
 }
 
 type fakeStory struct {
@@ -49,6 +53,8 @@ func newFakeProvider(stories ...*fakeStory) *fakeStoryProvider {
 		sprintPlanningRun: map[string]string{},
 		sprintReviewed:    map[string]int64{},
 		sprintReviewRun:   map[string]string{},
+		sprintRetroed:     map[string]int64{},
+		sprintRetroRun:    map[string]string{},
 	}
 	for _, s := range stories {
 		p.stories[s.id] = s
@@ -417,6 +423,65 @@ func (p *fakeStoryProvider) markSprintReviewed(sprintID string, ts int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sprintReviewed[sprintID] = ts
+}
+
+// SprintsAwaitingRetro returns the fake's reviewed sprints (reviewed_at != 0) whose
+// retro_at is still 0 — the global retro-sweep source, in insertion order.
+func (p *fakeStoryProvider) SprintsAwaitingRetro(_ context.Context) ([]NativeSprint, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var sprintOrder []string
+	seen := map[string]bool{}
+	proj := map[string]string{}
+	for _, id := range p.order {
+		s := p.stories[id]
+		if s.sprintID == "" {
+			continue
+		}
+		if !seen[s.sprintID] {
+			seen[s.sprintID] = true
+			sprintOrder = append(sprintOrder, s.sprintID)
+			proj[s.sprintID] = s.projectID
+		}
+	}
+	var out []NativeSprint
+	for _, sid := range sprintOrder {
+		if p.sprintReviewed[sid] != 0 && p.sprintRetroed[sid] == 0 {
+			out = append(out, NativeSprint{
+				ID:         sid,
+				Name:       sid,
+				ProjectID:  proj[sid],
+				ReviewedAt: p.sprintReviewed[sid],
+				RetroAt:    p.sprintRetroed[sid],
+				RetroRunID: p.sprintRetroRun[sid],
+			})
+		}
+	}
+	return out, nil
+}
+
+// SprintTelemetry returns a canned telemetry JSON for the sprint (enough for the
+// scheduler to inject into a retro run's payload).
+func (p *fakeStoryProvider) SprintTelemetry(_ context.Context, sprintID, _ string) (string, error) {
+	return `{"sprint_id":"` + sprintID + `","runs":[],"gates":[],"stories":{"total":0}}`, nil
+}
+
+// SetSprintRetroRun records the retro run id for a sprint (the persisted idempotency
+// reference) and counts the calls so a test can assert idempotency.
+func (p *fakeStoryProvider) SetSprintRetroRun(_ context.Context, sprintID, _, runID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sprintRetroRun[sprintID] = runID
+	p.retroRunCalls++
+	return nil
+}
+
+// markSprintRetroed simulates registry_apply stamping retro_at, unblocking the project's
+// next sprint.
+func (p *fakeStoryProvider) markSprintRetroed(sprintID string, ts int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sprintRetroed[sprintID] = ts
 }
 
 // SprintStories returns the sprint's stories in insertion order (good enough for

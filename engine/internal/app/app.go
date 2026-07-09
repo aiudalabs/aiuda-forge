@@ -27,6 +27,7 @@ import (
 	"forge/internal/digest"
 	"forge/internal/gate"
 	"forge/internal/github"
+	"forge/internal/method"
 	"forge/internal/pr"
 	"forge/internal/projects"
 	"forge/internal/release"
@@ -261,6 +262,10 @@ func Build(cfg Config) (*App, error) {
 		// review_close — the sprint-review ceremony's apply step: stamp the reviewed
 		// sprint's reviewed_at and record the acceptance decision as a run event.
 		eng.Register("review_close", &tickets.ReviewCloseRunner{Store: tix})
+		// registry_apply — the retrospective's apply step: validate + write the approved
+		// method proposals to registry/{agents,skills,workflows}/ (guardrailed), then
+		// stamp retro_at. The ONLY place the auto-improvement loop mutates the method.
+		eng.Register("registry_apply", &method.ApplyRunner{Tickets: tix, RegistryDir: cfg.RegistryRoot, Engine: eng})
 	}
 
 	// Project store — optional. When ProjectsDB is set, open the store and pass
@@ -474,6 +479,19 @@ func Build(cfg Config) (*App, error) {
 		}
 		ops := brain.EngineOps{Engine: eng, Store: st, Tickets: tix, RegistryDir: cfg.RegistryRoot, Digester: digester}
 		if proj != nil {
+			// Sprint-telemetry spend (project → owner → workspace → cost_events), same
+			// resolution the digest uses — so get_sprint_telemetry reports real cost.
+			ops.Spend = func(projectID string, taskIDs []string) (float64, error) {
+				p, err := proj.Get(projectID)
+				if err != nil || p.OwnerID == "" {
+					return 0, nil
+				}
+				ws, err := bill.WorkspaceForOwner(p.OwnerID)
+				if err != nil {
+					return 0, nil
+				}
+				return bill.CostForTasks(ws.ID, taskIDs)
+			}
 			ops.ProjectInfo = func(projectID string) (string, time.Time) {
 				p, err := proj.Get(projectID)
 				if err != nil {

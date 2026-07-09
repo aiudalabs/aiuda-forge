@@ -165,6 +165,39 @@ func (s *Store) SpendSince(workspaceID string, since int64) (float64, error) {
 	return total, nil
 }
 
+// CostForTasks returns the total real token cost (USD) charged to a workspace for the
+// given task ids — the per-sprint spend the retrospective telemetry sums (the sprint's
+// runs' tasks). An empty task set or no matching events returns 0. Chunked so a very
+// large sprint does not exceed SQLite's parameter limit.
+func (s *Store) CostForTasks(workspaceID string, taskIDs []string) (float64, error) {
+	var total float64
+	const chunk = 400
+	for start := 0; start < len(taskIDs); start += chunk {
+		end := start + chunk
+		if end > len(taskIDs) {
+			end = len(taskIDs)
+		}
+		ids := taskIDs[start:end]
+		args := make([]any, 0, len(ids)+1)
+		args = append(args, workspaceID)
+		ph := make([]byte, 0, len(ids)*2)
+		for i := range ids {
+			if i > 0 {
+				ph = append(ph, ',')
+			}
+			ph = append(ph, '?')
+			args = append(args, ids[i])
+		}
+		var sum float64
+		q := `SELECT COALESCE(SUM(cost_usd), 0) FROM cost_events WHERE workspace_id=? AND task_id IN (` + string(ph) + `)`
+		if err := s.db.QueryRow(q, args...).Scan(&sum); err != nil {
+			return 0, err
+		}
+		total += sum
+	}
+	return total, nil
+}
+
 func b2i(b bool) int {
 	if b {
 		return 1

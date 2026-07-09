@@ -219,3 +219,55 @@ func TestReviewCloseRunnerRegistered(t *testing.T) {
 		t.Fatalf("expected the review_close runner's own failure, got %q", last.Error)
 	}
 }
+
+// TestRegistryApplyRunnerRegistered proves app.Build wires the `registry_apply` step
+// runner (the retro ceremony's apply step): a run reaches a terminal state via the
+// runner's own validation ("missing sprint_id"), not the executor's "no runner for step
+// type".
+func TestRegistryApplyRunnerRegistered(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	dir := t.TempDir()
+	wfDir := filepath.Join(dir, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := "id: ra\nversion: 1.0.0\nsteps:\n  - id: apply\n    type: registry_apply\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "ra.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := Build(Config{
+		DBPath:       filepath.Join(dir, "control.db"),
+		TicketsDB:    filepath.Join(dir, "tickets.db"), // enables the tickets step runners
+		RegistryRoot: dir,
+		WorkdirRoot:  filepath.Join(dir, "runs"),
+		EngineMode:   "echo",
+		Backend:      agent.FakeBackend{Reply: "ok"},
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer a.Close()
+
+	runID, err := a.Engine.StartRun("ra", map[string]any{}) // no sprint_id → runner fails cleanly
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	status, err := a.Engine.RunToCompletion(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if status != store.StatusFailed {
+		t.Fatalf("run status = %s, want failed (no sprint_id)", status)
+	}
+	tasks, _ := a.Store.TasksForRun(runID)
+	if len(tasks) == 0 {
+		t.Fatal("no tasks recorded")
+	}
+	last := tasks[len(tasks)-1]
+	if strings.Contains(last.Error, "no runner for step type") {
+		t.Fatalf("registry_apply runner not registered: %q", last.Error)
+	}
+	if !strings.Contains(last.Error, "sprint_id") {
+		t.Fatalf("expected the registry_apply runner's own failure, got %q", last.Error)
+	}
+}

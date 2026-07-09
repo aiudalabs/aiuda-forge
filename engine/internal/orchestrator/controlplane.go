@@ -123,32 +123,33 @@ func (c *cpClient) RunStatus(ctx context.Context, runID string) (string, error) 
 // Empty/missing values are returned as "" so the caller applies its own default.
 // An empty projectID targets the default project so legacy single-project flows
 // still resolve a settings record.
-func (c *cpClient) ProjectSettings(ctx context.Context, projectID string) (executionUnit, mergeMode, planningMode, reviewMode string, err error) {
+func (c *cpClient) ProjectSettings(ctx context.Context, projectID string) (executionUnit, mergeMode, planningMode, reviewMode, retroMode string, err error) {
 	if projectID == "" {
 		projectID = "default"
 	}
 	req, err := c.authReq(ctx, http.MethodGet, c.baseURL+"/projects/"+projectID+"/settings", nil)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("build request: %w", err)
+		return "", "", "", "", "", fmt.Errorf("build request: %w", err)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("get /projects/%s/settings: %w", projectID, err)
+		return "", "", "", "", "", fmt.Errorf("get /projects/%s/settings: %w", projectID, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return "", "", "", "", fmt.Errorf("get /projects/%s/settings: status %d", projectID, resp.StatusCode)
+		return "", "", "", "", "", fmt.Errorf("get /projects/%s/settings: status %d", projectID, resp.StatusCode)
 	}
 	var s struct {
 		ExecutionUnit string `json:"execution_unit"`
 		MergeMode     string `json:"merge_mode"`
 		PlanningMode  string `json:"planning_mode"`
 		ReviewMode    string `json:"review_mode"`
+		RetroMode     string `json:"retro_mode"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
-		return "", "", "", "", fmt.Errorf("decode /projects/%s/settings: %w", projectID, err)
+		return "", "", "", "", "", fmt.Errorf("decode /projects/%s/settings: %w", projectID, err)
 	}
-	return s.ExecutionUnit, s.MergeMode, s.PlanningMode, s.ReviewMode, nil
+	return s.ExecutionUnit, s.MergeMode, s.PlanningMode, s.ReviewMode, s.RetroMode, nil
 }
 
 // Entitlement GETs /projects/{id}/entitlement — the billing budget gate. A non-200
