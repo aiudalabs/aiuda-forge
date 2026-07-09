@@ -66,6 +66,10 @@ func (s *Server) scaffoldGitHub(w http.ResponseWriter, r *http.Request) {
 		"project_name": p.Name,
 		"stack":        req.Stack,
 		"language":     "es",
+		// art_director gates the ui-verify visual-acceptance step (default on). A
+		// project can turn it off (req.Vars below) to measure its cost/value. The
+		// template's `if` reads `!= 'off'`, so on/absent both keep it on.
+		"art_director": "on",
 	}
 	if s.Tickets != nil {
 		if stories, err := s.Tickets.ListStoriesByProject(id); err == nil {

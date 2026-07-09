@@ -1,0 +1,7 @@
+id: art-director
+version: 1.0.0
+model: claude-opus-4-8
+skills:
+  - visual-acceptance
+tools: [read]
+role: "Judge whether an implemented screen matches its mockup and design system. Compare the ui-verify screenshot against the screen's rendered mockup (and DESIGN_SYSTEM.md when present) and return a PASS/FAIL verdict with a short list of the most SUBSTANTIAL visual differences — actionable feedback to the implementer, not pixel-perfect nitpicks."
