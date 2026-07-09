@@ -4417,3 +4417,82 @@ main:has(.studio-shell) > .studio-shell {
 
 /* Drawer de fase: reusa .drawer/.db; el panel del Studio (PhasePanel) va dentro. */
 .flow-phase-drawer .db { padding-top: 4px; }
+
+/* ══ Vista CICLO de /flow — diagrama del ciclo Scrum portado del doc SDLC-map ══ */
+/* Tema PROPIO del componente: la paleta Aiuda del documento vive como CSS vars
+   LOCALES (no el theme de la consola), así el diagrama se ve igual en light/dark. */
+.cyc {
+  --cyc-orange: #e8440a;
+  --cyc-orange-soft: #fdede5;
+  --cyc-blue: #1660c9;
+  --cyc-blue-soft: #e8f0fd;
+  --cyc-amber: #b45309;
+  --cyc-fail: #b3261e;
+  --cyc-ink: #141310;
+  --cyc-ink2: #57534a;
+  --cyc-white: #ffffff;
+  --cyc-card: #ffffff;
+  --cyc-line: #e6e1d8;
+}
+/* El canvas del ciclo hace SCROLL (no pan/zoom): el SVG escala por viewBox. */
+.cyc-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 62px 16px 20px;
+}
+.cyc-card {
+  background: var(--cyc-card);
+  border: 1px solid var(--cyc-line);
+  border-radius: 14px;
+  padding: 14px 8px;
+  width: 100%;
+  max-width: 1080px;
+}
+.cyc-svg {
+  display: block;
+  width: 100%;
+  min-width: 680px;
+  height: auto;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+/* colores hardcodeados → CSS vars mapeadas (fills de texto + marcadores) */
+.cyc .f-orange { fill: var(--cyc-orange); }
+.cyc .f-blue { fill: var(--cyc-blue); }
+.cyc .f-ink { fill: var(--cyc-ink); }
+.cyc .f-ink2 { fill: var(--cyc-ink2); }
+.cyc .f-amber { fill: var(--cyc-amber); }
+.cyc .mk-o { fill: var(--cyc-orange); }
+.cyc .mk-b { fill: var(--cyc-blue); }
+/* flechas del diagrama (spine naranja / loop azul-punteado) — estáticas */
+.cyc .ar-o { stroke: var(--cyc-orange); stroke-width: 2.5; fill: none; }
+.cyc .ar-o-thick { stroke: var(--cyc-orange); stroke-width: 3; fill: none; }
+.cyc .ar-o-thin { stroke: var(--cyc-orange); stroke-width: 2; fill: none; }
+.cyc .ar-b { stroke: var(--cyc-blue); stroke-width: 2.5; fill: none; stroke-dasharray: 6 4; }
+.cyc .ar-b-plain { stroke: var(--cyc-blue); stroke-width: 2; fill: none; stroke-dasharray: 4 4; }
+.cyc .cyc-daily { stroke: var(--cyc-blue); stroke-width: 2.5; fill: none; stroke-dasharray: 6 4; }
+.cyc .leg-o { stroke: var(--cyc-orange); stroke-width: 3; }
+.cyc .leg-b { stroke: var(--cyc-blue); stroke-width: 3; stroke-dasharray: 6 4; }
+/* estaciones interactivas: cursor + realce al hover (sin transform) */
+.cyc .cyc-station { cursor: pointer; }
+.cyc .cyc-station:hover .cyc-shape { filter: brightness(0.96); }
+.cyc .cyc-line { transition: 0.12s ease; }
+.cyc .cyc-line:hover { text-decoration: underline; }
+.cyc .cyc-line-sel { font-weight: 800; }
+/* selección: glow suave por filter (NO transform: evita el bug de containing block) */
+.cyc .cyc-sel { filter: drop-shadow(0 0 3px var(--cyc-orange)); }
+/* EN CURSO: marcha de hormigas sobre el stroke — dash-offset, sin transform */
+.cyc .cyc-run { animation: cyc-march 0.9s linear infinite; }
+@keyframes cyc-march { to { stroke-dashoffset: -20; } }
+/* gate esperando al humano / fase corriendo: pulso de opacidad (sin transform) */
+.cyc .cyc-await,
+.cyc .cyc-pulse { animation: cyc-pulse 1.4s ease-in-out infinite; }
+@keyframes cyc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .cyc .cyc-run,
+  .cyc .cyc-await,
+  .cyc .cyc-pulse { animation: none; }
+}
