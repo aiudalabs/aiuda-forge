@@ -28,10 +28,18 @@ provisioning_lint:
 # stack DATA under .fluxo/verify/e2e/ — the generic orchestrator only runs them.
 e2e:
   runner: firebase-emulator           # authenticated-client-context flow vs the real emulator suite
-  # setup_cmd installs the verify + functions toolchains. In CI the baked image
-  # (fluxo-backend-fb, §3) preinstalls firebase-tools + emulators; this covers the
-  # node deps the flow/functions import. Absent on a baked image, it is a no-op cost.
-  setup_cmd: "cd .fluxo/verify/e2e && npm install --no-audit --no-fund && cd - >/dev/null && cd functions && npm install --no-audit --no-fund"
+  # ci_setup: what the generic e2e-verify workflow must set up on the runner BEFORE boot
+  # (it ships neither firebase-tools nor a JDK; the baked image, §3, will). Read as DATA by
+  # _common/e2e-verify.yml — the firebase-specific values (the cache path, the CLI install
+  # in setup_cmd) live HERE, where stack vocabulary is allowed (§1-bis).
+  ci_setup:
+    node: "20"                        # firebase-tools runtime
+    java: "21"                        # the Firestore/Auth emulators are JVM processes
+    cache_path: ~/.cache/firebase/emulators
+  # setup_cmd installs the CLI (firebase-tools) + the Firestore emulator jar, then the
+  # verify + functions node deps. On a baked image (§3) the CLI is preinstalled; the
+  # global install is then a fast no-op. Java + Node themselves come from ci_setup above.
+  setup_cmd: "npm install -g firebase-tools && firebase setup:emulators:firestore && cd .fluxo/verify/e2e && npm install --no-audit --no-fund && cd - >/dev/null && cd functions && npm install --no-audit --no-fund"
   # seed = WORLD STATE ONLY (providers, availability). NEVER users/{uid} — that is what
   # the signup flow creates at runtime; seeding it would hide bug #7.
   seed_cmd: "node .fluxo/verify/e2e/seed.mjs"

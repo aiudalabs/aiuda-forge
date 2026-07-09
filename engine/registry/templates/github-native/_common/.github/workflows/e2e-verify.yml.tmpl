@@ -53,6 +53,46 @@ jobs:
         if: steps.cfg.outputs.present == 'true'
         run: python -m pip install --quiet pyyaml
 
+      # ── E2E backend toolchain (DATA-driven, §1-bis) ─────────────────────────────
+      # e2e_verify.py boots the contract's `backend.boot`, which for many stacks needs a
+      # language runtime (Node) and/or a JDK (lots of local emulators are JVM processes)
+      # that the runner does NOT ship. Naming any framework here would leak §1-bis, so the
+      # workflow reads WHAT to install from the contract's `e2e.ci_setup` DATA and sets it
+      # up generically. A stack that declares no ci_setup gets nothing (baked image / no
+      # need). The actual install command (the CLI itself) lives in the contract's
+      # `e2e.setup_cmd`, run by the step below — that is where stack vocabulary belongs.
+      - name: Read CI toolchain from contract
+        id: tc
+        if: steps.cfg.outputs.present == 'true'
+        run: |
+          Y=.fluxo/verify/stack.verify.yaml
+          get() { python -c "import yaml;d=yaml.safe_load(open('$Y')) or {};print(((d.get('e2e') or {}).get('ci_setup') or {}).get('$1',''))"; }
+          {
+            echo "node=$(get node)"
+            echo "java=$(get java)"
+            echo "cache_path=$(get cache_path)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node (contract runtime)
+        if: steps.cfg.outputs.present == 'true' && steps.tc.outputs.node != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.tc.outputs.node }}
+
+      - name: Set up Java (contract runtime — many local emulators are JVM)
+        if: steps.cfg.outputs.present == 'true' && steps.tc.outputs.java != ''
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.tc.outputs.java }}
+
+      - name: Cache emulator binaries (path from contract)
+        if: steps.cfg.outputs.present == 'true' && steps.tc.outputs.cache_path != ''
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.tc.outputs.cache_path }}
+          key: e2e-emulators-${{ runner.os }}-${{ hashFiles('.fluxo/verify/stack.verify.yaml') }}
+
       # The stack-specific toolchain (backend emulator, app runner, browser) is installed
       # by a command the CONTRACT declares — kept out of this file to honor §1-bis. Absent
       # setup_cmd = the orchestrator assumes tooling is preinstalled (e.g. a baked image, S4).
