@@ -24,6 +24,7 @@ import {
 import { useT } from "@/lib/i18n";
 import { useActiveProject } from "@/lib/activeProject";
 import type { RegistryKind } from "@/lib/types";
+import { designAgentIds } from "./designAgents";
 
 // Register only the YAML language to keep the bundle minimal.
 SyntaxHighlighter.registerLanguage("yaml", yaml);
@@ -49,13 +50,13 @@ export function RegistryView() {
 
   const isTemplates = tab === "templates";
   const { data: listData, isLoading, isError } = useRegistryList(isTemplates ? "agents" : tab);
-  // Solo personas de DISEÑO: la ejecución vive en GitHub (.github/agents del
-  // repo scaffoldeado) — editar aquí un dev/reviewer legacy no afecta nada.
-  const DESIGN_AGENTS = new Set([
-    "analyst", "pm", "architect", "designer", "ux-designer", "scrum-master", "po", "product-owner",
-  ]);
+  // Se muestran los agentes de MÉTODO (diseño + ceremonias, que el control/conductor corre
+  // desde el registry) y se ocultan los lanes de EJECUCIÓN (código/review/verify), que viven
+  // en .github/agents del repo scaffoldeado y correrían allá — editar su copia acá no cambia
+  // nada vivo. La exclusión se DERIVA (denylist por familia de lane), no se enumera a mano:
+  // ver ./designAgents.ts (por qué exclusión y no allowlist).
   const allIds = listData?.ids ?? [];
-  const ids = tab === "agents" ? allIds.filter((id) => DESIGN_AGENTS.has(id)) : allIds;
+  const ids = tab === "agents" ? designAgentIds(allIds) : allIds;
 
   function openNew() {
     if (tab === "templates") return;
