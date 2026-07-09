@@ -118,6 +118,22 @@ type StoryProvider interface {
 	// SetSprintReviewRun persists the review run the scheduler started for a sprint —
 	// the idempotency reference (twin of SetSprintPlanningRun) that prevents a second.
 	SetSprintReviewRun(ctx context.Context, sprintID, projectID, runID string) error
+
+	// ---- Sprint-retrospective ceremony --------------------------------------
+
+	// SprintsAwaitingRetro returns every sprint that has been reviewed (reviewed_at != 0)
+	// but not yet retrospected (retro_at == 0), across ALL projects — the scheduler
+	// filters to retro-ceremony projects. Gating on reviewed_at enforces the order
+	// review(N) → retro(N). Each carries retro_at + retro_run_id for idempotency.
+	SprintsAwaitingRetro(ctx context.Context) ([]NativeSprint, error)
+	// SprintTelemetry returns the bounded JSON telemetry of ONE sprint's runs (retries,
+	// stalls, durations, spend, gate decisions with text, plan actions, review decision,
+	// story outcomes) — the evidence the retro-analyst reasons over. The scheduler
+	// injects it into the retro run's payload. Same aggregation the Brain tool exposes.
+	SprintTelemetry(ctx context.Context, sprintID, projectID string) (string, error)
+	// SetSprintRetroRun persists the retro run the scheduler started for a sprint — the
+	// idempotency reference (twin of SetSprintReviewRun) that prevents a second.
+	SetSprintRetroRun(ctx context.Context, sprintID, projectID, runID string) error
 }
 
 // NativeSprint is the scheduler's view of a sprint for goal-mode batching.
@@ -141,6 +157,13 @@ type NativeSprint struct {
 	// ReviewRunID is the review run the scheduler last started for this sprint — the
 	// persisted idempotency reference (twin of PlanningRunID). Empty = none started yet.
 	ReviewRunID string `json:"review_run_id"`
+	// RetroAt is 0 until the sprint-retro ceremony applies its method proposals. In
+	// "ceremony" retro mode the scheduler holds the project's next sprint while this is
+	// 0 (after ReviewedAt); "auto" mode ignores it.
+	RetroAt int64 `json:"retro_at"`
+	// RetroRunID is the retro run the scheduler last started for this sprint — the
+	// persisted idempotency reference (twin of ReviewRunID). Empty = none started yet.
+	RetroRunID string `json:"retro_run_id"`
 }
 
 // NativeStory is the full story the scheduler passes to a run as context.
@@ -639,6 +662,84 @@ func (p *NativeHTTPProvider) SetSprintReviewRun(ctx context.Context, sprintID, p
 	return nil
 }
 
+// SprintsAwaitingRetro GETs /sprints/awaiting-retro — reviewed sprints (reviewed_at != 0)
+// whose retro_at is still 0, across all projects (the scheduler filters to retro-ceremony).
+func (p *NativeHTTPProvider) SprintsAwaitingRetro(ctx context.Context) ([]NativeSprint, error) {
+	req, err := p.newReq(ctx, http.MethodGet, p.baseURL+"/sprints/awaiting-retro", nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get /sprints/awaiting-retro: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("get /sprints/awaiting-retro: status %d", resp.StatusCode)
+	}
+	var body sprintsListResp
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode /sprints/awaiting-retro: %w", err)
+	}
+	return body.Sprints, nil
+}
+
+// SprintTelemetry GETs /sprints/{id}/telemetry and returns the bounded telemetry JSON
+// the retro-analyst reasons over. Same aggregation the get_sprint_telemetry Brain tool
+// exposes in-process — one implementation, two callers.
+func (p *NativeHTTPProvider) SprintTelemetry(ctx context.Context, sprintID, projectID string) (string, error) {
+	url := p.baseURL + "/sprints/" + sprintID + "/telemetry"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
+	req, err := p.newReq(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get /sprints/%s/telemetry: %w", sprintID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get /sprints/%s/telemetry: status %d", sprintID, resp.StatusCode)
+	}
+	// The endpoint returns the telemetry object verbatim; pass it through as a JSON
+	// string for the run payload (the retro-analyst reads it as its `telemetry` input).
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read telemetry: %w", err)
+	}
+	return string(raw), nil
+}
+
+// SetSprintRetroRun POSTs /sprints/{id}/retro-run with the retro run id so the store
+// persists the ceremony's idempotency reference (twin of SetSprintReviewRun).
+func (p *NativeHTTPProvider) SetSprintRetroRun(ctx context.Context, sprintID, projectID, runID string) error {
+	url := p.baseURL + "/sprints/" + sprintID + "/retro-run"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
+	body, err := json.Marshal(map[string]string{"run_id": runID})
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	req, err := p.newReq(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("post /sprints/%s/retro-run: %w", sprintID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("post /sprints/%s/retro-run: status %d", sprintID, resp.StatusCode)
+	}
+	return nil
+}
+
 func (p *NativeHTTPProvider) putStatus(ctx context.Context, id string, payload storyStatusReq) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -751,6 +852,7 @@ type projectMode struct {
 	mergeMode     string
 	planningMode  string
 	reviewMode    string
+	retroMode     string
 }
 
 // modeFor returns project's settings, fetching them from the control plane the
@@ -761,19 +863,20 @@ func (s *NativeScheduler) modeFor(ctx context.Context, cache map[string]projectM
 	if m, ok := cache[projectID]; ok {
 		return m
 	}
-	unit, mode, planning, review, err := s.cp.ProjectSettings(ctx, projectID)
+	unit, mode, planning, review, retro, err := s.cp.ProjectSettings(ctx, projectID)
 	if err != nil {
 		// D6: do NOT cache a failed read. Caching the sprint/manual default on a
 		// transient API blip pinned the project to manual for the rest of the cycle,
 		// silently pausing `auto` merges. Use defaults for THIS lookup only; the
-		// next cycle retries the real settings. planning/review default to "auto" so a
-		// settings blip never silently STARTS holding sprints behind a ceremony.
+		// next cycle retries the real settings. planning/review/retro default to "auto"
+		// so a settings blip never silently STARTS holding sprints behind a ceremony.
 		log.Printf("native-scheduler: read settings for project %q (using defaults this cycle, not caching): %v", projectID, err)
 		return projectMode{
 			executionUnit: orDefault(unit, "sprint"),
 			mergeMode:     orDefault(mode, "manual"),
 			planningMode:  orDefault(planning, planningModeAuto),
 			reviewMode:    orDefault(review, reviewModeAuto),
+			retroMode:     orDefault(retro, retroModeAuto),
 		}
 	}
 	m := projectMode{
@@ -781,6 +884,7 @@ func (s *NativeScheduler) modeFor(ctx context.Context, cache map[string]projectM
 		mergeMode:     orDefault(mode, "manual"),
 		planningMode:  orDefault(planning, planningModeAuto),
 		reviewMode:    orDefault(review, reviewModeAuto),
+		retroMode:     orDefault(retro, retroModeAuto),
 	}
 	cache[projectID] = m
 	return m
@@ -806,6 +910,11 @@ const (
 	reviewModeCeremony = "ceremony"
 	// reviewWorkflow is the registry workflow the review ceremony fires per DONE sprint.
 	reviewWorkflow = "sprint-review"
+
+	retroModeAuto     = "auto"
+	retroModeCeremony = "ceremony"
+	// retroWorkflow is the registry workflow the retro ceremony fires per reviewed sprint.
+	retroWorkflow = "retro"
 )
 
 // RunOnce executes a single poll-and-fire cycle, PER PROJECT (audit A2). Each
@@ -887,13 +996,16 @@ func (s *NativeScheduler) fireByProject(ctx context.Context, modeCache map[strin
 		projectIDs[pid] = true
 	}
 
-	// Sprint-review readiness gate (audit A2, per project). BEFORE firing any ready
-	// sprint, ensure a review run for every DONE sprint a review-ceremony project has
-	// not yet accepted, and learn which projects are HELD (a completed increment
-	// awaits acceptance). This is a GLOBAL sweep — independent of `projectIDs` — so a
-	// project's LAST sprint is reviewed even though no ready successor would gate it.
-	reviewActions, held := s.reconcileSprintReviews(ctx, modeCache)
-	actions += reviewActions
+	// Ceremony readiness gates (audit A2, per project). BEFORE firing any ready sprint,
+	// ensure the review AND retro runs a ceremony project still owes, and learn which
+	// projects are HELD. Both are GLOBAL sweeps — independent of `projectIDs` — so a
+	// project's LAST sprint is reviewed/retro'd even though no ready successor would
+	// gate it. The order review(N-1) → retro(N-1) → planning(N) → fire(N) falls out of
+	// the data: a sprint enters the retro sweep only after review_close stamps
+	// reviewed_at, and the project is held for the union of both.
+	reviewActions, reviewHeld := s.reconcileSprintReviews(ctx, modeCache)
+	retroActions, retroHeld := s.reconcileSprintRetros(ctx, modeCache)
+	actions += reviewActions + retroActions
 
 	for pid := range projectIDs {
 		mode := s.modeFor(ctx, modeCache, pid)
@@ -901,10 +1013,10 @@ func (s *NativeScheduler) fireByProject(ctx context.Context, modeCache map[strin
 			actions += s.fireReadyStories(ctx, readyByProject[pid])
 			continue
 		}
-		// Sprint (goal) mode. In "ceremony" review mode, HOLD the whole project while
-		// a prior increment awaits acceptance: neither plan nor fire the next sprint
-		// until reviewed_at is stamped (order: review(N-1) → planning(N) → fire(N)).
-		if held[pid] {
+		// Sprint (goal) mode. HOLD the whole project while a prior increment awaits
+		// acceptance (review) OR method improvement (retro): neither plan nor fire the
+		// next sprint until both reviewed_at and retro_at are stamped.
+		if reviewHeld[pid] || retroHeld[pid] {
 			continue
 		}
 		// Fire this project's ready sprints. In "ceremony" planning mode a sprint is
@@ -1023,6 +1135,87 @@ func (s *NativeScheduler) ensureSprintReview(ctx context.Context, sp NativeSprin
 		log.Printf("native-scheduler: sprint %s: record review run %s: %v (may duplicate next cycle)", sp.ID, runID, err)
 	}
 	log.Printf("native-scheduler: sprint %s: review ceremony started — run %s", sp.ID, runID)
+	return true
+}
+
+// reconcileSprintRetros is the sprint-retro readiness gate's derivation — the exact
+// twin of reconcileSprintReviews. It sweeps every reviewed-but-un-retro'd sprint
+// (reviewed_at != 0, retro_at == 0) across all projects, and for each whose project is
+// in "ceremony" retro mode it ensures ONE live retro run and marks the project HELD
+// (its next sprint must wait for the method improvement). A project in "auto" retro
+// mode is skipped — no retro run, never held — so auto behavior is unchanged. Returns
+// the number of retro runs started this cycle and the set of held project ids.
+func (s *NativeScheduler) reconcileSprintRetros(ctx context.Context, modeCache map[string]projectMode) (int, map[string]bool) {
+	held := map[string]bool{}
+	awaiting, err := s.provider.SprintsAwaitingRetro(ctx)
+	if err != nil {
+		log.Printf("native-scheduler: list sprints awaiting retro: %v", err)
+		return 0, held
+	}
+	actions := 0
+	for _, sp := range awaiting {
+		if s.modeFor(ctx, modeCache, sp.ProjectID).retroMode != retroModeCeremony {
+			continue // auto retro mode: the project advances without a retro
+		}
+		held[sp.ProjectID] = true
+		if s.ensureSprintRetro(ctx, sp) {
+			actions++
+		}
+	}
+	return actions, held
+}
+
+// ensureSprintRetro guarantees ONE live sprint-retro run for a reviewed sprint awaiting
+// its retrospective (retro mode "ceremony", reviewed_at != 0, retro_at == 0). It is
+// idempotent via the PERSISTED retro_run_id — the exact twin of ensureSprintReview: a
+// still-live run is a no-op; only when there is no retro run, or the last one ended
+// terminally without applying (retro_at still 0), does it start a fresh one and persist
+// the reference. Returns true when it started a run this cycle. It never advances the
+// project — the next sprint proceeds only after registry_apply stamps retro_at.
+func (s *NativeScheduler) ensureSprintRetro(ctx context.Context, sp NativeSprint) bool {
+	if sp.RetroRunID != "" {
+		status, err := s.cp.RunStatus(ctx, sp.RetroRunID)
+		if err != nil {
+			// Can't tell if the recorded run is still alive — do NOT start a second one
+			// this cycle (avoid duplicate retro runs); retry next cycle.
+			log.Printf("native-scheduler: sprint %s: retro run %s status unreadable (%v) — skipping this cycle", sp.ID, sp.RetroRunID, err)
+			return false
+		}
+		if !isTerminalStatus(status) {
+			return false // a retro run is live (running or gated) — idempotent no-op
+		}
+		log.Printf("native-scheduler: sprint %s: prior retro run %s ended %s without applying — re-retro", sp.ID, sp.RetroRunID, status)
+	}
+
+	// Budget gate: a retro run spends tokens, so honor the same entitlement check.
+	if allowed, reason, _ := s.cp.Entitlement(ctx, sp.ProjectID); !allowed {
+		log.Printf("native-scheduler: sprint %s: billing denied (%s) — not starting retro run", sp.ID, reason)
+		return false
+	}
+
+	telemetry, err := s.provider.SprintTelemetry(ctx, sp.ID, sp.ProjectID)
+	if err != nil {
+		log.Printf("native-scheduler: sprint %s: telemetry failed (%v) — deferring retro", sp.ID, err)
+		return false
+	}
+	payload := map[string]any{
+		"sprint_id":  sp.ID,
+		"project_id": sp.ProjectID,
+		"telemetry":  telemetry,
+		"retro":      "docs/RETRO-" + sp.ID + ".md",
+	}
+	runID, err := s.cp.FireRun(ctx, retroWorkflow, payload)
+	if err != nil {
+		log.Printf("native-scheduler: sprint %s: fire retro run: %v", sp.ID, err)
+		return false
+	}
+	if err := s.provider.SetSprintRetroRun(ctx, sp.ID, sp.ProjectID, runID); err != nil {
+		// The run is already firing; failing to persist the reference risks a duplicate
+		// retro run next cycle. Log loudly — the retro_gate still gates the apply, so a
+		// duplicate is wasteful but not unsafe.
+		log.Printf("native-scheduler: sprint %s: record retro run %s: %v (may duplicate next cycle)", sp.ID, runID, err)
+	}
+	log.Printf("native-scheduler: sprint %s: retro ceremony started — run %s", sp.ID, runID)
 	return true
 }
 

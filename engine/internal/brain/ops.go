@@ -7,6 +7,7 @@ import (
 
 	"forge/internal/digest"
 	"forge/internal/store"
+	"forge/internal/telemetry"
 	"forge/internal/tickets"
 	"forge/internal/workflow"
 )
@@ -59,6 +60,13 @@ type ControlOps interface {
 	Artifact(runID, stepID string) (string, error)
 	RunEvents(runID string) ([]map[string]any, error)
 
+	// GetSprintTelemetry aggregates a sprint's execution facts (retries, stalls,
+	// durations, spend, gate decisions with text, plan actions, review decision, story
+	// outcomes) into bounded JSON — the same aggregation the retrospective ceremony
+	// reads. Reversible (read-only). It is the evidence for "what went wrong / what
+	// cost too much" without hand-reading every run.
+	GetSprintTelemetry(projectID, sprintID string) (string, error)
+
 	// Exec is the escape hatch: run a shell command on the control host. The most
 	// powerful and most dangerous capability — gated hard (mutating, owner-only,
 	// opt-in per deployment). It's what lets the Brain do the long tail (gh, git,
@@ -83,6 +91,9 @@ type EngineOps struct {
 	// "since" the digest reports from). Wired from the projects store; nil → the
 	// digest uses the project id as name and an all-time window.
 	ProjectInfo func(projectID string) (name string, since time.Time)
+	// Spend resolves a project's token cost for a task set (billing project → owner →
+	// workspace). Optional; nil → sprint telemetry reports $0 spend.
+	Spend telemetry.SpendFn
 }
 
 func (o EngineOps) Status() (bool, int64) {
@@ -184,6 +195,14 @@ func (o EngineOps) Digest(projectID string) (string, error) {
 		name, since = o.ProjectInfo(projectID)
 	}
 	return o.Digester.Build(context.Background(), projectID, name, since)
+}
+
+// GetSprintTelemetry composes the same aggregator the /sprints/{id}/telemetry endpoint
+// serves (one implementation), called in-process. Spend is included only when the Spend
+// resolver is wired.
+func (o EngineOps) GetSprintTelemetry(projectID, sprintID string) (string, error) {
+	agg := telemetry.Aggregator{Runs: o.Store, Stories: o.Tickets, Spend: o.Spend}
+	return agg.SprintJSON(projectID, sprintID)
 }
 
 func (o EngineOps) StartRun(wf string, payload map[string]any) (string, error) {

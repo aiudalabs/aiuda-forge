@@ -8,6 +8,7 @@ import (
 
 	"forge/internal/httpx"
 	"forge/internal/projects"
+	"forge/internal/telemetry"
 	"forge/internal/tickets"
 )
 
@@ -315,6 +316,92 @@ func (s *Server) awaitingReviewSprints(w http.ResponseWriter, r *http.Request) {
 		sprints = []tickets.Sprint{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sprints": sprints})
+}
+
+// setSprintRetroRun handles POST /sprints/{id}/retro-run. The native scheduler records
+// the sprint-retro run it started so the ceremony is idempotent. Editor-scoped, twin of
+// setSprintReviewRun.
+func (s *Server) setSprintRetroRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	projectID := r.URL.Query().Get("project_id")
+	if s.sprintDenied(w, r.Context(), id, projects.RoleEditor) {
+		return
+	}
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := s.Tickets.SetSprintRetroRun(id, projectID, req.RunID); err != nil {
+		if errors.Is(err, tickets.ErrNotFound) {
+			httpErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sprint_id": id, "retro_run_id": req.RunID})
+}
+
+// awaitingRetroSprints handles GET /sprints/awaiting-retro — reviewed sprints
+// (reviewed_at != 0) whose retro_at is still 0. The native scheduler's global retro
+// sweep reads this. A user session is scoped to its own projects (C1).
+func (s *Server) awaitingRetroSprints(w http.ResponseWriter, r *http.Request) {
+	project := r.URL.Query().Get("project")
+	if project != "" && s.crossTenantDenied(w, r.Context(), project, map[string]any{"sprints": []tickets.Sprint{}}) {
+		return
+	}
+	sprints, err := s.Tickets.ReviewedSprintsAwaitingRetro(project)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if allowed, scoped := s.memberProjects(r.Context()); scoped && project == "" {
+		sprints = filterSprints(sprints, allowed)
+	}
+	if sprints == nil {
+		sprints = []tickets.Sprint{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sprints": sprints})
+}
+
+// sprintTelemetry handles GET /sprints/{id}/telemetry — the bounded telemetry the
+// retrospective reasons over. The native scheduler GETs it to inject into the retro
+// run's payload; the same aggregation backs the get_sprint_telemetry Brain tool. A user
+// session is scoped to its own project (C1). Returns the telemetry object verbatim.
+func (s *Server) sprintTelemetry(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	projectID := r.URL.Query().Get("project_id")
+	if projectID != "" && s.crossTenantDenied(w, r.Context(), projectID, map[string]any{}) {
+		return
+	}
+	agg := s.telemetryAggregator()
+	tel, err := agg.SprintJSON(projectID, id)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(tel))
+}
+
+// telemetryAggregator composes the sprint-telemetry aggregator from the control-plane
+// stores. Spend is wired only when billing + projects are configured (project → owner →
+// workspace → cost_events); otherwise it is reported as $0 (nil SpendFn).
+func (s *Server) telemetryAggregator() telemetry.Aggregator {
+	agg := telemetry.Aggregator{Runs: s.Store, Stories: s.Tickets}
+	if s.Billing != nil && s.Projects != nil {
+		agg.Spend = func(projectID string, taskIDs []string) (float64, error) {
+			ws, ok := s.workspaceForProject(projectID)
+			if !ok {
+				return 0, nil
+			}
+			return s.Billing.CostForTasks(ws, taskIDs)
+		}
+	}
+	return agg
 }
 
 // updateSprintStatus handles PUT /sprints/{id}/status. It advances every running

@@ -91,6 +91,13 @@ var registry = map[string]toolDef{
 			return jsonStr(map[string]any{"digest": text}), nil
 		},
 	},
+	"get_sprint_telemetry": {
+		Tool: Tool{Name: "get_sprint_telemetry", Description: "Aggregate a sprint's execution telemetry into bounded JSON: per-step retries/stalls/durations, gate decisions with the human's reject/answer text, the applied plan, the review decision + corrections, story outcomes (done/failed/cancelled with causes), and token spend. The same evidence the retrospective reads — use to diagnose what went wrong or cost too much in a sprint. Reversible — read-only.", InputSchema: obj(map[string]any{"sprint_id": strp("the sprint id")}, "sprint_id")},
+		Kind: Reversible, MinRole: "viewer",
+		Run: func(ops ControlOps, projectID string, input json.RawMessage) (string, error) {
+			return ops.GetSprintTelemetry(projectID, argStr(input, "sprint_id"))
+		},
+	},
 	"list_runs": {
 		Tool: Tool{Name: "list_runs", Description: "List this project's runs (id, workflow, status).", InputSchema: obj(nil)},
 		Kind: Reversible, MinRole: "viewer",

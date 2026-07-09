@@ -160,6 +160,15 @@ type Sprint struct {
 	// PlanningRunID): the scheduler will not start a second review run while this one
 	// is still live. Empty = no review run started yet.
 	ReviewRunID string `json:"review_run_id"`
+	// RetroAt is the unix-millis timestamp the sprint-retrospective ceremony applied its
+	// method proposals (0 = never retro'd). In "ceremony" retro mode the native
+	// scheduler holds the project's next sprint until RetroAt != 0 (after ReviewedAt);
+	// "auto" mode ignores it. Set by the registry_apply step.
+	RetroAt int64 `json:"retro_at"`
+	// RetroRunID is the control-plane run of the sprint-retro workflow the scheduler
+	// last started for this sprint — the PERSISTED idempotency reference (twin of
+	// ReviewRunID). Empty = no retro run started yet.
+	RetroRunID string `json:"retro_run_id"`
 }
 
 // Story is the unit of work. epic_id and sprint_id are optional. deps is the
@@ -249,6 +258,8 @@ CREATE TABLE IF NOT EXISTS sprints (
   planning_run_id TEXT NOT NULL DEFAULT '',
   reviewed_at     INTEGER NOT NULL DEFAULT 0,
   review_run_id   TEXT NOT NULL DEFAULT '',
+  retro_at        INTEGER NOT NULL DEFAULT 0,
+  retro_run_id    TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (id, project_id)
 );
 
@@ -349,6 +360,9 @@ var sprintPlanningMigrations = []string{
 	// EXPLICIT column list, so columns added before it would be silently dropped).
 	`ALTER TABLE sprints ADD COLUMN reviewed_at INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE sprints ADD COLUMN review_run_id TEXT NOT NULL DEFAULT ''`,
+	// Sprint-retrospective ceremony columns — same post-composite-PK contract.
+	`ALTER TABLE sprints ADD COLUMN retro_at INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE sprints ADD COLUMN retro_run_id TEXT NOT NULL DEFAULT ''`,
 }
 
 // Store is the ticket store backed by a sqlite database.
@@ -733,6 +747,60 @@ func (s *Store) SetSprintReviewed(sprintID, projectID string) error {
 	return nil
 }
 
+// SetSprintRetroRun records the sprint-retro run the scheduler started for a sprint —
+// the persisted idempotency reference (twin of SetSprintReviewRun). projectID empty
+// defaults to the default project. Returns ErrNotFound when the sprint does not exist.
+func (s *Store) SetSprintRetroRun(sprintID, projectID, runID string) error {
+	if projectID == "" {
+		projectID = DefaultProjectID
+	}
+	res, err := s.db.Exec(`UPDATE sprints SET retro_run_id=? WHERE id=? AND project_id=?`, runID, sprintID, projectID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSprintRetroed stamps a sprint's retro_at with the current time — the signal the
+// retrospective applied its method proposals, which unblocks the scheduler from
+// advancing the project to the next sprint. projectID empty defaults to the default
+// project. Returns ErrNotFound when the sprint does not exist.
+func (s *Store) SetSprintRetroed(sprintID, projectID string) error {
+	if projectID == "" {
+		projectID = DefaultProjectID
+	}
+	res, err := s.db.Exec(`UPDATE sprints SET retro_at=? WHERE id=? AND project_id=?`, time.Now().UnixMilli(), sprintID, projectID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ReviewedSprintsAwaitingRetro returns the sprints that have been reviewed
+// (reviewed_at != 0) but not yet retrospected (retro_at == 0). projectID empty = all
+// projects (the scheduler's global sweep). Gating on reviewed_at (not done-ness)
+// enforces the ceremony order review(N) → retro(N): a sprint reaches this set only
+// after review_close stamps reviewed_at.
+func (s *Store) ReviewedSprintsAwaitingRetro(projectID string) ([]Sprint, error) {
+	sprints, err := s.listSprints(projectID)
+	if err != nil {
+		return nil, err
+	}
+	var out []Sprint
+	for _, sp := range sprints {
+		if sp.ReviewedAt != 0 && sp.RetroAt == 0 {
+			out = append(out, sp)
+		}
+	}
+	return out, nil
+}
+
 // DoneSprintsAwaitingReview returns the sprints whose increment is complete but not
 // yet accepted by the sprint-review ceremony: every story done (≥1 story) and
 // reviewed_at == 0. projectID empty = all projects (the scheduler's global sweep).
@@ -812,7 +880,7 @@ func (s *Store) SprintProjects(id string) ([]string, error) {
 // listSprints returns sprints, optionally scoped to projectID (empty = all
 // projects, for admin/back-compat), ordered by id.
 func (s *Store) listSprints(projectID string) ([]Sprint, error) {
-	q := `SELECT id, name, goal, project_id, planned_at, planning_run_id, reviewed_at, review_run_id FROM sprints`
+	q := `SELECT id, name, goal, project_id, planned_at, planning_run_id, reviewed_at, review_run_id, retro_at, retro_run_id FROM sprints`
 	var args []any
 	if projectID != "" {
 		q += ` WHERE project_id=?`
@@ -827,7 +895,7 @@ func (s *Store) listSprints(projectID string) ([]Sprint, error) {
 	var out []Sprint
 	for rows.Next() {
 		var sp Sprint
-		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Goal, &sp.ProjectID, &sp.PlannedAt, &sp.PlanningRunID, &sp.ReviewedAt, &sp.ReviewRunID); err != nil {
+		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Goal, &sp.ProjectID, &sp.PlannedAt, &sp.PlanningRunID, &sp.ReviewedAt, &sp.ReviewRunID, &sp.RetroAt, &sp.RetroRunID); err != nil {
 			return nil, err
 		}
 		out = append(out, sp)
