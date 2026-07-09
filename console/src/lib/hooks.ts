@@ -636,6 +636,14 @@ export function useApproveWorkflow(projectId: string | null) {
   });
 }
 
+// Mintea un token de preview para el increment de un sprint revisado (#23) y abre
+// la URL devuelta. Sin cache: cada apertura pide un token fresco (corta vida).
+export function useMintPreviewToken(projectId: string | null) {
+  return useMutation({
+    mutationFn: (runId: string) => api.mintPreviewToken(projectId as string, runId),
+  });
+}
+
 // Despacha una resolución de conflicto del PR contra main (incidente #83). Al
 // despachar, el agente pasa a running en GitHub y su PR se actualizará: refrescamos
 // la cola para reflejar el cambio de estado.

@@ -15,10 +15,11 @@ import { docs } from "./ns/docs";
 import { brain } from "./ns/brain";
 import { overview } from "./ns/overview";
 import { settings } from "./ns/settings";
+import { flow } from "./ns/flow";
 
 type Bundle = { es: Record<string, string>; en: Record<string, string>; pt: Record<string, string> };
 
-const parts: Bundle[] = [nav, common, board, tickets, agents, studio, registry, spend, docs, brain, overview, settings];
+const parts: Bundle[] = [nav, common, board, tickets, agents, studio, registry, spend, docs, brain, overview, settings, flow];
 
 function compose(lang: Lang): Record<string, string> {
   return Object.assign({}, ...parts.map((p) => p[lang]));

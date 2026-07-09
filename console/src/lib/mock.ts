@@ -214,6 +214,17 @@ export const mockRunDetails: Record<string, RunDetail> = {
   run_f7932443: doneDetail(mockRuns[2]),
   run_69c573fc: doneDetail(mockRuns[3]),
   run_e6bca38f: doneDetail(mockRuns[4]),
+  // Run de la ceremonia de review de SP1 — la vista Flow lo abre desde el nodo de
+  // ceremonia; al estar aceptado (reviewed_at), el drawer ofrece "Abrir preview".
+  run_review_sp1: doneDetail({
+    id: "run_review_sp1",
+    ticket: { id: "SP1", title: "Sprint 1 — Review del increment" },
+    workflow: "sprint-review",
+    status: "DONE",
+    cost: 0.12,
+    badges: [],
+    project: MOCK_PROJECT,
+  }),
 };
 
 export const mockEvents: Record<string, RunEvent[]> = {
@@ -300,9 +311,9 @@ export const mockSettings: SettingsPayload = {
 // ── Per-project settings mock ─────────────────────────────────────────────────
 // GET/PUT /projects/{id}/settings. execution_unit + merge_mode por proyecto.
 export const mockProjectSettings: Record<string, ProjectSettings> = {
-  proj_001: { execution_unit: "sprint", merge_mode: "manual", dispatch_mode: "approve", executor: "copilot", model_by_lane: {}, workflow_approval: "manual", max_concurrency: 0 },
-  proj_002: { execution_unit: "story", merge_mode: "auto", dispatch_mode: "auto", executor: "claude_action", model_by_lane: { "python-dev": "claude-sonnet-4.6" }, workflow_approval: "auto_if_safe", max_concurrency: 3 },
-  proj_003: { execution_unit: "sprint", merge_mode: "manual", dispatch_mode: "approve", executor: "copilot", model_by_lane: {}, workflow_approval: "manual", max_concurrency: 0 },
+  proj_001: { execution_unit: "sprint", merge_mode: "manual", dispatch_mode: "approve", executor: "copilot", model_by_lane: {}, workflow_approval: "manual", max_concurrency: 0, planning_mode: "ceremony", review_mode: "ceremony", retro_mode: "ceremony" },
+  proj_002: { execution_unit: "story", merge_mode: "auto", dispatch_mode: "auto", executor: "claude_action", model_by_lane: { "python-dev": "claude-sonnet-4.6" }, workflow_approval: "auto_if_safe", max_concurrency: 3, planning_mode: "ceremony", review_mode: "ceremony", retro_mode: "auto" },
+  proj_003: { execution_unit: "sprint", merge_mode: "manual", dispatch_mode: "approve", executor: "copilot", model_by_lane: {}, workflow_approval: "manual", max_concurrency: 0, planning_mode: "auto", review_mode: "auto", retro_mode: "auto" },
 };
 
 // Default para un proyecto que aún no tiene settings guardados.
@@ -314,6 +325,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   model_by_lane: {},
   workflow_approval: "manual",
   max_concurrency: 0,
+  planning_mode: "auto",
+  review_mode: "auto",
+  retro_mode: "auto",
 };
 
 // ── Metrics mock ──────────────────────────────────────────────────────────────
@@ -388,12 +402,12 @@ export const mockDesignRuns: DesignRun[] = [
     project_id: "proj_001",
     repo: "https://github.com/vibeforge-demo/turnos-clinica",
     phases: [
-      { stepId: "discovery", name: "Descubrimiento", designStatus: "DONE", gateStatus: "DONE" },
-      { stepId: "prd", name: "PRD", designStatus: "DONE", gateStatus: "DONE" },
-      { stepId: "architecture", name: "Arquitectura", designStatus: "DONE", gateStatus: "AWAITING" },
-      { stepId: "ui", name: "UI / Pantallas", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "discovery", name: "Descubrimiento", gateId: "discovery_gate", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "prd", name: "PRD", gateId: "prd_gate", designStatus: "DONE", gateStatus: "DONE" },
+      { stepId: "architecture", name: "Arquitectura", gateId: "arch_gate", designStatus: "DONE", gateStatus: "AWAITING" },
+      { stepId: "ui", name: "UI / Pantallas", gateId: "ui_gate", designStatus: "QUEUED", gateStatus: "QUEUED" },
       { stepId: "mockups", name: "Mockups", gateId: "mockups_gate", designStatus: "QUEUED", gateStatus: "QUEUED" },
-      { stepId: "backlog", name: "Backlog", designStatus: "QUEUED", gateStatus: "QUEUED" },
+      { stepId: "backlog", name: "Backlog", gateId: "backlog_gate", designStatus: "QUEUED", gateStatus: "QUEUED" },
       { stepId: "handoff", name: "Handoff → stories", designStatus: "QUEUED", gateStatus: "QUEUED" },
     ],
   },
@@ -701,12 +715,12 @@ Encontrar servicio de limpieza confiable requiere recomendaciones boca a boca; n
 // proyecto por defecto para compatibilidad con call-sites sin proyecto.
 export const mockTicketsByProject: Record<string, OrchestratorTicket[]> = {
   proj_001: [
-    { id: "ENG-1", title: "is_valid_email(s) + tests", status: "done", deps: [], run_id: "run_f7932443" },
-    { id: "ENG-2", title: "to_roman(n) 1..3999 + tests", status: "done", deps: [], run_id: "run_69c573fc" },
-    { id: "ENG-3", title: "fib(n) + tests", status: "done", deps: ["ENG-1"], run_id: "run_e6bca38f" },
-    { id: "ENG-12", title: "reverse_words(s) — reordena palabras, colapsa espacios", status: "running", deps: [], run_id: "run_76af79df" },
-    { id: "ENG-14", title: "Validador de cédula panameña + tests", status: "running", deps: ["ENG-1"], run_id: "run_a91c20e1" },
-    { id: "ENG-15", title: "Formato de fecha panameño + tests", status: "backlog", deps: ["ENG-14"] },
+    { id: "ENG-1", title: "is_valid_email(s) + tests", status: "done", deps: [], run_id: "run_f7932443", sprint_id: "SP1", owner: "python-dev" },
+    { id: "ENG-2", title: "to_roman(n) 1..3999 + tests", status: "done", deps: [], run_id: "run_69c573fc", sprint_id: "SP1", owner: "python-dev" },
+    { id: "ENG-3", title: "fib(n) + tests", status: "done", deps: ["ENG-1"], run_id: "run_e6bca38f", sprint_id: "SP1", owner: "python-dev" },
+    { id: "ENG-12", title: "reverse_words(s) — reordena palabras, colapsa espacios", status: "running", deps: [], run_id: "run_76af79df", sprint_id: "SP2", owner: "react-dev", screen_key: "home" },
+    { id: "ENG-14", title: "Validador de cédula panameña + tests", status: "running", deps: ["ENG-1"], run_id: "run_a91c20e1", sprint_id: "SP2", owner: "python-dev" },
+    { id: "ENG-15", title: "Fix: formato de fecha panameño rompe con años bisiestos", status: "backlog", deps: ["ENG-14"], sprint_id: "SP2", owner: "python-dev", kind: "bug" },
   ],
   proj_002: [
     { id: "S1-01", title: "Auth docente — Firebase Auth email/password", status: "done", deps: [], run_id: "run_c8e21b90" },
@@ -718,3 +732,28 @@ export const mockTicketsByProject: Record<string, OrchestratorTicket[]> = {
 };
 
 export const mockOrchestratorTickets: OrchestratorTicket[] = mockTicketsByProject[MOCK_PROJECT];
+
+// Sprints mock con campos de ceremonia — SP1 revisado+retro'd (ambos done), SP2
+// con planning en curso. Con proj_001 en modo "ceremony", la vista Flow pinta los
+// sellos y los nodos de ceremonia entre columnas.
+export const mockSprints: import("./types").Sprint[] = [
+  {
+    id: "SP1",
+    name: "Sprint 1 — Utilidades base",
+    goal: "Validaciones y helpers con tests verdes",
+    project_id: "proj_001",
+    planned_at: Date.now() - 5 * 86400_000,
+    planning_run_id: "run_plan_sp1",
+    reviewed_at: Date.now() - 3 * 86400_000,
+    review_run_id: "run_review_sp1",
+    retro_at: Date.now() - 3 * 86400_000,
+    retro_run_id: "run_retro_sp1",
+  },
+  {
+    id: "SP2",
+    name: "Sprint 2 — Formato y localización PA",
+    goal: "Cédula, fechas y reverse en español-PA",
+    project_id: "proj_001",
+    planning_run_id: "run_plan_sp2", // planning en vuelo (sin planned_at) → sello running
+  },
+];
