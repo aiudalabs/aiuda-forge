@@ -338,9 +338,11 @@ func Build(cfg Config) (*App, error) {
 	if tix != nil {
 		gh := github.New()
 		srv.Projector = conductor.NewProjector(tix, gh)
-		srv.Projector.TaskState = gh // barrido de sesiones muertas (F3)
+		srv.Projector.TaskState = gh // barrido de sesiones muertas (F3): task failed/cancelled/404-purgada
 		srv.Projector.Closer = gh    // cierre de loop de PRs mergeados sin auto-close
 		srv.Projector.Files = gh     // grafo producto↔código: rutas del PR mergeado (task #5)
+		srv.Projector.RunLive = gh   // liveness de claude.yml → recuperación de label agent:running stale
+		srv.Projector.Labels = gh    // quitar agent:running al declarar muerta la sesión claude_action
 		// Al capturar archivos nuevos, regenerar docs/MODULE_MAP.md (Capa 1 mantenida);
 		// en goroutine para no bloquear el pase de proyección con la escritura al repo.
 		srv.Projector.OnGraphChanged = func(pid, repo string) { go srv.WriteModuleMap(pid, repo) }

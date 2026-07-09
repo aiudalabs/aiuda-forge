@@ -208,6 +208,13 @@ type Story struct {
 	// snapshot — is the source of truth after mid-sprint moves. Empty for backend
 	// stories and for stories published before the screen_key migration.
 	ScreenKey string `json:"screen_key,omitempty"`
+	// AgentLost carries a human-readable note when the conductor declared this
+	// story's agent session DEAD and returned it to backlog for re-dispatch
+	// (a purged Copilot task read as 404, or a stale agent:running label whose
+	// workflow run died without cleanup). Non-empty = "agente perdido" badge in
+	// the UI. Cleared on the next dispatch (SetStorySession) — a re-dispatched
+	// story is no longer lost. Empty for a normally-running/done/failed story.
+	AgentLost string `json:"agent_lost,omitempty"`
 }
 
 // StoryDraft is the shape of ONE new story produced by splitting an existing one.
@@ -365,6 +372,13 @@ var sprintPlanningMigrations = []string{
 	`ALTER TABLE sprints ADD COLUMN retro_run_id TEXT NOT NULL DEFAULT ''`,
 }
 
+// migrationAddAgentLost records the conductor's "agent lost" recovery note on a
+// story (empty = not lost). Added AFTER migrateToCompositePK — like the sprint
+// ceremony columns — because the composite-PK rebuild copies an EXPLICIT column
+// list; a column added to stories before it would be silently dropped. Idempotent
+// (duplicate-column = already migrated).
+const migrationAddAgentLost = `ALTER TABLE stories ADD COLUMN agent_lost TEXT NOT NULL DEFAULT ''`
+
 // Store is the ticket store backed by a sqlite database.
 type Store struct {
 	db *sql.DB
@@ -473,6 +487,12 @@ func Open(path string) (*Store, error) {
 			db.Close()
 			return nil, fmt.Errorf("migrate sprints planning columns: %w", err)
 		}
+	}
+	// Conductor agent-lost recovery note — added AFTER the composite-PK rebuild
+	// (see migrationAddAgentLost). Idempotent on restart.
+	if _, err := db.Exec(migrationAddAgentLost); err != nil && !isDuplicateColumn(err) {
+		db.Close()
+		return nil, fmt.Errorf("migrate stories.agent_lost: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -1059,10 +1079,40 @@ func (s *Store) DeleteStory(projectID, id string) error {
 
 // SetStorySession records the GitHub agent session executing a dispatched story
 // (Copilot task URL / Actions run URL) so the console can link straight to it.
+// A dispatch also clears any "agente perdido" note: a story that just got a fresh
+// session is no longer lost (the conductor set the note on the PRIOR dead session).
 func (s *Store) SetStorySession(id, url string) error {
-	_, err := s.db.Exec(
+	if _, err := s.db.Exec(
 		`INSERT INTO story_sessions(story_id, url) VALUES(?, ?)
-		 ON CONFLICT(story_id) DO UPDATE SET url=excluded.url`, id, url)
+		 ON CONFLICT(story_id) DO UPDATE SET url=excluded.url`, id, url); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE stories SET agent_lost='' WHERE id=? AND agent_lost!=''`, id)
+	return err
+}
+
+// MarkAgentLost stamps a story with the conductor's recovery note (why its agent
+// session was declared dead) so the UI can badge it "agente perdido" after it
+// returns to backlog. Scoped to (projectID, id) when projectID is non-empty. It
+// does NOT change status — the projection derives the story back to backlog in
+// the same pass; this only records the reason for the operator.
+func (s *Store) MarkAgentLost(projectID, id, note string) error {
+	q := `UPDATE stories SET agent_lost=? WHERE id=?`
+	args := []any{note, id}
+	if projectID != "" {
+		q += ` AND project_id=?`
+		args = append(args, projectID)
+	}
+	_, err := s.db.Exec(q, args...)
+	return err
+}
+
+// ClearStorySession drops a story's agent-session pointer so the dead-session
+// sweep stops polling it. Used when the conductor declares a task dead (a purged
+// Copilot task read as 404): a DONE story never transitions back to backlog, so
+// its stale session row would otherwise be polled — and 404 — forever.
+func (s *Store) ClearStorySession(id string) error {
+	_, err := s.db.Exec(`DELETE FROM story_sessions WHERE story_id=?`, id)
 	return err
 }
 
@@ -1155,7 +1205,7 @@ func (s *Store) GetStoryInProject(projectID, id string) (Story, error) {
 // getStory is the shared loader: scoped to projectID when non-empty, unscoped
 // otherwise. It loads the story plus its deps.
 func (s *Store) getStory(projectID, id string) (Story, error) {
-	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind, screen_key
+	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind, screen_key, agent_lost
 		FROM stories WHERE id=?`
 	args := []any{id}
 	if projectID != "" {
@@ -1165,7 +1215,7 @@ func (s *Store) getStory(projectID, id string) (Story, error) {
 	q += ` LIMIT 1`
 	var st Story
 	err := s.db.QueryRow(q, args...).
-		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind, &st.ScreenKey)
+		Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind, &st.ScreenKey, &st.AgentLost)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Story{}, ErrNotFound
 	}
@@ -1189,7 +1239,7 @@ func (s *Store) ListStories() ([]Story, error) {
 // ListStoriesByProject returns stories scoped to projectID (empty = all projects,
 // for admin/back-compat) with their deps, ordered by id (audit A1).
 func (s *Store) ListStoriesByProject(projectID string) ([]Story, error) {
-	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind, screen_key
+	q := `SELECT id, epic_id, sprint_id, title, body, accept, owner, status, run_id, repo, pr_url, project_id, external_ref, kind, screen_key, agent_lost
 		FROM stories`
 	var args []any
 	if projectID != "" {
@@ -1205,7 +1255,7 @@ func (s *Store) ListStoriesByProject(projectID string) ([]Story, error) {
 	var out []Story
 	for rows.Next() {
 		var st Story
-		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind, &st.ScreenKey); err != nil {
+		if err := rows.Scan(&st.ID, &st.EpicID, &st.SprintID, &st.Title, &st.Body, &st.Accept, &st.Owner, &st.Status, &st.RunID, &st.Repo, &st.PRURL, &st.ProjectID, &st.ExternalRef, &st.Kind, &st.ScreenKey, &st.AgentLost); err != nil {
 			return nil, err
 		}
 		out = append(out, st)

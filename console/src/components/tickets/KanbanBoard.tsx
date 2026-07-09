@@ -13,6 +13,7 @@ import { useState } from "react";
 import type { DispatchCandidate, OrchestratorTicket, TicketStatus } from "@/lib/types";
 import { LaneChip } from "@/components/tickets/LaneChip";
 import { STATUS_ORDER, statusToken } from "@/lib/statusToken";
+import { isAgentLost } from "@/lib/agentLost";
 import { useT } from "@/lib/i18n";
 
 function acceptanceCount(accept?: string): number {
@@ -51,6 +52,11 @@ function StoryCard({ ticket, gate, candidate, onDispatch, onOpenTicket, onOpenRu
         {ticket.sprint_id && <span className="kb-sprint">{ticket.sprint_id}</span>}
       </div>
       <div className="kb-ttl">{ticket.title}</div>
+      {isAgentLost(ticket) && (
+        <div className="kb-lost" title={ticket.agent_lost}>
+          ⚠ {t("tickets.card.agentLost")}
+        </div>
+      )}
       {ticket.body && (
         <div className="kb-body" title={ticket.body}>
           {ticket.body}

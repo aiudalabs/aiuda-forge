@@ -12,6 +12,7 @@ package conductor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -22,6 +23,22 @@ import (
 
 	"forge/internal/github"
 	"forge/internal/tickets"
+)
+
+// Dead-agent recovery thresholds (task: stuck Copilot/claude_action stories). Both
+// are counted in projection TICKS (~25s each), so a threshold of 8 ≈ 3.3 min — long
+// enough to ride out GitHub eventual consistency and a just-dispatched run that has
+// not materialized yet, short enough that a genuinely-dead agent frees its story on
+// its own in a few minutes instead of hanging `running` forever.
+const (
+	// notFoundDeathThreshold: consecutive 404 "not found" reads of a Copilot agent
+	// task before its session is declared DEAD. A purged task 404s forever; without
+	// this the sweep retried it every tick (2 log lines/25s, no verdict, story stuck).
+	notFoundDeathThreshold = 8
+	// staleLabelThreshold: consecutive ticks a story carries `agent:running` with NO
+	// live claude.yml run before the label is declared STALE (the run died without its
+	// if:always() cleanup — credits/kill). Guards the dispatch→run-materialize window.
+	staleLabelThreshold = 8
 )
 
 // GitHubReader is the read surface the projection needs. *github.Client
@@ -60,6 +77,21 @@ type TaskStater interface {
 	AgentTaskState(ctx context.Context, repoURL, taskID string) (string, error)
 }
 
+// RunLiveChecker reports whether a workflow has any run that is not terminal —
+// the GitHub-observable liveness signal behind the stale-label recovery (a story
+// stuck `running` on an `agent:running` label whose claude.yml run died without
+// cleanup). *github.Client implements it. Recovery needs it AND LabelRemover set.
+type RunLiveChecker interface {
+	WorkflowRunsActive(ctx context.Context, repoURL, workflowFile string) (bool, error)
+}
+
+// LabelRemover drops the `agent:running` label off issues — the GitHub-observable
+// cleanup the conductor performs when it declares a claude_action session dead.
+// *github.Client implements it. Recovery needs it AND RunLiveChecker set.
+type LabelRemover interface {
+	RemoveIssueRunning(ctx context.Context, repoURL string, numbers []int) error
+}
+
 // PRFileLister lista los archivos que un PR tocó. Alimenta el grafo
 // producto↔código (task #5): cuando una story llega a done por un PR mergeado,
 // sus rutas se registran (story→archivos). Opcional: nil desactiva la captura.
@@ -73,8 +105,15 @@ type Projector struct {
 	Tickets *tickets.Store
 	GH      GitHubReader
 	// TaskState, when set, lets the sweep detect dead agent sessions (task
-	// failed/cancelled) and return their stories to backlog automatically.
+	// failed/cancelled, or a purged task 404ing past the threshold) and return
+	// their stories to backlog automatically.
 	TaskState TaskStater
+	// RunLive + Labels, when BOTH set, enable stale-label recovery for the
+	// claude_action channel: a story stuck `running` on an `agent:running` label
+	// whose claude.yml run is dead gets the label removed and returns to backlog.
+	// Either nil disables it (the label pins running, as before).
+	RunLive RunLiveChecker
+	Labels  LabelRemover
 	// Closer, when set, closes issues whose story PR merged without auto-close.
 	Closer IssueCloser
 	// Files, when set, records a merged story's changed paths into the code graph
@@ -91,10 +130,58 @@ type Projector struct {
 	// serializes syncs per repo so a webhook burst doesn't stampede gh.
 	mu    sync.Mutex
 	inFly map[string]bool
+
+	// recMu guards the dead-agent recovery counters, which persist ACROSS ticks
+	// (that is the whole point — a verdict needs N consecutive observations) and
+	// are shared across concurrently-syncing projects.
+	recMu sync.Mutex
+	// notFound counts consecutive 404 reads per Copilot task id (uuid, globally
+	// unique). Reset by any non-404 outcome (a live read or a transient 5xx).
+	notFound map[string]int
+	// staleLabel counts consecutive ticks a story's `agent:running` label had no
+	// live claude.yml run, keyed by "projectID\x00issueNumber".
+	staleLabel map[string]int
 }
 
 func NewProjector(store *tickets.Store, gh GitHubReader) *Projector {
 	return &Projector{Tickets: store, GH: gh, inFly: map[string]bool{}}
+}
+
+// bumpNotFound increments and returns the consecutive-404 count for a task id.
+func (p *Projector) bumpNotFound(taskID string) int {
+	p.recMu.Lock()
+	defer p.recMu.Unlock()
+	if p.notFound == nil {
+		p.notFound = map[string]int{}
+	}
+	p.notFound[taskID]++
+	return p.notFound[taskID]
+}
+
+// resetNotFound clears a task id's 404 streak (a live read or a transient error).
+func (p *Projector) resetNotFound(taskID string) {
+	p.recMu.Lock()
+	defer p.recMu.Unlock()
+	delete(p.notFound, taskID)
+}
+
+// bumpStaleLabel increments and returns the consecutive stale-label count for a key.
+func (p *Projector) bumpStaleLabel(key string) int {
+	p.recMu.Lock()
+	defer p.recMu.Unlock()
+	if p.staleLabel == nil {
+		p.staleLabel = map[string]int{}
+	}
+	p.staleLabel[key]++
+	return p.staleLabel[key]
+}
+
+// resetStaleLabel clears a key's stale-label streak (a live run appeared, or the
+// label is gone).
+func (p *Projector) resetStaleLabel(key string) {
+	p.recMu.Lock()
+	defer p.recMu.Unlock()
+	delete(p.staleLabel, key)
 }
 
 // agentLogins spots the coding agents: an issue assigned to one of these (or any
@@ -198,14 +285,20 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 	taskState := p.TaskState
 	closer := p.Closer
 	filer := p.Files
+	runLive := p.RunLive
+	labels := p.Labels
 	if p.ClientFor != nil {
 		if c := p.ClientFor(ctx, projectID); c != nil {
 			ghR = c
 			taskState = c
 			closer = c
 			filer = c
+			runLive = c
+			labels = c
 		}
 	}
+	// Stale-label recovery needs BOTH a liveness signal and the label-removal write.
+	canRecoverLabel := runLive != nil && labels != nil
 
 	slug, err := github.Slug(repoURL)
 	if err != nil {
@@ -278,28 +371,49 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 	}
 
 	// Barrido de sesiones muertas (F3): si la task de Copilot detrás de una
-	// sesión terminó en failed/cancelled y la story sigue sin PR, el agente
-	// murió — la story vuelve a backlog (y su sesión se limpia) para que el
-	// dispatch la re-sirva. Hoy esto era un reset manual contra la DB.
-	deadSession := map[string]bool{}
+	// sesión terminó en failed/cancelled/error, O si su registro fue PURGADO (404
+	// "not found" sostenido — una task que estaba corriendo y ya no existe está de
+	// hecho muerta), el agente murió — la story vuelve a backlog (y su sesión se
+	// limpia) para que el dispatch la re-sirva. Distingue el 404 (muerte) de un
+	// 5xx/timeout (transitorio real: se mantiene el backoff, no se toca la story).
+	deadSession := map[string]bool{} // story id → su task está muerta
 	if taskState != nil {
-		checked := map[string]string{} // task id → state (varias stories comparten task)
+		type verdict struct {
+			dead      bool
+			transient bool
+		}
+		checked := map[string]verdict{} // task id → veredicto (varias stories comparten task)
 		for id, url := range sessions {
 			m := taskIDRe.FindStringSubmatch(url)
 			if m == nil {
 				continue // sesión claude_action (página de runs) — sin estado consultable aún
 			}
-			state, ok := checked[m[1]]
+			taskID := m[1]
+			v, ok := checked[taskID]
 			if !ok {
-				var err error
-				state, err = taskState.AgentTaskState(ctx, repoURL, m[1])
-				if err != nil {
-					log.Printf("conductor: task state %s: %v", m[1], err)
-					state = "" // best-effort: sin veredicto no tocamos nada
+				state, err := taskState.AgentTaskState(ctx, repoURL, taskID)
+				switch {
+				case err == nil:
+					p.resetNotFound(taskID) // una lectura viva corta la racha de 404
+					v.dead = state == "failed" || state == "cancelled" || state == "error"
+				case errors.Is(err, github.ErrTaskNotFound):
+					n := p.bumpNotFound(taskID)
+					if n >= notFoundDeathThreshold {
+						v.dead = true
+						log.Printf("conductor: task %s — %d×404 not-found consecutivos → sesión declarada MUERTA (registro purgado); soltando ancla", taskID, n)
+					} else {
+						v.transient = true // aún no confirmado: sin veredicto no tocamos nada
+					}
+				default:
+					// 5xx/timeout/red: transitorio de verdad — se mantiene el backoff y
+					// NO se cuenta como 404 (se resetea la racha para no acumular ruido).
+					p.resetNotFound(taskID)
+					v.transient = true
+					log.Printf("conductor: task state %s (transitorio, se reintenta): %v", taskID, err)
 				}
-				checked[m[1]] = state
+				checked[taskID] = v
 			}
-			if state == "failed" || state == "cancelled" || state == "error" {
+			if v.dead {
 				deadSession[id] = true
 			}
 		}
@@ -345,6 +459,32 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 		}
 	}
 
+	// claudeActive: ¿hay ALGÚN run vivo de claude.yml en el repo? Se consulta como
+	// mucho UNA vez por pase (memoizado, y solo si de verdad hay un label que
+	// evaluar). Repo-level a propósito: si hay CUALQUIER run vivo no declaramos
+	// stale ningún label (conservador — nunca soltamos una story que podría estar
+	// corriendo; a cambio, un label muerto que coexiste con otro run vivo espera a
+	// que ese run termine). Fail-CLOSED (true) ante error → nunca recupera a ciegas.
+	claudeComputed, claudeVal := false, true
+	claudeActive := func() bool {
+		if claudeComputed {
+			return claudeVal
+		}
+		claudeComputed = true
+		if runLive == nil {
+			claudeVal = true
+			return true
+		}
+		live, err := runLive.WorkflowRunsActive(ctx, repoURL, claudeWorkflowFile)
+		if err != nil {
+			log.Printf("conductor(%s): liveness de %s no concluyente (%v) — no se recupera este pase", projectID, claudeWorkflowFile, err)
+			claudeVal = true
+			return true
+		}
+		claudeVal = live
+		return live
+	}
+
 	graphChanged := false
 	for _, iss := range issues {
 		st, mirrored := byNumber[iss.Number]
@@ -376,14 +516,27 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 				// presente ⟺ hay un run vivo; ausente tras terminar → la story cae a
 				// backlog (o a in_review si dejó PR) sin ancla local que la trabe.
 				if target == tickets.StatusBacklog && hasLabel(iss, runningLabel) {
-					target = tickets.StatusRunning
+					target = p.deriveLabelAnchor(ctx, projectID, repoURL, st, iss, canRecoverLabel, labels, claudeActive)
 				}
 				// Ancla de sesión SOLO para tasks de Copilot: una task recién creada
 				// aún no asignó el issue ni abrió PR, y el barrido de sesiones muertas
 				// puede soltarla. Las sesiones claude_action NO anclan aquí (su liveness
 				// es el label de arriba) — es lo que causaba el flap ready/running.
-				if target == tickets.StatusBacklog && isTaskSession(sessions[st.ID]) && !deadSession[st.ID] {
-					target = tickets.StatusRunning // task despachada aún sin PR
+				if target == tickets.StatusBacklog && isTaskSession(sessions[st.ID]) {
+					if deadSession[st.ID] {
+						// Task muerta (failed/cancelled/404 sostenido): la story vuelve a
+						// backlog. Registra "agente perdido" SOLO en la transición (estaba
+						// running) para que la UI lo muestre; la sesión se limpia abajo.
+						if st.Status == tickets.StatusRunning && st.AgentLost == "" {
+							note := fmt.Sprintf("Copilot agent task perdida: %s", taskIDOf(sessions[st.ID]))
+							if err := p.Tickets.MarkAgentLost(projectID, st.ID, note); err != nil {
+								log.Printf("conductor: marcar agent_lost %s: %v", st.ID, err)
+							}
+							log.Printf("conductor: story %s — %s → devuelta a backlog para re-despacho", st.ID, note)
+						}
+					} else {
+						target = tickets.StatusRunning // task despachada aún sin PR
+					}
 				}
 			}
 		}
@@ -406,12 +559,86 @@ func (p *Projector) SyncProject(ctx context.Context, projectID, repoURL string) 
 			}
 		}
 	}
+	// Limpieza de sesiones muertas: una task declarada muerta deja de poblar el
+	// barrido (deja de consultarse → se acaba el 404 cada 25s). Cubre también las
+	// stories YA done cuya sesión task quedó sin limpiar (el caso reservas-belleza:
+	// stories done + tasks purgadas → 404 eterno). Una running→backlog ya la limpió
+	// SyncExternalStatus; este DELETE extra es idempotente.
+	for id := range deadSession {
+		if err := p.Tickets.ClearStorySession(id); err != nil {
+			log.Printf("conductor: limpiar sesión muerta de %s: %v", id, err)
+		}
+	}
 	// El grafo cambió en este pase → regenerar docs/MODULE_MAP.md (Capa 1
 	// mantenida). El callback hace su propio ctx/goroutine; aquí solo lo gatillamos.
 	if graphChanged && p.OnGraphChanged != nil {
 		p.OnGraphChanged(projectID, repoURL)
 	}
 	return res, nil
+}
+
+// deriveLabelAnchor decides the status of a story whose issue carries the
+// `agent:running` label. Normally the label pins `running` (claude_action's
+// GitHub-observable liveness). But a run that DIES without its if:always() cleanup
+// leaves the label stuck → the story hangs `running` forever. When recovery is
+// enabled (RunLive+Labels) and NO live claude.yml run backs the label for
+// staleLabelThreshold consecutive ticks, the label is declared STALE: it is
+// removed (GitHub-observable), the story is flagged "agente perdido", and it
+// returns to backlog. The threshold rides out the dispatch→run-materialize window.
+func (p *Projector) deriveLabelAnchor(ctx context.Context, projectID, repoURL string, st tickets.Story, iss github.IssueState, canRecover bool, labels LabelRemover, claudeActive func() bool) tickets.Status {
+	key := projectID + "\x00" + strconv.Itoa(iss.Number)
+
+	// Ya declarada perdida en un pase anterior: el label es un fantasma que aún no
+	// se refleja como quitado (consistencia eventual de GitHub). NO re-anclar a
+	// running (deshacer la recuperación) ni re-emitir; re-intentar quitarlo (idempotente).
+	if st.AgentLost != "" {
+		if labels != nil {
+			_ = labels.RemoveIssueRunning(ctx, repoURL, []int{iss.Number})
+		}
+		return tickets.StatusBacklog
+	}
+
+	// Sin capacidad de recuperación (host sin RunLive/Labels): el label ancla
+	// running como siempre — comportamiento intacto.
+	if !canRecover {
+		return tickets.StatusRunning
+	}
+
+	// Hay un run vivo → el label es legítimo. Resetea la racha y ancla running.
+	if claudeActive() {
+		p.resetStaleLabel(key)
+		return tickets.StatusRunning
+	}
+
+	// Label sin run vivo: acumula evidencia. Bajo el umbral, sigue siendo running
+	// (todavía puede ser un run recién despachado que no materializó).
+	if n := p.bumpStaleLabel(key); n < staleLabelThreshold {
+		return tickets.StatusRunning
+	}
+
+	// Umbral alcanzado: label STALE. Quítalo, marca "agente perdido", vuelve a backlog.
+	p.resetStaleLabel(key)
+	if err := labels.RemoveIssueRunning(ctx, repoURL, []int{iss.Number}); err != nil {
+		log.Printf("conductor: quitar %s de #%d: %v", runningLabel, iss.Number, err)
+	}
+	note := fmt.Sprintf("label %s sin workflow run vivo (claude_action murió sin limpiar)", runningLabel)
+	if err := p.Tickets.MarkAgentLost(projectID, st.ID, note); err != nil {
+		log.Printf("conductor: marcar agent_lost %s: %v", st.ID, err)
+	}
+	if err := p.Tickets.ClearStorySession(st.ID); err != nil {
+		log.Printf("conductor: limpiar sesión de %s: %v", st.ID, err)
+	}
+	log.Printf("conductor: story %s (#%d) — %s → devuelta a backlog para re-despacho", st.ID, iss.Number, note)
+	return tickets.StatusBacklog
+}
+
+// taskIDOf extrae el uuid de una session_url de task de Copilot (…/tasks/<uuid>),
+// o "" si no matchea.
+func taskIDOf(url string) string {
+	if m := taskIDRe.FindStringSubmatch(url); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 // captureFiles registra en el grafo las rutas que el PR n de storyID tocó y

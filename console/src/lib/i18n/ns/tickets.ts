@@ -43,6 +43,7 @@ export const tickets = {
     "tickets.card.acsTitle": "{n} criterios de aceptación",
     "tickets.card.session": "sesión",
     "tickets.card.openSession": "Ver la sesión del agente en GitHub",
+    "tickets.card.agentLost": "Agente perdido",
     // Kanban
     "tickets.kanban.collapse": "Colapsar columna",
     "tickets.kanban.expand": "Expandir columna",
@@ -151,6 +152,10 @@ export const tickets = {
     "tickets.detail.requeueTitle": "Devuelve la story (o su sprint) al backlog para re-ejecutarla desde cero",
     "tickets.detail.requeueConfirm": "¿Reencolar esta story? Se re-ejecutará con agentes (consume presupuesto).",
     "tickets.detail.requeueNoop": "La story ya está en el backlog.",
+    "tickets.detail.agentLostTitle": "Agente perdido — devuelta al backlog",
+    "tickets.detail.recover": "⟲ Recuperar (re-despachar)",
+    "tickets.detail.recoverTitle":
+      "El conductor devolvió esta story al backlog porque su agente se perdió (task purgada / label stale); confírmala como lista para re-despacho",
     "tickets.detail.export": "↗ Enviar a GitHub",
     "tickets.detail.exporting": "Enviando…",
     "tickets.detail.exportTitle": "Crea el issue de esta story en GitHub (con sus dependencias) para poder despacharla",
@@ -198,6 +203,7 @@ export const tickets = {
     "tickets.card.acsTitle": "{n} acceptance criteria",
     "tickets.card.session": "session",
     "tickets.card.openSession": "View the agent session on GitHub",
+    "tickets.card.agentLost": "Agent lost",
     "tickets.kanban.collapse": "Collapse column",
     "tickets.kanban.expand": "Expand column",
     "tickets.modal.title": "New story",
@@ -296,6 +302,10 @@ export const tickets = {
     "tickets.detail.requeueTitle": "Returns the story (or its sprint) to the backlog to re-run it from scratch",
     "tickets.detail.requeueConfirm": "Requeue this story? It will be re-run by agents (spends budget).",
     "tickets.detail.requeueNoop": "The story is already in the backlog.",
+    "tickets.detail.agentLostTitle": "Agent lost — returned to backlog",
+    "tickets.detail.recover": "⟲ Recover (re-dispatch)",
+    "tickets.detail.recoverTitle":
+      "The conductor returned this story to the backlog because its agent was lost (purged task / stale label); confirm it as ready for re-dispatch",
     "tickets.detail.export": "↗ Send to GitHub",
     "tickets.detail.exporting": "Sending…",
     "tickets.detail.exportTitle": "Creates this story's GitHub issue (with its dependencies) so it can be dispatched",

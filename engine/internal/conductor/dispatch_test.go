@@ -3,9 +3,11 @@ package conductor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"forge/internal/github"
 	"forge/internal/tickets"
 )
 
@@ -271,5 +273,52 @@ func TestDispatchClaudeActionOkWithSecret(t *testing.T) {
 	}
 	if res.Channel != "claude_action" || len(gh.workflows) != 1 {
 		t.Fatalf("res=%+v workflows=%d", res, len(gh.workflows))
+	}
+}
+
+// TestRecoveredStoryDispatchesOnCurrentChannel is the acceptance-criterion test:
+// after the conductor recovers a story whose Copilot task was purged (404), the
+// NEXT dispatch uses the project's CURRENT channel — NOT the dead task's channel
+// (the live case: the project moved from copilot to claude_action). The recovered
+// story carries no session/channel memory, so Candidates/Dispatch pick pol.Executor.
+func TestRecoveredStoryDispatchesOnCurrentChannel(t *testing.T) {
+	st := newStore(t)
+	if err := st.CreateStory(tickets.Story{ID: "S-01", Title: "Auth", Body: "b", Accept: "- a", Owner: "python-dev", ProjectID: "p1", ExternalRef: "github:o/r#1"}); err != nil {
+		t.Fatal(err)
+	}
+	// Dispatched to copilot: running + a task session that GitHub later purges.
+	dispatchTaskSession(t, st, "S-01", "https://github.com/o/r/tasks/dead-1234abcd")
+
+	// The projection declares the purged task dead → S-01 returns to backlog.
+	gh := &fakeGH{issues: []github.IssueState{{Number: 1, State: "open"}}}
+	p := NewProjector(st, gh)
+	p.TaskState = &errTaskState{err: fmt.Errorf("gh api agent task: %w: not found", github.ErrTaskNotFound)}
+	for i := 0; i < notFoundDeathThreshold; i++ {
+		if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s, _ := st.GetStory("S-01"); s.Status != tickets.StatusBacklog {
+		t.Fatalf("precondición: S-01 = %s, want backlog (task muerta recuperada)", s.Status)
+	}
+
+	// The project's CURRENT channel is now claude_action (changed from the dead
+	// task's copilot). The re-dispatch must use it.
+	fd := &fakeDispatchGH{}
+	d := &Dispatcher{Tickets: st, GH: fd}
+	pol := Policy{ExecutionUnit: "story", DispatchMode: "approve", Executor: "claude_action"}
+	res, err := d.Dispatch(context.Background(), "p1", "https://github.com/o/r", pol, "S-01")
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if res.Channel != "claude_action" {
+		t.Fatalf("re-dispatch channel = %q, want claude_action (canal VIGENTE, no el de la task muerta)", res.Channel)
+	}
+	if len(fd.workflows) != 1 || len(fd.tasks) != 0 {
+		t.Fatalf("debió disparar el workflow claude_action, no una task copilot (wf=%d task=%d)", len(fd.workflows), len(fd.tasks))
+	}
+	// Re-dispatch clears the "agente perdido" badge.
+	if s, _ := st.GetStory("S-01"); s.AgentLost != "" {
+		t.Fatalf("el re-despacho debió limpiar agent_lost, got %q", s.AgentLost)
 	}
 }

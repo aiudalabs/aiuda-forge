@@ -55,6 +55,43 @@ func (c *Client) ListActionRequiredRuns(ctx context.Context, repoURL string) ([]
 	return runs, nil
 }
 
+// WorkflowRunsActive reports whether workflowFile has any run that is NOT in a
+// terminal state right now (queued/in_progress/requested/waiting/pending). It is
+// the GitHub-observable liveness signal the conductor uses to decide whether a
+// stale `agent:running` label is backed by a real run: the label is put by
+// claude.yml at start and removed in its if:always() step, but a run that DIES
+// without cleanup (cancelled, killed, out of session) leaves the label pinned —
+// with NO active run, that label is stale and the story is stuck `running`.
+//
+// Fail-CLOSED (returns true) on any API error: an inconclusive read must never
+// let the conductor declare a possibly-live run dead and yank its story.
+func (c *Client) WorkflowRunsActive(ctx context.Context, repoURL, workflowFile string) (bool, error) {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return true, err
+	}
+	out, err := c.runner(ctx, "", "gh", "api",
+		fmt.Sprintf("repos/%s/actions/workflows/%s/runs?per_page=30", slug, workflowFile))
+	if err != nil {
+		return true, fmt.Errorf("gh api workflow runs %s: %w: %s", workflowFile, err, strings.TrimSpace(out))
+	}
+	var raw struct {
+		WorkflowRuns []struct {
+			Status string `json:"status"`
+		} `json:"workflow_runs"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return true, fmt.Errorf("decode workflow runs: %w", err)
+	}
+	for _, r := range raw.WorkflowRuns {
+		switch r.Status {
+		case "queued", "in_progress", "requested", "waiting", "pending":
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ListPRFiles returns the changed file paths of a PR (paginated).
 func (c *Client) ListPRFiles(ctx context.Context, repoURL string, number int) ([]string, error) {
 	slug, err := slugFromURL(repoURL)
