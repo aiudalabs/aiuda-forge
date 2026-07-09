@@ -255,6 +255,9 @@ func Build(cfg Config) (*App, error) {
 		}
 		pubRunner = &tickets.PublishRunner{Store: tix}
 		eng.Register("ticket_publish", pubRunner)
+		// plan_apply — the sprint-planning ceremony's apply step: parse a PLAN doc's
+		// actions and mutate the ticket store transactionally, then stamp planned_at.
+		eng.Register("plan_apply", &tickets.PlanApplyRunner{Store: tix})
 	}
 
 	// Project store — optional. When ProjectsDB is set, open the store and pass

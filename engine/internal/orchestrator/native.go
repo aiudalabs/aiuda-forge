@@ -91,6 +91,17 @@ type StoryProvider interface {
 	// MarkSprintDone is called when the sprint's in_review PR is MERGED.
 	MarkSprintDone(ctx context.Context, sprintID string) error
 	MarkSprintFailed(ctx context.Context, sprintID string) error
+
+	// ---- Sprint-planning ceremony -------------------------------------------
+
+	// BacklogSnapshot returns a JSON snapshot of a project's LIVE backlog (each
+	// story's id/title/status/sprint/deps/kind/screen_key/owner) — the real state
+	// the planner reasons over, distinct from the design-time docs/backlog.yaml. The
+	// scheduler injects it into the planning run's payload.
+	BacklogSnapshot(ctx context.Context, projectID string) (string, error)
+	// SetSprintPlanningRun persists the planning run the scheduler started for a
+	// sprint — the idempotency reference that prevents starting a second one.
+	SetSprintPlanningRun(ctx context.Context, sprintID, projectID, runID string) error
 }
 
 // NativeSprint is the scheduler's view of a sprint for goal-mode batching.
@@ -99,6 +110,14 @@ type NativeSprint struct {
 	Name      string `json:"name"`
 	Goal      string `json:"goal"`
 	ProjectID string `json:"project_id"` // the project this sprint belongs to (audit A1)
+	// PlannedAt is 0 until the sprint-planning ceremony applies its plan. In
+	// "ceremony" planning mode the scheduler refuses to fire the sprint while this
+	// is 0 (it runs the planning ceremony instead); "auto" mode ignores it.
+	PlannedAt int64 `json:"planned_at"`
+	// PlanningRunID is the planning run the scheduler last started for this sprint —
+	// the persisted idempotency reference that stops a second planning run starting
+	// while this one is live. Empty = none started yet.
+	PlanningRunID string `json:"planning_run_id"`
 }
 
 // NativeStory is the full story the scheduler passes to a run as context.
@@ -422,6 +441,85 @@ func (p *NativeHTTPProvider) putSprintStatus(ctx context.Context, sprintID strin
 	return nil
 }
 
+// snapshotStory is the trimmed per-story shape the planner reasons over. The full
+// GET /stories rows carry run/PR/repo noise the planner does not need, so
+// BacklogSnapshot projects them down to the planning-relevant fields.
+type snapshotStory struct {
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Status    string   `json:"status"`
+	SprintID  string   `json:"sprint_id"`
+	Owner     string   `json:"owner,omitempty"`
+	Kind      string   `json:"kind,omitempty"`
+	ScreenKey string   `json:"screen_key,omitempty"`
+	Deps      []string `json:"deps,omitempty"`
+}
+
+// BacklogSnapshot GETs /stories?project=<id> and returns a compact JSON array of the
+// project's live stories (planning-relevant fields only) for the planning run.
+func (p *NativeHTTPProvider) BacklogSnapshot(ctx context.Context, projectID string) (string, error) {
+	url := p.baseURL + "/stories"
+	if projectID != "" {
+		url += "?project=" + projectID
+	}
+	req, err := p.newReq(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get /stories: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get /stories: status %d", resp.StatusCode)
+	}
+	var body struct {
+		Stories []snapshotStory `json:"stories"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode /stories: %w", err)
+	}
+	// snapshotStory's json tags already match tickets.Story's field names, so the
+	// decode above projects the full rows down to the planning-relevant fields.
+	out := body.Stories
+	if out == nil {
+		out = []snapshotStory{}
+	}
+	j, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("marshal snapshot: %w", err)
+	}
+	return string(j), nil
+}
+
+// SetSprintPlanningRun POSTs /sprints/{id}/planning-run with the planning run id so
+// the store persists the ceremony's idempotency reference.
+func (p *NativeHTTPProvider) SetSprintPlanningRun(ctx context.Context, sprintID, projectID, runID string) error {
+	url := p.baseURL + "/sprints/" + sprintID + "/planning-run"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
+	body, err := json.Marshal(map[string]string{"run_id": runID})
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	req, err := p.newReq(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("post /sprints/%s/planning-run: %w", sprintID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("post /sprints/%s/planning-run: status %d", sprintID, resp.StatusCode)
+	}
+	return nil
+}
+
 func (p *NativeHTTPProvider) putStatus(ctx context.Context, id string, payload storyStatusReq) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -532,6 +630,7 @@ func terminalFailed(status string) bool {
 type projectMode struct {
 	executionUnit string
 	mergeMode     string
+	planningMode  string
 }
 
 // modeFor returns project's settings, fetching them from the control plane the
@@ -542,32 +641,45 @@ func (s *NativeScheduler) modeFor(ctx context.Context, cache map[string]projectM
 	if m, ok := cache[projectID]; ok {
 		return m
 	}
-	unit, mode, err := s.cp.ProjectSettings(ctx, projectID)
+	unit, mode, planning, err := s.cp.ProjectSettings(ctx, projectID)
 	if err != nil {
 		// D6: do NOT cache a failed read. Caching the sprint/manual default on a
 		// transient API blip pinned the project to manual for the rest of the cycle,
 		// silently pausing `auto` merges. Use defaults for THIS lookup only; the
-		// next cycle retries the real settings.
+		// next cycle retries the real settings. planning defaults to "auto" so a
+		// settings blip never silently STARTS holding sprints behind the ceremony.
 		log.Printf("native-scheduler: read settings for project %q (using defaults this cycle, not caching): %v", projectID, err)
-		u, m := unit, mode
-		if u == "" {
-			u = "sprint"
+		return projectMode{
+			executionUnit: orDefault(unit, "sprint"),
+			mergeMode:     orDefault(mode, "manual"),
+			planningMode:  orDefault(planning, planningModeAuto),
 		}
-		if m == "" {
-			m = "manual"
-		}
-		return projectMode{executionUnit: u, mergeMode: m}
 	}
-	if unit == "" {
-		unit = "sprint"
+	m := projectMode{
+		executionUnit: orDefault(unit, "sprint"),
+		mergeMode:     orDefault(mode, "manual"),
+		planningMode:  orDefault(planning, planningModeAuto),
 	}
-	if mode == "" {
-		mode = "manual"
-	}
-	m := projectMode{executionUnit: unit, mergeMode: mode}
 	cache[projectID] = m
 	return m
 }
+
+// orDefault returns v, or def when v is empty.
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// Planning-ceremony constants (mirrors projects.PlanningMode*). The scheduler holds
+// its own copies so the orchestrator package does not import projects.
+const (
+	planningModeAuto     = "auto"
+	planningModeCeremony = "ceremony"
+	// planningWorkflow is the registry workflow the ceremony fires per sprint.
+	planningWorkflow = "sprint-planning"
+)
 
 // RunOnce executes a single poll-and-fire cycle, PER PROJECT (audit A2). Each
 // project's ready story/sprint work is evaluated under THAT project's settings:
@@ -654,8 +766,16 @@ func (s *NativeScheduler) fireByProject(ctx context.Context, modeCache map[strin
 			actions += s.fireReadyStories(ctx, readyByProject[pid])
 			continue
 		}
-		// Sprint (goal) mode: fire this project's ready sprints.
+		// Sprint (goal) mode: fire this project's ready sprints. In "ceremony"
+		// planning mode a sprint is NOT fired until its plan has been approved
+		// (planned_at != 0); until then it runs the planning ceremony instead.
 		for _, sp := range sprintsByProject[pid] {
+			if mode.planningMode == planningModeCeremony && sp.PlannedAt == 0 {
+				if s.ensureSprintPlanning(ctx, sp) {
+					actions++
+				}
+				continue
+			}
 			if s.fireSprint(ctx, sp) {
 				actions++
 			}
@@ -1267,6 +1387,75 @@ func (s *NativeScheduler) advanceLooseStory(ctx context.Context, t NativeTicket)
 		return 1
 	}
 	return 0
+}
+
+// isTerminalStatus reports whether a run status is terminal (ended, will not
+// change) — DONE, FAILED, or CANCELLED. A gated/paused planning run is still
+// RUNNING, so it is NOT terminal and counts as "live".
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "DONE", "FAILED", "CANCELLED":
+		return true
+	}
+	return false
+}
+
+// ensureSprintPlanning guarantees ONE live sprint-planning run for a ready sprint
+// awaiting its ceremony (planning mode "ceremony", planned_at == 0). It is
+// idempotent via the PERSISTED planning_run_id: if that run is still live (not
+// terminal) it does nothing; only when there is no planning run, or the last one
+// ended terminally without producing a plan, does it start a fresh one and persist
+// the reference. Returns true when it started a run this cycle. It never claims or
+// fires the sprint — the sprint fires only after plan_apply stamps planned_at.
+func (s *NativeScheduler) ensureSprintPlanning(ctx context.Context, sp NativeSprint) bool {
+	if sp.PlanningRunID != "" {
+		status, err := s.cp.RunStatus(ctx, sp.PlanningRunID)
+		if err != nil {
+			// Can't tell if the recorded run is still alive — do NOT start a second
+			// one this cycle (avoid duplicate planning runs); retry next cycle.
+			log.Printf("native-scheduler: sprint %s: planning run %s status unreadable (%v) — skipping this cycle", sp.ID, sp.PlanningRunID, err)
+			return false
+		}
+		if !isTerminalStatus(status) {
+			return false // a planning run is live (running or gated) — idempotent no-op
+		}
+		// The recorded planning run ended terminally but planned_at is still 0 (else
+		// we would not be here) — the plan never applied. Fall through to re-plan.
+		log.Printf("native-scheduler: sprint %s: prior planning run %s ended %s without a plan — re-planning", sp.ID, sp.PlanningRunID, status)
+	}
+
+	// Budget gate: a planning run spends tokens, so honor the same entitlement check
+	// the fire path uses before starting one.
+	if allowed, reason, _ := s.cp.Entitlement(ctx, sp.ProjectID); !allowed {
+		log.Printf("native-scheduler: sprint %s: billing denied (%s) — not starting planning run", sp.ID, reason)
+		return false
+	}
+
+	snapshot, err := s.provider.BacklogSnapshot(ctx, sp.ProjectID)
+	if err != nil {
+		log.Printf("native-scheduler: sprint %s: backlog snapshot failed (%v) — deferring planning", sp.ID, err)
+		return false
+	}
+	payload := map[string]any{
+		"sprint_id":        sp.ID,
+		"project_id":       sp.ProjectID,
+		"sprint_goal":      sp.Goal,
+		"backlog_snapshot": snapshot,
+		"plan":             "docs/PLAN-" + sp.ID + ".md",
+	}
+	runID, err := s.cp.FireRun(ctx, planningWorkflow, payload)
+	if err != nil {
+		log.Printf("native-scheduler: sprint %s: fire planning run: %v", sp.ID, err)
+		return false
+	}
+	if err := s.provider.SetSprintPlanningRun(ctx, sp.ID, sp.ProjectID, runID); err != nil {
+		// The run is already firing; failing to persist the reference risks a
+		// duplicate planning run next cycle. Log loudly — the plan_gate still gates
+		// the apply, so a duplicate is wasteful but not unsafe.
+		log.Printf("native-scheduler: sprint %s: record planning run %s: %v (may duplicate next cycle)", sp.ID, runID, err)
+	}
+	log.Printf("native-scheduler: sprint %s: planning ceremony started — run %s", sp.ID, runID)
+	return true
 }
 
 // fireSprint claims a sprint atomically and, on success, fires ONE goal-mode run

@@ -1,0 +1,7 @@
+id: planner
+version: 1.0.0
+model: claude-opus-4-8
+skills:
+  - sprint-planning-method
+tools: [read, write]
+role: "Run the sprint-planning ceremony: read the LIVE backlog (not the design snapshot), define the sprint's goal, and propose a small, reversible set of adjustments (move / split / defer / cancel / edit) before the sprint is committed — as a reviewable PLAN doc a human approves at a gate."

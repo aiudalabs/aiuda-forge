@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -16,6 +17,10 @@ type fakeStoryProvider struct {
 	mu      sync.Mutex
 	stories map[string]*fakeStory
 	order   []string // insertion order for deterministic Ready/Running output
+	// Sprint-planning ceremony state (per sprint id).
+	sprintPlanned     map[string]int64  // sprint id → planned_at (0 = not planned)
+	sprintPlanningRun map[string]string // sprint id → the recorded planning run id
+	planningRunCalls  int               // how many times SetSprintPlanningRun was called
 }
 
 type fakeStory struct {
@@ -34,7 +39,11 @@ type fakeStory struct {
 }
 
 func newFakeProvider(stories ...*fakeStory) *fakeStoryProvider {
-	p := &fakeStoryProvider{stories: make(map[string]*fakeStory)}
+	p := &fakeStoryProvider{
+		stories:           make(map[string]*fakeStory),
+		sprintPlanned:     map[string]int64{},
+		sprintPlanningRun: map[string]string{},
+	}
 	for _, s := range stories {
 		p.stories[s.id] = s
 		p.order = append(p.order, s.id)
@@ -267,10 +276,56 @@ func (p *fakeStoryProvider) ReadySprints(_ context.Context) ([]NativeSprint, err
 			}
 		}
 		if ready {
-			out = append(out, NativeSprint{ID: sid, Name: sid, ProjectID: ms[0].projectID})
+			out = append(out, NativeSprint{
+				ID:            sid,
+				Name:          sid,
+				ProjectID:     ms[0].projectID,
+				PlannedAt:     p.sprintPlanned[sid],
+				PlanningRunID: p.sprintPlanningRun[sid],
+			})
 		}
 	}
 	return out, nil
+}
+
+// BacklogSnapshot returns a canned JSON snapshot of the fake's stories (enough for
+// the scheduler to inject into a planning run's payload).
+func (p *fakeStoryProvider) BacklogSnapshot(_ context.Context, projectID string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var b strings.Builder
+	b.WriteString("[")
+	first := true
+	for _, id := range p.order {
+		s := p.stories[id]
+		if projectID != "" && s.projectID != projectID {
+			continue
+		}
+		if !first {
+			b.WriteString(",")
+		}
+		first = false
+		fmt.Fprintf(&b, `{"id":%q,"status":%q,"sprint_id":%q}`, s.id, s.status, s.sprintID)
+	}
+	b.WriteString("]")
+	return b.String(), nil
+}
+
+// SetSprintPlanningRun records the planning run id for a sprint (the persisted
+// idempotency reference) and counts the calls so a test can assert idempotency.
+func (p *fakeStoryProvider) SetSprintPlanningRun(_ context.Context, sprintID, _, runID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sprintPlanningRun[sprintID] = runID
+	p.planningRunCalls++
+	return nil
+}
+
+// markSprintPlanned simulates plan_apply stamping planned_at, unblocking the sprint.
+func (p *fakeStoryProvider) markSprintPlanned(sprintID string, ts int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sprintPlanned[sprintID] = ts
 }
 
 // SprintStories returns the sprint's stories in insertion order (good enough for

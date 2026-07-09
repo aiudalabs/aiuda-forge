@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -139,6 +140,16 @@ type Sprint struct {
 	Name      string `json:"name"`
 	Goal      string `json:"goal"`
 	ProjectID string `json:"project_id"`
+	// PlannedAt is the unix-millis timestamp the sprint-planning ceremony approved
+	// and applied this sprint's plan (0 = never planned). In "ceremony" planning
+	// mode the native scheduler refuses to fire a sprint until PlannedAt != 0; in
+	// "auto" mode it is ignored. Set by the plan_apply step.
+	PlannedAt int64 `json:"planned_at"`
+	// PlanningRunID is the control-plane run of the sprint-planning workflow the
+	// scheduler last started for this sprint. It is the PERSISTED idempotency
+	// reference (not process memory): the scheduler will not start a second planning
+	// run while this one is still live. Empty = no planning run started yet.
+	PlanningRunID string `json:"planning_run_id"`
 }
 
 // Story is the unit of work. epic_id and sprint_id are optional. deps is the
@@ -220,10 +231,12 @@ CREATE TABLE IF NOT EXISTS epics (
 );
 
 CREATE TABLE IF NOT EXISTS sprints (
-  id         TEXT NOT NULL,
-  name       TEXT NOT NULL DEFAULT '',
-  goal       TEXT NOT NULL DEFAULT '',
-  project_id TEXT NOT NULL DEFAULT 'default',
+  id              TEXT NOT NULL,
+  name            TEXT NOT NULL DEFAULT '',
+  goal            TEXT NOT NULL DEFAULT '',
+  project_id      TEXT NOT NULL DEFAULT 'default',
+  planned_at      INTEGER NOT NULL DEFAULT 0,
+  planning_run_id TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (id, project_id)
 );
 
@@ -308,8 +321,18 @@ const migrationAddKind = `ALTER TABLE stories ADD COLUMN kind TEXT NOT NULL DEFA
 
 // migrationAddScreenKey adds the frontend-story→mockup column to DBs predating it
 // (the store becoming the source of truth for screen_key). Same swallow-on-duplicate
-// contract; existing rows default to '' (fall back to docs/backlog.yaml in the groomer).
+// contract; existing rows default to ” (fall back to docs/backlog.yaml in the groomer).
 const migrationAddScreenKey = `ALTER TABLE stories ADD COLUMN screen_key TEXT NOT NULL DEFAULT ''`
+
+// sprintPlanningMigrations add the sprint-planning-ceremony columns to DBs predating
+// them. Same swallow-on-duplicate contract as the other migrations. These MUST be
+// applied AFTER migrateSprintsCompositePK: that rebuild copies an EXPLICIT column
+// list (id, name, goal, project_id), so a planned_at/planning_run_id added before it
+// would be silently dropped when an ancient single-PK sprints table is rebuilt.
+var sprintPlanningMigrations = []string{
+	`ALTER TABLE sprints ADD COLUMN planned_at INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE sprints ADD COLUMN planning_run_id TEXT NOT NULL DEFAULT ''`,
+}
 
 // Store is the ticket store backed by a sqlite database.
 type Store struct {
@@ -410,6 +433,15 @@ func Open(path string) (*Store, error) {
 	if err := migrateSprintsCompositePK(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate sprints composite pk: %w", err)
+	}
+	// Sprint-planning ceremony columns — added AFTER the composite-PK rebuild (see the
+	// sprintPlanningMigrations comment). Idempotent — a duplicate-column error means
+	// already migrated (fresh DBs get the columns from the schema string above).
+	for _, m := range sprintPlanningMigrations {
+		if _, err := db.Exec(m); err != nil && !isDuplicateColumn(err) {
+			db.Close()
+			return nil, fmt.Errorf("migrate sprints planning columns: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -612,6 +644,42 @@ func (s *Store) CreateSprint(sp Sprint) error {
 	return err
 }
 
+// SetSprintPlanningRun records the sprint-planning run the scheduler started for a
+// sprint — the persisted idempotency reference that keeps a second planning run from
+// starting while this one is live. projectID empty defaults to the default project.
+// Returns ErrNotFound when the sprint does not exist.
+func (s *Store) SetSprintPlanningRun(sprintID, projectID, runID string) error {
+	if projectID == "" {
+		projectID = DefaultProjectID
+	}
+	res, err := s.db.Exec(`UPDATE sprints SET planning_run_id=? WHERE id=? AND project_id=?`, runID, sprintID, projectID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSprintPlanned stamps a sprint's planned_at with the current time — the signal
+// the ceremony plan was approved and applied, which unblocks the scheduler from
+// firing the sprint. projectID empty defaults to the default project. Returns
+// ErrNotFound when the sprint does not exist.
+func (s *Store) SetSprintPlanned(sprintID, projectID string) error {
+	if projectID == "" {
+		projectID = DefaultProjectID
+	}
+	res, err := s.db.Exec(`UPDATE sprints SET planned_at=? WHERE id=? AND project_id=?`, time.Now().UnixMilli(), sprintID, projectID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListSprints returns all sprints ordered by id.
 func (s *Store) ListSprints() ([]Sprint, error) {
 	return s.listSprints("")
@@ -647,7 +715,7 @@ func (s *Store) SprintProjects(id string) ([]string, error) {
 // listSprints returns sprints, optionally scoped to projectID (empty = all
 // projects, for admin/back-compat), ordered by id.
 func (s *Store) listSprints(projectID string) ([]Sprint, error) {
-	q := `SELECT id, name, goal, project_id FROM sprints`
+	q := `SELECT id, name, goal, project_id, planned_at, planning_run_id FROM sprints`
 	var args []any
 	if projectID != "" {
 		q += ` WHERE project_id=?`
@@ -662,7 +730,7 @@ func (s *Store) listSprints(projectID string) ([]Sprint, error) {
 	var out []Sprint
 	for rows.Next() {
 		var sp Sprint
-		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Goal, &sp.ProjectID); err != nil {
+		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Goal, &sp.ProjectID, &sp.PlannedAt, &sp.PlanningRunID); err != nil {
 			return nil, err
 		}
 		out = append(out, sp)

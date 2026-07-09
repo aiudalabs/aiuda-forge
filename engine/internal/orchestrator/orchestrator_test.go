@@ -90,11 +90,11 @@ func (f *fakeControlPlane) RunStatus(_ context.Context, runID string) (string, e
 // per-project override in projectModes wins; otherwise the fake's defaults apply
 // (execUnit "" → "story" so existing per-story tests keep their semantics;
 // mergeMode "" → "manual" so the scheduler does not auto-merge unless opted in).
-func (f *fakeControlPlane) ProjectSettings(_ context.Context, projectID string) (string, string, error) {
+func (f *fakeControlPlane) ProjectSettings(_ context.Context, projectID string) (string, string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m, ok := f.projectModes[projectID]; ok {
-		return m.executionUnit, m.mergeMode, nil
+		return m.executionUnit, m.mergeMode, m.planningMode, nil
 	}
 	unit := f.execUnit
 	if unit == "" {
@@ -104,7 +104,7 @@ func (f *fakeControlPlane) ProjectSettings(_ context.Context, projectID string) 
 	if mode == "" {
 		mode = "manual"
 	}
-	return unit, mode, nil
+	return unit, mode, "", nil
 }
 
 // setProjectMode overrides the settings for one project (audit A2 per-project tests).
@@ -114,7 +114,24 @@ func (f *fakeControlPlane) setProjectMode(projectID, executionUnit, mergeMode st
 	if f.projectModes == nil {
 		f.projectModes = map[string]projectMode{}
 	}
-	f.projectModes[projectID] = projectMode{executionUnit: executionUnit, mergeMode: mergeMode}
+	m := f.projectModes[projectID]
+	m.executionUnit = executionUnit
+	m.mergeMode = mergeMode
+	f.projectModes[projectID] = m
+}
+
+// setPlanningMode sets a project's execution_unit + planning_mode (the ceremony
+// tests). Merges into any existing override so merge_mode is preserved.
+func (f *fakeControlPlane) setPlanningMode(projectID, executionUnit, planningMode string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.projectModes == nil {
+		f.projectModes = map[string]projectMode{}
+	}
+	m := f.projectModes[projectID]
+	m.executionUnit = executionUnit
+	m.planningMode = planningMode
+	f.projectModes[projectID] = m
 }
 
 // RunPRURL reports the PR URL recorded for a run (empty if none set).
