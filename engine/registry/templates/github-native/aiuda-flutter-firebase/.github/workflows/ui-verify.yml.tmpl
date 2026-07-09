@@ -17,6 +17,7 @@ permissions:
   contents: read
   pull-requests: write   # el art-director publica su veredicto como comment del PR
   issues: read           # y lee el issue enlazado para sacar el screen_key
+  id-token: write        # OIDC token que claude-code-action necesita ("Could not fetch an OIDC token")
 
 env:
   PORT: "4173"
