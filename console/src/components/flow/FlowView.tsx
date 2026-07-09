@@ -47,6 +47,12 @@ import type { DesignRun } from "@/lib/types";
 import { buildFlow, type CeremonyModes } from "./flowGraph";
 import { layoutFlow } from "./layout";
 import { NODE_TYPES } from "./nodes";
+import { FlowCycle } from "./cycle/FlowCycle";
+
+// Pestañas de /flow: la vista CICLO (el diagrama del ciclo Scrum, default) y el
+// grafo DETALLE (React Flow). Ambas renderizan el MISMO modelo y comparten `sel`
+// (→ los mismos drawers), bajo un solo ReactFlowProvider.
+type FlowTab = "cycle" | "detail";
 
 // El run de diseño del proyecto: el workflow "design" (ciclo completo) más reciente;
 // si no hay, el "iterate" más nuevo (delta). El detalle (con steps) trae las fases
@@ -81,7 +87,9 @@ function FlowInner() {
   const { data: settings } = useProjectSettings(projectId);
 
   const [fullscreen, setFullscreen] = useState(false);
+  const [tab, setTab] = useState<FlowTab>("cycle");
   const [sel, setSel] = useState<string | null>(null);
+  const mint = useMintPreviewToken(projectId);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const { fitView, setViewport } = useReactFlow();
@@ -135,6 +143,7 @@ function FlowInner() {
     const p = new URLSearchParams(window.location.search);
     const node = p.get("node");
     if (node) setSel(node);
+    if (p.get("tab") === "detail") setTab("detail");
     if (p.get("fs") === "1") setFullscreen(true);
     const vp = p.get("vp");
     if (vp) {
@@ -170,11 +179,13 @@ function FlowInner() {
     const p = new URLSearchParams(window.location.search);
     if (sel) p.set("node", sel);
     else p.delete("node");
+    if (tab === "detail") p.set("tab", "detail");
+    else p.delete("tab");
     if (fullscreen) p.set("fs", "1");
     else p.delete("fs");
     const qs = p.toString();
     window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
-  }, [sel, fullscreen]);
+  }, [sel, tab, fullscreen]);
 
   // Refit al entrar/salir de fullscreen (doble pase: el canvas cambia de tamaño).
   useEffect(() => {
@@ -224,6 +235,26 @@ function FlowInner() {
     requestAnimationFrame(() => fitView({ padding: 0.16, duration: 350 }));
   }, [laid, sel, setNodes, setEdges, fitView]);
 
+  // ── Navegación de la vista Ciclo (estación → acción) ─────────────────────────
+  const openBoard = useCallback(() => router.push("/tickets"), [router]);
+  const openSprint = useCallback(
+    (sid: string) => router.push(`/tickets?view=sprints&sprint=${encodeURIComponent(sid)}`),
+    [router],
+  );
+  // INCREMENTO → mint del token de preview del review aceptado + abrir en tab nueva
+  // (#23/#28) — mismo mecanismo que PreviewButton, elevado para la estación del ciclo.
+  const openPreview = useCallback(
+    async (runId: string) => {
+      try {
+        const res = await mint.mutateAsync(runId);
+        window.open(res.url, "_blank", "noopener");
+      } catch {
+        /* la preview puede no estar configurada en este despliegue; silencioso */
+      }
+    },
+    [mint],
+  );
+
   // ── Selección → drawers (derivados del id de nodo + modelo) ──────────────────
   const selPhase = useMemo(() => {
     if (!designRun || !sel) return null;
@@ -246,39 +277,77 @@ function FlowInner() {
   return (
     <div className={`dag-wrap${fullscreen ? " full" : ""}`}>
       <div className="dag-toolbar">
-        <button className="dag-btn" onClick={relayout} title={t("flow.toolbar.relayout")}>
-          {t("flow.toolbar.relayout")}
-        </button>
-        <button
-          className="dag-btn"
-          onClick={() => fitView({ padding: 0.16, duration: 350 })}
-          title={t("flow.toolbar.fitTitle")}
-        >
-          {t("flow.toolbar.fit")}
-        </button>
+        <div className="dag-seg" role="tablist" aria-label="Flow">
+          <button
+            className={`dag-seg-btn${tab === "cycle" ? " on" : ""}`}
+            role="tab"
+            aria-selected={tab === "cycle"}
+            onClick={() => setTab("cycle")}
+          >
+            {t("flow.tab.cycle")}
+          </button>
+          <button
+            className={`dag-seg-btn${tab === "detail" ? " on" : ""}`}
+            role="tab"
+            aria-selected={tab === "detail"}
+            onClick={() => setTab("detail")}
+          >
+            {t("flow.tab.detail")}
+          </button>
+        </div>
+        {tab === "detail" && (
+          <>
+            <button className="dag-btn" onClick={relayout} title={t("flow.toolbar.relayout")}>
+              {t("flow.toolbar.relayout")}
+            </button>
+            <button
+              className="dag-btn"
+              onClick={() => fitView({ padding: 0.16, duration: 350 })}
+              title={t("flow.toolbar.fitTitle")}
+            >
+              {t("flow.toolbar.fit")}
+            </button>
+          </>
+        )}
         <button className="dag-btn primary" onClick={() => setFullscreen((v) => !v)}>
           {fullscreen ? t("flow.toolbar.exitFullscreen") : t("flow.toolbar.fullscreen")}
         </button>
       </div>
 
-      {/* Leyenda de estados de story — misma fuente (statusToken) que el resto. */}
-      <div className="dag-legend" aria-hidden>
-        {STATUS_ORDER.map((s) => {
-          const tok = statusToken(s);
-          return (
-            <span key={s} className="lg">
-              <i style={{ background: s === "backlog" ? "#fff" : tok.soft, borderColor: tok.border }} />
-              {t(`tickets.statusLabel.${s}`)}
-            </span>
-          );
-        })}
-      </div>
+      {/* Leyenda de estados de story — sólo en el grafo Detalle (la vista Ciclo trae
+          su propia leyenda re-etiquetada dentro del SVG). Misma fuente: statusToken. */}
+      {tab === "detail" && (
+        <div className="dag-legend" aria-hidden>
+          {STATUS_ORDER.map((s) => {
+            const tok = statusToken(s);
+            return (
+              <span key={s} className="lg">
+                <i style={{ background: s === "backlog" ? "#fff" : tok.soft, borderColor: tok.border }} />
+                {t(`tickets.statusLabel.${s}`)}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
-      <div className="dag-canvas">
+      <div className={`dag-canvas${tab === "cycle" ? " cyc-mount" : ""}`}>
         {!projectId ? (
           <div className="flow-empty">
             <p>{t("flow.noProject")}</p>
           </div>
+        ) : tab === "cycle" ? (
+          // La vista Ciclo se muestra SIEMPRE que haya proyecto: aún sin runs es el
+          // mapa del método (todo pendiente/azul), como el diagrama del documento.
+          <FlowCycle
+            model={model}
+            modes={modes}
+            selected={sel}
+            onSelect={setSel}
+            onOpenBoard={openBoard}
+            onOpenSprint={openSprint}
+            onOpenPreview={openPreview}
+            previewPending={mint.isPending}
+          />
         ) : !hasAnything ? (
           <div className="flow-empty">
             <h3>{t("flow.empty.title")}</h3>
