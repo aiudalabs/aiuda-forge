@@ -147,6 +147,20 @@ func (c CliBackend) Run(ctx context.Context, prompt string, opts Options, onEven
 					idleTimer.Reset(opts.IdleTimeout)
 				}
 			case <-idleC:
+				// The idle timer fired, but the `activity` channel is a lossy signal
+				// (buffered-1, non-blocking send): a burst of lines can drop a reset, and
+				// under load this goroutine can be scheduled late enough that the timer
+				// fires while the agent is in fact still streaming. So decide on the
+				// AUTHORITATIVE monotonic `lastActivity` timestamp (the same source the
+				// absolute-timeout branch trusts), not on whether a reset was processed in
+				// time. Only genuine silence for the full window is a stall; otherwise
+				// re-arm for the remaining window. This makes the watchdog robust to
+				// goroutine-scheduling jitter (no false kills of a healthy agent).
+				idleFor := time.Since(time.Unix(0, lastActivity.Load()))
+				if idleFor < opts.IdleTimeout {
+					idleTimer.Reset(opts.IdleTimeout - idleFor)
+					continue
+				}
 				stalled.Store(true)
 				kill()
 				return

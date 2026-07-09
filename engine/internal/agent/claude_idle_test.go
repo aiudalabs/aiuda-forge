@@ -41,14 +41,24 @@ func TestIdleTimeoutKillsStalledAgent(t *testing.T) {
 }
 
 // A steadily-progressing agent SURVIVES past the idle window: it streams a line
-// every 150ms (< the 400ms idle) for ~1.2s total, then finishes. The total run
-// exceeds IdleTimeout, proving we kill on inactivity, not on elapsed time.
+// every 100ms (well under the idle window) for ~2.5s total, then finishes. The total
+// run exceeds IdleTimeout, proving we kill on inactivity, not on elapsed time.
+//
+// The idle window is deliberately GENEROUS relative to the cadence (a ~1.9s margin,
+// not the old ~250ms). Under `go test -race` at full parallelism the whole test —
+// including the goroutine that reads stdout and stamps lastActivity — can be starved
+// for a few hundred ms, which under a tight 400ms window made a healthy agent look
+// idle and flaked this test. Two changes remove that: the watchdog now decides on the
+// authoritative lastActivity timestamp (see claude.go), and the window here is wide
+// enough that reader-scheduling jitter cannot cross it. This keeps the test's intent
+// (total run > window; every inter-line gap ≪ window) while being deterministic in
+// practice — 20/20 under `go test -race -count=20`.
 func TestSteadyOutputSurvivesIdleTimeout(t *testing.T) {
-	bin := fakeClaude(t, `for i in $(seq 1 8); do echo '{"type":"text","text":"work"}'; sleep 0.15; done; echo '{"type":"result","result":"done","is_error":false}'`)
+	bin := fakeClaude(t, `for i in $(seq 1 25); do echo '{"type":"text","text":"work"}'; sleep 0.1; done; echo '{"type":"result","result":"done","is_error":false}'`)
 	be := CliBackend{BaseArgv: []string{bin}}
 
 	_, err := be.Run(context.Background(), "p",
-		Options{Workdir: t.TempDir(), IdleTimeout: 400 * time.Millisecond, Timeout: 30 * time.Second}, nil)
+		Options{Workdir: t.TempDir(), IdleTimeout: 2 * time.Second, Timeout: 30 * time.Second}, nil)
 	if err != nil {
 		t.Fatalf("a steadily-streaming agent must survive the idle timeout, got %v", err)
 	}
