@@ -28,10 +28,22 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # DooD workdir: same absolute path on host and in container (see note above)
       - ${FORGE_WORKDIR}:${FORGE_WORKDIR}
-      # Dev loop: mount the registry (methodology = data) so host edits to
-      # workflows/agents/skills are live in the running control WITHOUT a rebuild.
-      # Read-only: the engine only READS the registry (it never writes methodology back).
-      - ./engine/registry:/app/registry:ro
+      # The registry (methodology = data) is bind-mounted so (a) host edits to
+      # workflows/agents/skills are live in the running control WITHOUT a rebuild, and
+      # (b) the retro ceremony's `registry_apply` step (PR #27) can WRITE improved
+      # agents/skills/workflows back — the method improves itself, gated by a human
+      # sprint-retro approval, validated (id allowlist, path-escape blocked, no self-edit
+      # of the retro method) and audited (one event per write). It MUST be writable —
+      # a read-only mount makes retro fail with "registry_apply: write ...: read-only
+      # file system" (clean failure, no panic) and the retro never stamps.
+      # DEV-LOOP / SINGLE-VPS WARNING: this binds the git checkout, so an approved retro
+      # leaves UNCOMMITTED changes under engine/registry/ in the host working tree —
+      # review and commit them as `retro(SP<n>): método editado` (the git trail of the
+      # method is desirable, not an accident). See DEPLOY.md §"El registry es escribible".
+      - ./engine/registry:/app/registry
+      # Static release previews (PR #23): a named volume, NOT the container's ephemeral
+      # layer, so preview sites survive restarts/redeploys (served under /pv/{token}/).
+      - forge-previews:/previews
     environment:
       VIBEFORGE_ADDR: ":8080"
       VIBEFORGE_DB: /data/vibeforge.db
@@ -71,6 +83,32 @@ services:
       # (0 disables) so disk doesn't grow without bound.
       VIBEFORGE_GH_TIMEOUT_SEC: ${VIBEFORGE_GH_TIMEOUT_SEC:-90}
       VIBEFORGE_RETENTION_DAYS: ${VIBEFORGE_RETENTION_DAYS:-30}
+      # ── Release previews (PR #23) ────────────────────────────────────────────
+      # Previews land on the forge-previews volume (see volumes above). The build
+      # itself runs in the sandbox image (VIBEFORGE_AGENT_IMAGE), not here.
+      VIBEFORGE_PREVIEWS_DIR: /previews
+      # REQUIRED IN PROD: HMAC key that signs the short-lived preview-capability tokens.
+      # If empty, a random per-process key is generated → EVERY preview link stops
+      # working after a control restart. Generate: `openssl rand -hex 32`.
+      VIBEFORGE_PREVIEW_SECRET: ${VIBEFORGE_PREVIEW_SECRET:-}
+      # Release build tuning (defaults shown): per-build timeout, max published artifact, previews kept/project.
+      VIBEFORGE_RELEASE_BUILD_TIMEOUT_MIN: ${VIBEFORGE_RELEASE_BUILD_TIMEOUT_MIN:-10}
+      VIBEFORGE_RELEASE_MAX_MB: ${VIBEFORGE_RELEASE_MAX_MB:-200}
+      VIBEFORGE_RELEASE_KEEP: ${VIBEFORGE_RELEASE_KEEP:-5}
+      # ── Ceremonies / conductor (PR #18/#19/#26) ──────────────────────────────
+      # Daily standup digest (#19): the cron is evaluated in UTC — the container TZ is
+      # IGNORED. Default `0 13 * * *` = 13:00 UTC (08:00 Panamá). The Telegram bot token
+      # and each project's digest channel are configured IN-APP (Settings → Telegram
+      # token; per-project digest channel), NOT via env.
+      VIBEFORGE_DIGEST_CRON: ${VIBEFORGE_DIGEST_CRON:-0 13 * * *}
+      # JIT grooming (#18): dev-ready spec + visual + components pre-dispatch. "0" disables.
+      VIBEFORGE_CONDUCTOR_GROOM: ${VIBEFORGE_CONDUCTOR_GROOM:-1}
+      # Design-agent wall-clock (#14) and idle watchdog (#26), in minutes.
+      VIBEFORGE_AGENT_TIMEOUT_MIN: ${VIBEFORGE_AGENT_TIMEOUT_MIN:-20}
+      VIBEFORGE_AGENT_IDLE_TIMEOUT_MIN: ${VIBEFORGE_AGENT_IDLE_TIMEOUT_MIN:-8}
+      # GitHub webhook secret — optional; only if you enable the App's webhooks (DEPLOY.md §6).
+      # (The control reads this; it was previously declared in .env but never reached the container.)
+      VIBEFORGE_GITHUB_WEBHOOK_SECRET: ${VIBEFORGE_GITHUB_WEBHOOK_SECRET:-}
     networks:
       - forge-internal
     depends_on:
@@ -142,6 +180,11 @@ volumes:
   # Persistent SQLite data (vibeforge.db, tickets.db, projects.db, auth.db,
   # brain.db, billing.db — all open relative to VIBEFORGE_DB directory).
   forge-data:
+    driver: local
+
+  # Persistent static release previews (PR #23). Regenerable from a re-run, but kept
+  # off the container's ephemeral layer so preview links survive restarts/redeploys.
+  forge-previews:
     driver: local
 
 networks:

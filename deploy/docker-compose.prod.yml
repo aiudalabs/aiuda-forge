@@ -8,6 +8,12 @@
 # Requires FLUXO_DOMAIN in .env (e.g. FLUXO_DOMAIN=fluxo.aiudalabs.com) and DNS: an A record
 # for FLUXO_DOMAIN → this VPS's public IP, before first boot (Caddy needs it to issue TLS).
 #
+# PROD PREREQUISITES (see DEPLOY.md): set VIBEFORGE_PREVIEW_SECRET in .env (else preview links
+# die on every restart), and build the sandbox image ONCE before `up`:
+#   ./engine/scripts/build-sandbox-images.sh
+# The registry bind-mount (base file) is writable so the retro can edit the method — on a
+# single VPS an approved retro leaves uncommitted changes under engine/registry/ to commit.
+#
 # The control (8080) and console (3000) host ports from the base file stay bound to the
 # host — close them at the firewall so only 80/443 (Caddy) are public (see DEPLOY.md).
 
