@@ -8,6 +8,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +17,24 @@ import (
 // agentTasksAPIVersion pins the Agent tasks public-preview shape we tested live
 // (ADR-2026-07-03). Isolated here so a preview change is a one-line fix.
 const agentTasksAPIVersion = "2026-03-10"
+
+// ErrTaskNotFound is returned by AgentTaskState when the Agent tasks API answers
+// 404 "not found" for a task id. This is NOT a transient error: a task that WAS
+// running and now 404s no longer exists (Copilot purges the registry record when
+// the run ends — completed, failed, or out of credits), and the ephemeral preview
+// endpoint stops resolving it by id. The conductor's dead-session sweep treats a
+// SUSTAINED 404 (N consecutive) as a dead session — distinct from a 5xx/timeout,
+// which stays transient and keeps the existing backoff.
+var ErrTaskNotFound = errors.New("agent task not found")
+
+// isNotFound recognizes gh api's 404 for a task id regardless of exact wording
+// ("not found", "HTTP 404", "(404)"). execRunner merges stdout+stderr, so the
+// JSON body {"message":"not found"} AND the `gh: not found (HTTP 404)` line are
+// both in the captured output.
+func isNotFound(out string) bool {
+	low := strings.ToLower(out)
+	return strings.Contains(low, "not found") || strings.Contains(low, "http 404") || strings.Contains(low, "(404)")
+}
 
 // CreateAgentTask starts a Copilot cloud-agent task on repoURL. model "" lets
 // GitHub pick (auto). Returns the task's html_url when the API exposes it.
@@ -96,6 +115,11 @@ func (c *Client) AgentTaskState(ctx context.Context, repoURL, taskID string) (st
 		"-H", "X-GitHub-Api-Version: "+agentTasksAPIVersion,
 		fmt.Sprintf("/agents/repos/%s/tasks/%s", slug, taskID), "--jq", ".state")
 	if err != nil {
+		if isNotFound(out) {
+			// Wrap the sentinel so the sweep can distinguish a purged task from a
+			// transient 5xx/timeout (errors.Is unwraps through %w).
+			return "", fmt.Errorf("gh api agent task %s: %w: %s", taskID, ErrTaskNotFound, strings.TrimSpace(out))
+		}
 		return "", fmt.Errorf("gh api agent task %s: %w: %s", taskID, err, strings.TrimSpace(out))
 	}
 	return strings.TrimSpace(out), nil

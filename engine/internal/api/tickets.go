@@ -778,6 +778,7 @@ type ticketView struct {
 	ProjectID   string   `json:"project_id,omitempty"`   // lets the scheduler group work by project (audit A1)
 	Kind        string   `json:"kind,omitempty"`         // story|bug — the board can badge bugs distinctly
 	ScreenKey   string   `json:"screen_key,omitempty"`   // the mockup a frontend story implements — the Flow graph / console link it to docs/mockups/<screen_key>.html
+	AgentLost   string   `json:"agent_lost,omitempty"`   // conductor recovery note: its agent session was declared dead (purged Copilot task / stale label) → the board badges "agente perdido" and offers requeue
 }
 
 func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
@@ -839,6 +840,7 @@ func (s *Server) ticketsCompat(w http.ResponseWriter, r *http.Request) {
 			ProjectID:   st.ProjectID,
 			Kind:        st.Kind,
 			ScreenKey:   st.ScreenKey,
+			AgentLost:   st.AgentLost,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": views})

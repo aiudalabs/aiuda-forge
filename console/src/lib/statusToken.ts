@@ -75,3 +75,16 @@ export const STATUS_TOKENS: Record<TicketStatus, StatusToken> = {
 export function statusToken(s: TicketStatus): StatusToken {
   return STATUS_TOKENS[s] ?? STATUS_TOKENS.backlog;
 }
+
+// AGENT_LOST_TOKEN — NO es un estado del ciclo (una story con la sesión perdida
+// vuelve a `backlog`); es un OVERLAY que el conductor pone cuando declaró muerta
+// la sesión del agente (task de Copilot purgada / label agent:running stale) y la
+// devolvió al backlog para re-despacho. Vive aquí para que statusToken siga siendo
+// la ÚNICA fuente del lenguaje visual: el badge "agente perdido" usa estos tokens.
+export const AGENT_LOST_TOKEN: StatusToken = {
+  pill: "lost",
+  color: "var(--danger)",
+  soft: "var(--danger-soft)",
+  border: "#c55",
+  icon: "⚠",
+};

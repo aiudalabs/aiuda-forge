@@ -211,6 +211,30 @@ func (c *Client) SetIssueRunning(ctx context.Context, repoURL string, numbers []
 // está corriendo AHORA" (debe coincidir con projection.runningLabel y con claude.yml).
 const runningLabelName = "agent:running"
 
+// RemoveIssueRunning quita el label `agent:running` de los issues dados — la
+// limpieza GitHub-observable que el conductor hace cuando declara MUERTA la sesión
+// de un agente cuyo workflow claude.yml murió sin correr su paso if:always() (el
+// caso créditos/kill). Sin esto el label queda pegado y la proyección deriva
+// `running` para siempre. Best-effort e idempotente: un 404 (label ausente en el
+// issue) NO es error — el objetivo ya se cumplió. Devuelve el primer error real.
+func (c *Client) RemoveIssueRunning(ctx context.Context, repoURL string, numbers []int) error {
+	slug, err := slugFromURL(repoURL)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, n := range numbers {
+		out, err := c.runner(ctx, "", "gh", "api", "-X", "DELETE",
+			fmt.Sprintf("repos/%s/issues/%d/labels/%s", slug, n, runningLabelName))
+		if err != nil && !strings.Contains(strings.ToLower(out), "not found") && !strings.Contains(out, "404") {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("gh api remove %s from #%d: %w: %s", runningLabelName, n, err, strings.TrimSpace(out))
+			}
+		}
+	}
+	return firstErr
+}
+
 // RepoSecretExists verifica si un Actions secret existe en el repo.
 func (c *Client) RepoSecretExists(ctx context.Context, repoURL, name string) (bool, error) {
 	slug, err := slugFromURL(repoURL)

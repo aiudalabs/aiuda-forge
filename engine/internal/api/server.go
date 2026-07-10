@@ -505,6 +505,16 @@ const (
 func (s *Server) requeueStoryUnit(st tickets.Story) (requeueVerdict, string, error) {
 	switch st.Status {
 	case tickets.StatusBacklog:
+		// The conductor already auto-recovered a lost-agent story to backlog; the
+		// operator's requeue click ACKNOWLEDGES it — clear the "agente perdido"
+		// badge so it returns to a clean, dispatchable backlog. Only a mirrored,
+		// still-flagged story acts; a plain backlog story stays an idempotent no-op.
+		if st.ExternalRef != "" && st.AgentLost != "" {
+			if err := s.Tickets.MarkAgentLost(st.ProjectID, st.ID, ""); err != nil {
+				return reqBlocked, "", err
+			}
+			return reqDone, "", nil
+		}
 		return reqNoop, "la story ya está en el backlog", nil
 	case tickets.StatusFailed:
 		// requeueable — fall through to the live-execution guard.

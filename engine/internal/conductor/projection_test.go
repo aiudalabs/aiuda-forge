@@ -2,6 +2,8 @@ package conductor
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -293,6 +295,211 @@ func TestSyncProjectDependentStoryLabelStaysRunning(t *testing.T) {
 	}
 	if res2.Changed != 0 {
 		t.Fatalf("sync 2 Changed = %d, want 0 (sin re-escritura = sin flap)", res2.Changed)
+	}
+}
+
+// errTaskState is a TaskStater that can return an error (a 404 or a transient),
+// or a live state. calls counts polls so a test can assert the sweep stopped.
+type errTaskState struct {
+	err   error
+	state string
+	calls int
+}
+
+func (f *errTaskState) AgentTaskState(context.Context, string, string) (string, error) {
+	f.calls++
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.state, nil
+}
+
+// fakeRunLive stubs the claude.yml liveness check.
+type fakeRunLive struct {
+	active bool
+	err    error
+}
+
+func (f fakeRunLive) WorkflowRunsActive(context.Context, string, string) (bool, error) {
+	return f.active, f.err
+}
+
+// fakeLabels records which issues had agent:running removed.
+type fakeLabels struct{ removed []int }
+
+func (f *fakeLabels) RemoveIssueRunning(_ context.Context, _ string, nums []int) error {
+	f.removed = append(f.removed, nums...)
+	return nil
+}
+
+func dispatchTaskSession(t *testing.T, st *tickets.Store, id, taskURL string) {
+	t.Helper()
+	if _, err := st.SyncExternalStatus(id, tickets.StatusRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetStorySession(id, taskURL); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSyncProjectNotFoundThresholdRecovers: a Copilot task that 404s "not found"
+// is transient UNTIL the threshold — then the story is declared lost, returns to
+// backlog, its session is cleaned (polling stops), and it is flagged agent_lost.
+func TestSyncProjectNotFoundThresholdRecovers(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	dispatchTaskSession(t, st, "S-02", "https://github.com/o/r/tasks/ac083fa2-89ad-4a88-a44d-86cadd1cfad8")
+
+	gh := &fakeGH{issues: []github.IssueState{{Number: 2, State: "open"}}}
+	ts := &errTaskState{err: fmt.Errorf("gh api agent task: %w: not found", github.ErrTaskNotFound)}
+	p := NewProjector(st, gh)
+	p.TaskState = ts
+
+	// Below the threshold: a 404 is not yet a verdict — the story stays running.
+	for i := 1; i < notFoundDeathThreshold; i++ {
+		if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+			t.Fatal(err)
+		}
+		if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusRunning {
+			t.Fatalf("tras %d×404: S-02 = %s, want running (aún transitorio)", i, s.Status)
+		}
+	}
+	// The threshold pass declares the task dead → backlog + session cleaned + flagged.
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := st.GetStory("S-02")
+	if s.Status != tickets.StatusBacklog {
+		t.Fatalf("tras %d×404: S-02 = %s, want backlog (task purgada declarada muerta)", notFoundDeathThreshold, s.Status)
+	}
+	if s.AgentLost == "" {
+		t.Fatalf("S-02 debería quedar flagged agent_lost tras la recuperación")
+	}
+	if urls, _ := st.SessionURLs("p1"); urls["S-02"] != "" {
+		t.Fatalf("la sesión de S-02 debería estar limpia (deja de pollear), got %q", urls["S-02"])
+	}
+	// Session gone → next pass does not poll the dead task at all (no 404 spam).
+	before := ts.calls
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	if ts.calls != before {
+		t.Fatalf("tras limpiar la sesión el barrido no debe re-pollear la task (calls %d→%d)", before, ts.calls)
+	}
+}
+
+// TestSyncProjectTransientTaskErrorKeepsRunning: a 5xx/timeout is a REAL transient
+// — the story stays running no matter how many times it repeats (never declared
+// dead), so a GitHub blip can't yank a live story.
+func TestSyncProjectTransientTaskErrorKeepsRunning(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	dispatchTaskSession(t, st, "S-02", "https://github.com/o/r/tasks/ac083fa2-89ad-4a88-a44d-86cadd1cfad8")
+
+	gh := &fakeGH{issues: []github.IssueState{{Number: 2, State: "open"}}}
+	p := NewProjector(st, gh)
+	p.TaskState = &errTaskState{err: errors.New("gh api agent task: HTTP 503 server error")}
+
+	for i := 0; i < notFoundDeathThreshold+3; i++ {
+		if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, _ := st.GetStory("S-02")
+	if s.Status != tickets.StatusRunning {
+		t.Fatalf("S-02 = %s, want running (5xx transitorio nunca declara muerte)", s.Status)
+	}
+	if s.AgentLost != "" {
+		t.Fatalf("un transitorio no debe flaggear agent_lost, got %q", s.AgentLost)
+	}
+}
+
+// TestSyncProjectStaleLabelRecovers: a story stuck running on an agent:running
+// label with NO live claude.yml run recovers after the threshold — the label is
+// removed, the story returns to backlog and is flagged agent_lost. This is the
+// live rutaviva zombie (claude_action run died without its if:always() cleanup).
+func TestSyncProjectStaleLabelRecovers(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	if _, err := st.SyncExternalStatus("S-02", tickets.StatusRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeGH{issues: []github.IssueState{{Number: 2, State: "open", Labels: []string{"agent:running"}}}}
+	labels := &fakeLabels{}
+	p := NewProjector(st, gh)
+	p.RunLive = fakeRunLive{active: false} // no hay run vivo de claude.yml
+	p.Labels = labels
+
+	for i := 1; i < staleLabelThreshold; i++ {
+		if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+			t.Fatal(err)
+		}
+		if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusRunning {
+			t.Fatalf("tras %d ticks sin run: S-02 = %s, want running (aún no confirmado stale)", i, s.Status)
+		}
+	}
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := st.GetStory("S-02")
+	if s.Status != tickets.StatusBacklog {
+		t.Fatalf("tras %d ticks: S-02 = %s, want backlog (label stale)", staleLabelThreshold, s.Status)
+	}
+	if s.AgentLost == "" {
+		t.Fatalf("S-02 debería quedar flagged agent_lost")
+	}
+	if len(labels.removed) == 0 || labels.removed[0] != 2 {
+		t.Fatalf("el label agent:running debió quitarse del issue #2, removed=%v", labels.removed)
+	}
+	// Ghost label: aunque el label siga presente (consistencia eventual), una story
+	// ya flagged NO se re-ancla a running.
+	if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusBacklog {
+		t.Fatalf("con label fantasma pero agent_lost puesto: S-02 = %s, want backlog (no re-anclar)", s.Status)
+	}
+}
+
+// TestSyncProjectActiveRunKeepsLabel: an agent:running label backed by a LIVE
+// claude.yml run is legitimate — never declared stale, never removed, no matter
+// how many ticks pass.
+func TestSyncProjectActiveRunKeepsLabel(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	gh := &fakeGH{issues: []github.IssueState{{Number: 2, State: "open", Labels: []string{"agent:running"}}}}
+	labels := &fakeLabels{}
+	p := NewProjector(st, gh)
+	p.RunLive = fakeRunLive{active: true} // hay un run vivo
+	p.Labels = labels
+	for i := 0; i < staleLabelThreshold+3; i++ {
+		if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusRunning {
+		t.Fatalf("S-02 = %s, want running (run vivo → label legítimo)", s.Status)
+	}
+	if len(labels.removed) != 0 {
+		t.Fatalf("no debió quitarse ningún label con run vivo, removed=%v", labels.removed)
+	}
+}
+
+// TestSyncProjectStaleLabelInertWithoutCapability: sin RunLive/Labels (host sin
+// capacidad de recuperación) el label ancla running como siempre — comportamiento
+// intacto, sin recuperación a ciegas.
+func TestSyncProjectStaleLabelInertWithoutCapability(t *testing.T) {
+	st := newStore(t)
+	seed(t, st)
+	gh := &fakeGH{issues: []github.IssueState{{Number: 2, State: "open", Labels: []string{"agent:running"}}}}
+	p := NewProjector(st, gh) // RunLive/Labels nil
+	for i := 0; i < staleLabelThreshold+3; i++ {
+		if _, err := p.SyncProject(context.Background(), "p1", "https://github.com/o/r"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s, _ := st.GetStory("S-02"); s.Status != tickets.StatusRunning {
+		t.Fatalf("S-02 = %s, want running (sin capacidad de recuperación, label ancla)", s.Status)
 	}
 }
 

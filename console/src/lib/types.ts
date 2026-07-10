@@ -390,6 +390,7 @@ export interface OrchestratorTicket {
   repo?: string;        // owner/repo the story lands in
   kind?: string;        // "story" (default) | "bug" — el grafo/board pintan los bugs distinto
   screen_key?: string;  // la pantalla/mockup que una story de frontend implementa → docs/mockups/<screen_key>.html
+  agent_lost?: string;  // nota del conductor: su sesión de agente se declaró muerta (task purgada / label stale) y volvió a backlog → badge "agente perdido" + botón de recuperación
 }
 
 // ─── Vista Agentes (pivote GitHub-native, PLAN §4 "Vistas nuevas") ───────────

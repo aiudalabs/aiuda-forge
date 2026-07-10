@@ -12,7 +12,8 @@ import { useDeleteStory, useExportStory, useRequeue, useRequeueStory } from "@/l
 import { ApiError } from "@/lib/api";
 import type { DispatchCandidate, OrchestratorTicket } from "@/lib/types";
 import { LaneChip } from "@/components/tickets/LaneChip";
-import { statusToken } from "@/lib/statusToken";
+import { AGENT_LOST_TOKEN, statusToken } from "@/lib/statusToken";
+import { isAgentLost } from "@/lib/agentLost";
 import { useT } from "@/lib/i18n";
 
 // Acceptance criteria come as newline / "- " separated lines; render them as a list.
@@ -94,6 +95,25 @@ export function TicketDetail({
     });
   }
 
+  // doRecover: acción del badge "agente perdido". La story ya está en el backlog
+  // (el conductor la recuperó); esto la confirma como lista para re-despacho y
+  // limpia el marcador. Bajo riesgo (no re-ejecuta ni gasta presupuesto por sí
+  // mismo — el dispatch es aparte), así que no lleva el confirm del reencolado.
+  function doRecover() {
+    if (!ticket) return;
+    setActionError(null);
+    requeueStory.mutate(ticket.id, {
+      onSuccess: (r) => {
+        if (r.requeued === false) setActionError(r.reason ?? t("tickets.detail.requeueNoop"));
+        else onClose();
+      },
+      onError: (e) => {
+        if (e instanceof ApiError && e.detail) setActionError(e.detail);
+        else setActionError(e instanceof Error ? e.message : String(e));
+      },
+    });
+  }
+
   function doDelete() {
     if (!ticket) return;
     if (!window.confirm(t("tickets.detail.deleteConfirm"))) return;
@@ -148,6 +168,35 @@ export function TicketDetail({
                       {ticket.repo.replace(/^https?:\/\/(www\.)?github\.com\//, "")}
                     </span>
                   )}
+                </div>
+              )}
+
+              {/* Agente perdido: el conductor declaró muerta la sesión (task de
+                  Copilot purgada / label agent:running stale) y devolvió la story
+                  al backlog para re-despacho. El operador ya no está ciego: ve el
+                  motivo y tiene el botón de recuperación abajo. */}
+              {isAgentLost(ticket) && (
+                <div
+                  className="td-agent-lost"
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "flex-start",
+                    padding: "10px 12px",
+                    marginBottom: 14,
+                    borderRadius: 6,
+                    background: AGENT_LOST_TOKEN.soft,
+                    border: `1px solid ${AGENT_LOST_TOKEN.border}`,
+                    color: AGENT_LOST_TOKEN.color,
+                    fontSize: 12,
+                  }}
+                >
+                  <span aria-hidden>{AGENT_LOST_TOKEN.icon}</span>
+                  <span>
+                    <strong>{t("tickets.detail.agentLostTitle")}</strong>
+                    <br />
+                    {ticket.agent_lost}
+                  </span>
                 </div>
               )}
 
@@ -270,6 +319,21 @@ export function TicketDetail({
                 ) : !ticket.session_url ? (
                   <div className="td-empty">{t("tickets.detail.notRun")}</div>
                 ) : null}
+                {/* Recuperar un agente perdido: el conductor ya devolvió la story
+                    al backlog; este botón la confirma como lista para re-despacho
+                    (limpia el badge). Es la acción de recuperación de #15 sobre la
+                    story marcada agent_lost, sin que el operador tenga que cavar. */}
+                {isAgentLost(ticket) && (
+                  <button
+                    className="btn primary"
+                    style={{ width: "100%" }}
+                    onClick={doRecover}
+                    disabled={requeueStory.isPending}
+                    title={t("tickets.detail.recoverTitle")}
+                  >
+                    {requeueStory.isPending ? t("tickets.detail.requeueing") : t("tickets.detail.recover")}
+                  </button>
+                )}
                 {/* Reencolar: solo una story `failed` es reencolable (running/
                     in_review están vivas, done ya mergeó). Espejada en GitHub →
                     requeue nativo (vuelve a backlog + limpia la sesión de agente).
