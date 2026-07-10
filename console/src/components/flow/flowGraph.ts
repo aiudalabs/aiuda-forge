@@ -101,6 +101,7 @@ export interface CeremonyNodeDesc {
   order: number; // orden del sprint al que pertenece (para la ubicación entre columnas)
   runId: string; // *_run_id — feature-detect: solo existe si el run existe
   state: SealState; // done (*_at>0) | running (run en vuelo)
+  at: number | null; // *_at (epoch) cuando la ceremonia se selló — para el sello con fecha
   accepted: boolean; // review con reviewed_at>0 → preview disponible (#23)
 }
 
@@ -312,6 +313,7 @@ export function buildCeremonyNodes(sprints: Sprint[]): CeremonyNodeDesc[] {
         order,
         runId: s.planning_run_id,
         state: sealState(s.planned_at, s.planning_run_id),
+        at: s.planned_at && s.planned_at > 0 ? s.planned_at : null,
         accepted: false,
       });
     }
@@ -323,6 +325,7 @@ export function buildCeremonyNodes(sprints: Sprint[]): CeremonyNodeDesc[] {
         order,
         runId: s.review_run_id,
         state: sealState(s.reviewed_at, s.review_run_id),
+        at: s.reviewed_at && s.reviewed_at > 0 ? s.reviewed_at : null,
         accepted: !!(s.reviewed_at && s.reviewed_at > 0), // review aceptado → preview (#23)
       });
     }
@@ -334,6 +337,7 @@ export function buildCeremonyNodes(sprints: Sprint[]): CeremonyNodeDesc[] {
         order,
         runId: s.retro_run_id,
         state: sealState(s.retro_at, s.retro_run_id),
+        at: s.retro_at && s.retro_at > 0 ? s.retro_at : null,
         accepted: false,
       });
     }

@@ -74,6 +74,20 @@ function presetOf(f: ProjectSettings): Preset {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SettingsView() {
+  // Deep-link ?focus=autonomy|notifications (desde las estaciones "no activada" del
+  // ciclo /flow): desplaza a la sección y la resalta un instante. Se lee de la URL en
+  // un effect (no useSearchParams) para no exigir un Suspense boundary en el build.
+  useEffect(() => {
+    const focus = new URLSearchParams(window.location.search).get("focus");
+    if (focus !== "autonomy" && focus !== "notifications") return;
+    const el = document.getElementById(focus);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("focus-flash");
+    const tid = setTimeout(() => el.classList.remove("focus-flash"), 1800);
+    return () => clearTimeout(tid);
+  }, []);
+
   return (
     <div className="settings-stack">
       <ConnectionsSection />
@@ -244,6 +258,24 @@ function ProjectSettingsSection() {
   const applyPreset = (p: Exclude<Preset, "custom">) =>
     setForm((f) => (f ? { ...f, ...PRESET_FIELDS[p] } : f));
 
+  // Sub-eje "Ceremonias": los tres *_mode ("ceremony" = gate humano activado).
+  const CEREMONIES = ["planning", "review", "retro"] as const;
+  const cerOn = form ? CEREMONIES.filter((k) => form[`${k}_mode`] === "ceremony") : [];
+  const toggleCeremony = (k: (typeof CEREMONIES)[number]) =>
+    setForm((f) => (f ? { ...f, [`${k}_mode`]: f[`${k}_mode`] === "ceremony" ? "auto" : "ceremony" } : f));
+  // Texto de UNA línea por combinación de los dos ejes: qué hará Fluxo.
+  const autonomyLine = form
+    ? `${t(`settings.autonomy.conf.${preset}`)} · ${
+        cerOn.length === 0
+          ? t("settings.autonomy.cer.none")
+          : cerOn.length === CEREMONIES.length
+            ? t("settings.autonomy.cer.all")
+            : t("settings.autonomy.cer.some", {
+                list: cerOn.map((k) => t(`settings.ceremony.${k}`)).join(" · "),
+              })
+      }.`
+    : "";
+
   return (
     <div style={{ marginTop: 22 }}>
       <div className="sectitle">
@@ -300,23 +332,54 @@ function ProjectSettingsSection() {
         </div>
       ) : (
         <>
-          {/* Preset maestro de autonomía. */}
-          <div className="card" style={{ marginBottom: 14 }}>
-            <h3>{t("settings.preset.q")}</h3>
-            <div className="seg" style={{ marginTop: 12 }}>
-              {(["manual", "assisted", "autonomous"] as const).map((p) => (
-                <button
-                  key={p}
-                  className={`seg-btn${preset === p ? " on" : ""}`}
-                  onClick={() => applyPreset(p)}
-                >
-                  {t(`settings.preset.${p}`)}
-                </button>
-              ))}
+          {/* Autonomía — un solo encabezado con DOS sub-ejes rotulados claro:
+              Confirmaciones (dispatch y merge, el preset) y Ceremonias Scrum
+              (planning · review · retro, los *_mode). Semántica de settings intacta;
+              solo se agrupa la presentación + una línea de qué hará Fluxo. La
+              reconciliación profunda en perfiles queda como ◆ decisión (ver PR). */}
+          <div id="autonomy" className="card auto-card" style={{ marginBottom: 14 }}>
+            <h3>{t("settings.autonomy.title")}</h3>
+            <div className="role" style={{ marginTop: 2 }}>{t("settings.autonomy.intro")}</div>
+
+            <div className="axis">
+              <div className="axis-label">{t("settings.autonomy.axisConfirm")}</div>
+              <div className="seg">
+                {(["manual", "assisted", "autonomous"] as const).map((p) => (
+                  <button
+                    key={p}
+                    className={`seg-btn${preset === p ? " on" : ""}`}
+                    onClick={() => applyPreset(p)}
+                  >
+                    {t(`settings.preset.${p}`)}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="role" style={{ marginTop: 10, minHeight: 0 }}>
-              {t(`settings.preset.${preset}Desc`)}
+
+            <div className="axis">
+              <div className="axis-label">{t("settings.autonomy.axisCeremonies")}</div>
+              <div className="chips">
+                {CEREMONIES.map((k) => {
+                  const on = !!form && form[`${k}_mode`] === "ceremony";
+                  return (
+                    <button
+                      key={k}
+                      className={`chip${on ? " on" : ""}`}
+                      aria-pressed={on}
+                      onClick={() => toggleCeremony(k)}
+                    >
+                      {on ? "◆ " : ""}
+                      {t(`settings.ceremony.${k}`)}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="role" style={{ marginTop: 8, fontSize: 12 }}>
+                {t("settings.autonomy.ceremoniesHint")}
+              </div>
             </div>
+
+            <div className="combo">{autonomyLine}</div>
           </div>
 
           {/* Avanzado — perillas sueltas, colapsado por default. */}
@@ -377,6 +440,45 @@ function ProjectSettingsSection() {
           font-size: 14px;
           padding: 6px 0;
           list-style: revert;
+        }
+        .axis {
+          margin-top: 16px;
+        }
+        .axis-label {
+          font-size: 12px;
+          font-weight: 800;
+          color: var(--ink2, #333);
+          margin-bottom: 8px;
+        }
+        .chips {
+          display: inline-flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .chip {
+          padding: 7px 14px;
+          border: 1px solid var(--stroke, #e6e6e6);
+          border-radius: 999px;
+          background: var(--bg2, #faf8f4);
+          color: var(--ink2, #555);
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .chip.on {
+          border-color: var(--accent, #e8440a);
+          background: var(--accent-soft, #fdede5);
+          color: var(--accent, #e8440a);
+        }
+        .combo {
+          margin-top: 16px;
+          padding: 10px 12px;
+          border-left: 3px solid var(--accent, #e8440a);
+          background: var(--bg2, #faf8f4);
+          border-radius: 6px;
+          font-size: 12.5px;
+          line-height: 1.5;
+          color: var(--ink, #1a1712);
         }
       `}</style>
     </div>

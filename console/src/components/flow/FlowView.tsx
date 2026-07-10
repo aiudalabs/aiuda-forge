@@ -24,7 +24,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { useActiveProjectId } from "@/lib/activeProject";
+import { useActiveProjectId, useActiveProject } from "@/lib/activeProject";
 import {
   useDesignRuns,
   useDesignRun,
@@ -47,7 +47,8 @@ import type { DesignRun } from "@/lib/types";
 import { buildFlow, type CeremonyModes } from "./flowGraph";
 import { layoutFlow } from "./layout";
 import { NODE_TYPES } from "./nodes";
-import { FlowCycle } from "./cycle/FlowCycle";
+import { FlowCycle, type SettingsFocus } from "./cycle/FlowCycle";
+import { IterationModal } from "@/components/studio/StudioModals";
 
 // Pestañas de /flow: la vista CICLO (el diagrama del ciclo Scrum, default) y el
 // grafo DETALLE (React Flow). Ambas renderizan el MISMO modelo y comparten `sel`
@@ -77,6 +78,7 @@ function FlowInner() {
   const router = useRouter();
   const qc = useQueryClient();
   const projectId = useActiveProjectId();
+  const { project } = useActiveProject();
 
   const { data: mode } = useApiMode();
   const { data: designRuns } = useDesignRuns();
@@ -89,6 +91,7 @@ function FlowInner() {
   const [fullscreen, setFullscreen] = useState(false);
   const [tab, setTab] = useState<FlowTab>("cycle");
   const [sel, setSel] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false); // modal ＋ añadir al Product Backlog
   const mint = useMintPreviewToken(projectId);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -237,6 +240,15 @@ function FlowInner() {
 
   // ── Navegación de la vista Ciclo (estación → acción) ─────────────────────────
   const openBoard = useCallback(() => router.push("/tickets"), [router]);
+  // Estación "no activada" → Settings, con deep-link a la sección que la configura.
+  const openSettings = useCallback(
+    (focus: SettingsFocus) => router.push(`/settings?focus=${focus}`),
+    [router],
+  );
+  // ⓘ → la página "qué es cada estación" (Scrum ↔ Fluxo).
+  const openAbout = useCallback(() => router.push("/flow/about"), [router]);
+  // El repo del proyecto para el modal de solicitud de cambio (iterate = backlog delta).
+  const iterateRepo = designRun?.repo ?? picked?.repo ?? project?.repo ?? "";
   const openSprint = useCallback(
     (sid: string) => router.push(`/tickets?view=sprints&sprint=${encodeURIComponent(sid)}`),
     [router],
@@ -346,6 +358,9 @@ function FlowInner() {
             onOpenBoard={openBoard}
             onOpenSprint={openSprint}
             onOpenPreview={openPreview}
+            onOpenSettings={openSettings}
+            onAddBacklog={() => setShowAdd(true)}
+            onOpenAbout={openAbout}
             previewPending={mint.isPending}
           />
         ) : !hasAnything ? (
@@ -424,6 +439,20 @@ function FlowInner() {
           ) : undefined
         }
       />
+
+      {/* Modal ＋ añadir al Product Backlog (solicitud de cambio → workflow iterate). */}
+      <div className={`overlay ${showAdd ? "on" : ""}`} onClick={() => setShowAdd(false)} />
+      {showAdd && projectId && (
+        <IterationModal
+          projectId={projectId}
+          repo={iterateRepo}
+          onClose={() => setShowAdd(false)}
+          onCreated={() => {
+            setShowAdd(false);
+            router.push("/tickets");
+          }}
+        />
+      )}
     </div>
   );
 }

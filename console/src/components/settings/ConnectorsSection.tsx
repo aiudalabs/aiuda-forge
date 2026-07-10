@@ -100,7 +100,7 @@ export function ConnectorsSection() {
   });
 
   return (
-    <div className="cwrap">
+    <div className="cwrap" id="notifications">
       <div className="sectitle">
         <h2>{t("conn.title")}</h2>
         <span className="c">{t("conn.subtitle")}</span>

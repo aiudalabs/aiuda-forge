@@ -140,12 +140,41 @@ export function activeSprint(sprints: SprintGroupDesc[]): SprintGroupDesc | null
 // Estaciones de ceremonia (planning / review / retro) del sprint activo
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Ciclo de vida de 5 estados de una estación de ceremonia como CONTROL del operador,
+// derivado de datos reales (el modo del proyecto + el run/sello de la ceremonia del
+// sprint activo). Cada estado tiene SU acción (la resuelve el componente):
+//   off      → la ceremonia no está activada (modo "auto"): click ⇒ abrir Settings.
+//   waiting  → activada pero aún no le toca (sin run): informativa ("se activa al…").
+//   running  → el run está en vuelo: click ⇒ el run en vivo.
+//   awaiting → el run terminó y espera tu decisión: click ⇒ el gate/run.
+//   done     → sellada (con fecha): click ⇒ el run histórico.
+// Nota: "awaiting" hoy no es distinguible de "running" con los datos del sprint
+// (no hay estado de gate de ceremonia en el modelo); queda modelado para cuando el
+// engine lo exponga. La derivación colapsa run-en-vuelo → running.
+export type ControlState = "off" | "waiting" | "running" | "awaiting" | "done";
+
 export interface CeremonyStation {
   kind: CeremonyKind;
   // Modo auto → la estación se ATENÚA (opacity), nunca se oculta: la forma no cambia.
   dim: boolean;
-  state: StationState; // done | running | pending (nunca awaiting/failed: no aplican)
+  control: ControlState; // ciclo de vida de 5 estados (arriba)
+  state: StationState; // forma del SVG: done | running | pending
   runId: string | null; // *_run_id → abre el RunDrawer de la ceremonia
+  at: number | null; // *_at (epoch) para el sello con fecha cuando control === "done"
+}
+
+// Colapsa el ciclo de vida al StationState que pinta la forma del SVG.
+function shapeStateFor(control: ControlState): StationState {
+  switch (control) {
+    case "running":
+      return "running";
+    case "awaiting":
+      return "awaiting";
+    case "done":
+      return "done";
+    default:
+      return "pending"; // off (atenuado) y waiting comparten la forma punteada
+  }
 }
 
 function ceremonyStation(
@@ -158,10 +187,22 @@ function ceremonyStation(
   const node = sprint
     ? model.ceremonies.find((c) => c.kind === kind && c.sprintId === sprint.id) ?? null
     : null;
-  // El sello del sprint (por *_at) gobierna done/running; sin run → pending.
-  const seal = sprint?.seals[kind];
-  const state: StationState = node?.state ?? seal ?? "pending";
-  return { kind, dim, state, runId: node?.runId ?? null };
+  // Derivación del ciclo de vida:
+  //   modo auto            → off (no activada).
+  //   modo ceremony + run  → running (en vuelo) o done (*_at sellado).
+  //   modo ceremony sin run→ waiting (activada, aún no le toca).
+  let control: ControlState;
+  if (dim) control = "off";
+  else if (node) control = node.state === "done" ? "done" : "running";
+  else control = "waiting";
+  return {
+    kind,
+    dim,
+    control,
+    state: shapeStateFor(control),
+    runId: node?.runId ?? null,
+    at: node?.at ?? null,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

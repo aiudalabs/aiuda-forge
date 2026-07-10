@@ -4433,6 +4433,20 @@ main:has(.studio-shell) > .studio-shell {
 /* Drawer de fase: reusa .drawer/.db; el panel del Studio (PhasePanel) va dentro. */
 .flow-phase-drawer .db { padding-top: 4px; }
 
+/* Deep-link ?focus= (estación "no activada" del ciclo → sección de Settings):
+   resalta la sección un instante al aterrizar. Sin transform (scroll-safe). */
+.focus-flash {
+  animation: focus-flash 1.8s ease-out;
+  border-radius: 10px;
+}
+@keyframes focus-flash {
+  0%, 30% { box-shadow: 0 0 0 3px var(--accent-line, #f2b7a3); }
+  100% { box-shadow: 0 0 0 3px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .focus-flash { animation: none; }
+}
+
 /* ══ Vista CICLO de /flow — diagrama del ciclo Scrum portado del doc SDLC-map ══ */
 /* Tema PROPIO del componente: la paleta Aiuda del documento vive como CSS vars
    LOCALES (no el theme de la consola), así el diagrama se ve igual en light/dark. */
@@ -4460,12 +4474,52 @@ main:has(.studio-shell) > .studio-shell {
   padding: 62px 16px 20px;
 }
 .cyc-card {
+  position: relative;
   background: var(--cyc-card);
   border: 1px solid var(--cyc-line);
   border-radius: 14px;
   padding: 14px 8px;
   width: 100%;
   max-width: 1080px;
+}
+/* ⓘ — "qué es cada estación": botón sobre el SVG, esquina superior derecha */
+.cyc .cyc-about {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--cyc-line);
+  background: var(--cyc-white);
+  color: var(--cyc-blue);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+.cyc .cyc-about:hover {
+  border-color: var(--cyc-blue);
+  background: var(--cyc-blue-soft);
+}
+/* ＋ añadir al Product Backlog — botón HTML en un foreignObject bajo la estación */
+.cyc .cyc-add {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 4px;
+  border-radius: 7px;
+  border: 1px solid var(--cyc-orange);
+  background: var(--cyc-orange-soft);
+  color: var(--cyc-orange);
+  font: 700 9.5px -apple-system, "Segoe UI", Roboto, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+}
+.cyc .cyc-add:hover {
+  background: var(--cyc-orange);
+  color: #fff;
 }
 .cyc-svg {
   display: block;
