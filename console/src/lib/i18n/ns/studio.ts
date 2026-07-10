@@ -121,13 +121,13 @@ export const studio = {
     "studio.view.acceptanceCriteria": "Criterios de aceptación",
 
     // Iteration modal
-    "studio.iteration.title": "Solicitud de cambio",
+    "studio.iteration.title": "Añadir al Product Backlog",
     "studio.iteration.hint": "El producto ya está diseñado y publicado. Describe qué quieres añadir o cambiar — se planifica solo el backlog nuevo (delta) sobre lo ya construido, sin rehacer el diseño.",
     "studio.iteration.label": "¿Qué quieres añadir o cambiar?",
     "studio.iteration.placeholder": "Ej: añade login con Google, un panel de métricas para el admin, y notificaciones por email cuando cambie el estado de un pedido.",
     "studio.iteration.validation": "Describe el cambio o la nueva funcionalidad.",
     "studio.iteration.cancel": "Cancelar",
-    "studio.iteration.launch": "Crear solicitud",
+    "studio.iteration.launch": "Añadir al backlog",
     "studio.iteration.launching": "Lanzando…",
     "studio.view.regenerate": "↻ Regenerar",
     "studio.view.regenerating": "Regenerando…",
@@ -267,13 +267,13 @@ export const studio = {
     "studio.view.acceptanceCriteria": "Acceptance criteria",
 
     // Iteration modal
-    "studio.iteration.title": "Change request",
+    "studio.iteration.title": "Add to Product Backlog",
     "studio.iteration.hint": "The product is already designed and published. Describe what you want to add or change — only the new (delta) backlog is planned on top of what's already built, without redoing the design.",
     "studio.iteration.label": "What do you want to add or change?",
     "studio.iteration.placeholder": "E.g.: add Google login, a metrics dashboard for the admin, and email notifications when an order's status changes.",
     "studio.iteration.validation": "Describe the change or the new feature.",
     "studio.iteration.cancel": "Cancel",
-    "studio.iteration.launch": "Create request",
+    "studio.iteration.launch": "Add to backlog",
     "studio.iteration.launching": "Launching…",
     "studio.view.regenerate": "↻ Regenerate",
     "studio.view.regenerating": "Regenerating…",
@@ -413,13 +413,13 @@ export const studio = {
     "studio.view.acceptanceCriteria": "Critérios de aceitação",
 
     // Iteration modal
-    "studio.iteration.title": "Solicitação de mudança",
+    "studio.iteration.title": "Adicionar ao Product Backlog",
     "studio.iteration.hint": "O produto já está desenhado e publicado. Descreva o que você quer adicionar ou mudar — apenas o novo backlog (delta) é planejado sobre o que já foi construído, sem refazer o design.",
     "studio.iteration.label": "O que você quer adicionar ou mudar?",
     "studio.iteration.placeholder": "Ex.: adicione login com Google, um painel de métricas para o admin e notificações por e-mail quando o status de um pedido mudar.",
     "studio.iteration.validation": "Descreva a mudança ou a nova funcionalidade.",
     "studio.iteration.cancel": "Cancelar",
-    "studio.iteration.launch": "Criar solicitação",
+    "studio.iteration.launch": "Adicionar ao backlog",
     "studio.iteration.launching": "Iniciando…",
     "studio.view.regenerate": "↻ Regenerar",
     "studio.view.regenerating": "Regenerando…",

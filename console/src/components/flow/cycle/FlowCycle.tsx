@@ -1,18 +1,17 @@
 "use client";
 
-// FlowCycle — la vista CICLO de /flow: el diagrama "00 · El ciclo Scrum de Fluxo"
-// portado EXACTO (viewBox 940×560, mismas posiciones/formas/textos/paleta Aiuda del
-// documento SDLC-map). Es un SEGUNDO renderer del MISMO FlowModel que el grafo — no
-// duplica derivación: consume cycleModel (puro, testeado) para mapear cada estación
-// a su estado VIVO. La semántica original naranja=existe / azul-punteado=propuesto se
-// re-mapea conservando el lenguaje visual: sólido naranja = done/activo; punteado azul
-// = pendiente/aún no corrido; en-curso anima el stroke (dash-offset, SIN transform en
-// contenedores); los ◆ de gates pulsan ámbar cuando esperan al humano. Los modos auto
-// atenúan (opacity) las ceremonias — la FORMA nunca cambia. Click por estación navega
-// a actuar (drawer de fase/gate, RunDrawer de ceremonia, Sprints, Board, preview).
+// FlowCycle — la vista CICLO de /flow como TABLERO DE CONTROL del operador (no un
+// diagrama decorativo): viewBox 940×560, terminología 100% Scrum, y cada estación es
+// un CONTROL clicable con estado VIVO y SU acción. Es un SEGUNDO renderer del MISMO
+// FlowModel que el grafo — no duplica derivación: consume cycleModel (puro, testeado).
+// Lenguaje visual: sólido naranja = done/activo; punteado azul = pendiente/aún no
+// corrido; en-curso anima el stroke (dash-offset, SIN transform en contenedores); los
+// ◆ pulsan ámbar cuando esperan al humano. Cada estación de ceremonia implementa el
+// ciclo de vida de 5 estados de cycleModel: off → Settings; waiting → informativa;
+// running/awaiting/done → su run/gate. Ninguna caja punteada queda muda.
 
 import { useMemo } from "react";
-import { useT } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 import { statusToken } from "@/lib/statusToken";
 import type { CeremonyModes, FlowModel } from "../flowGraph";
 import {
@@ -22,6 +21,9 @@ import {
   type StationState,
 } from "./cycleModel";
 
+// Sección de Settings a la que salta una estación "no activada" (deep-link ?focus=).
+export type SettingsFocus = "autonomy" | "notifications";
+
 export interface FlowCycleProps {
   model: FlowModel;
   modes: CeremonyModes;
@@ -30,13 +32,13 @@ export interface FlowCycleProps {
   onOpenBoard: () => void; // PRODUCT BACKLOG
   onOpenSprint: (sprintId: string) => void; // círculo SPRINT N · SPRINT BACKLOG
   onOpenPreview: (runId: string) => void; // INCREMENTO
+  onOpenSettings: (focus: SettingsFocus) => void; // estación "no activada" → configurar
+  onAddBacklog: () => void; // ＋ añadir al Product Backlog (modal de solicitud de cambio)
+  onOpenAbout: () => void; // ⓘ — qué es cada estación (página /flow/about)
   previewPending?: boolean;
 }
 
 // ── Estilo de una forma (rect/circle) según su estado vivo ──────────────────────
-// Colores por CSS vars locales (paleta Aiuda del doc), aplicadas inline: el sólido
-// naranja del "existe", el azul-punteado del "propuesto", ámbar del gate, rojo de la
-// falla. La animación de marcha (running) vive en la clase CSS cyc-run.
 function shapeProps(
   state: StationState,
   opts: { soft?: boolean; width?: number; dim?: boolean; selected?: boolean } = {},
@@ -82,9 +84,7 @@ function shapeProps(
   };
 }
 
-// Color de una LÍNEA de fase de la banda de diseño. done = tinta oscura (idéntico al
-// original, "existe"); el resto surface el estado. NO usa statusToken (es estado de
-// FASE, no de story): paleta local.
+// Color de una LÍNEA de fase de la banda de diseño.
 function lineColor(state: StationState): string {
   switch (state) {
     case "done":
@@ -101,8 +101,19 @@ function lineColor(state: StationState): string {
 }
 
 export function FlowCycle(props: FlowCycleProps) {
-  const { model, modes, selected, onSelect, onOpenBoard, onOpenSprint, onOpenPreview } = props;
-  const t = useT();
+  const {
+    model,
+    modes,
+    selected,
+    onSelect,
+    onOpenBoard,
+    onOpenSprint,
+    onOpenPreview,
+    onOpenSettings,
+    onAddBacklog,
+    onOpenAbout,
+  } = props;
+  const { t, lang } = useI18n();
   const v = useMemo(() => buildCycleView(model, modes), [model, modes]);
 
   const stageByKey = useMemo(() => new Map(v.stages.map((s) => [s.key, s])), [v.stages]);
@@ -114,7 +125,30 @@ export function FlowCycle(props: FlowCycleProps) {
   // Ids de nodo de ceremonia (== los que el drawer compartido resuelve en el modelo).
   const ceremonyId = (c: CeremonyStation) => (sprintId ? `ceremony:${c.kind}:${sprintId}` : "");
 
-  // Handlers de estación (sólo se enganchan si hay algo que abrir).
+  // ── El sublabel dinámico de una ceremonia: su estado VIVO como texto de control ──
+  const dateFmt = useMemo(
+    () => new Intl.DateTimeFormat(lang, { day: "2-digit", month: "short" }),
+    [lang],
+  );
+  const controlLabel = (c: CeremonyStation): string => {
+    switch (c.control) {
+      case "off":
+        return t("flow.cycle.ctrl.off");
+      case "waiting":
+        return t(`flow.cycle.wait.${c.kind}`);
+      case "running":
+        return t("flow.cycle.ctrl.running");
+      case "awaiting":
+        return t("flow.cycle.ctrl.awaiting");
+      case "done":
+        return c.at ? `${t("flow.cycle.ctrl.done")} · ${dateFmt.format(new Date(c.at))}` : t("flow.cycle.ctrl.done");
+    }
+  };
+  // Color del sublabel de control según su estado (amber cuando espera decisión).
+  const controlColor = (c: CeremonyStation): string =>
+    c.control === "awaiting" ? "var(--cyc-amber)" : "var(--cyc-blue)";
+
+  // Handlers de estación.
   const openStage = (k: StageKey) => {
     const s = stage(k);
     if (s.target) onSelect(s.target);
@@ -122,9 +156,16 @@ export function FlowCycle(props: FlowCycleProps) {
   const openGate = () => {
     if (v.awaitingGate) onSelect(v.awaitingGate);
   };
-  const openCeremony = (c: CeremonyStation) => {
+  // Click de una ceremonia = su acción según el ciclo de vida:
+  //   off → Settings (activarla) · running/awaiting/done → su run · waiting → informativa.
+  const clickCeremony = (c: CeremonyStation) => {
+    if (c.control === "off") {
+      onOpenSettings("autonomy");
+      return;
+    }
     if (c.runId && sprintId) onSelect(ceremonyId(c));
   };
+  const ceremonyClickable = (c: CeremonyStation) => c.control === "off" || !!c.runId;
   const openSprint = () => {
     if (sprintId) onOpenSprint(sprintId);
   };
@@ -134,9 +175,78 @@ export function FlowCycle(props: FlowCycleProps) {
 
   const tok = (s: "done" | "running" | "failed") => statusToken(s).color;
 
+  // Render de una estación de ceremonia (planning/review/retro) como control.
+  const ceremonyBox = (
+    c: CeremonyStation,
+    geom: { x: number; y: number; w: number; h: number; cx: number },
+    titleLines: string[],
+    descLine: string,
+  ) => {
+    const clickable = ceremonyClickable(c);
+    const titleY = geom.y + 24;
+    return (
+      <g
+        className={clickable ? "cyc-station" : undefined}
+        onClick={() => clickCeremony(c)}
+        role={clickable ? "button" : undefined}
+        aria-label={`${titleLines.join(" ")} — ${controlLabel(c)}`}
+      >
+        <rect
+          x={geom.x}
+          y={geom.y}
+          width={geom.w}
+          height={geom.h}
+          rx="10"
+          {...shapeProps(c.state, { soft: true, dim: c.dim, selected: selected === ceremonyId(c) })}
+        />
+        {titleLines.map((ln, i) => (
+          <text
+            key={i}
+            x={geom.cx}
+            y={titleY + i * 14}
+            textAnchor="middle"
+            fontSize="11"
+            fontWeight="800"
+            className="f-blue"
+            opacity={c.dim ? 0.55 : 1}
+          >
+            {ln}
+          </text>
+        ))}
+        <text
+          x={geom.cx}
+          y={titleY + titleLines.length * 14 + 2}
+          textAnchor="middle"
+          fontSize="8.5"
+          className="f-blue"
+          opacity={c.dim ? 0.55 : 1}
+        >
+          {descLine}
+        </text>
+        {/* sublabel dinámico: el estado VIVO como control */}
+        <text
+          x={geom.cx}
+          y={titleY + titleLines.length * 14 + 14}
+          textAnchor="middle"
+          fontSize="8.5"
+          fontWeight="700"
+          className={c.control === "awaiting" ? "cyc-pulse" : undefined}
+          style={{ fill: controlColor(c) }}
+          opacity={c.dim ? 0.7 : 1}
+        >
+          {controlLabel(c)}
+        </text>
+      </g>
+    );
+  };
+
   return (
     <div className="cyc-scroll">
       <div className="cyc-card cyc">
+        {/* ⓘ — qué es cada estación (Scrum ↔ Fluxo). Sobre el SVG, esquina superior. */}
+        <button className="cyc-about" onClick={onOpenAbout} title={t("flow.cycle.about")} aria-label={t("flow.cycle.about")}>
+          ⓘ
+        </button>
         <svg viewBox="0 0 940 560" className="cyc-svg" role="img" aria-label={t("flow.cycle.aria")}>
           <defs>
             <marker id="cycAO" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
@@ -147,7 +257,7 @@ export function FlowCycle(props: FlowCycleProps) {
             </marker>
           </defs>
 
-          {/* ============ IZQUIERDA: pipeline de diseño ============ */}
+          {/* ============ IZQUIERDA: pipeline de diseño (STUDIO) ============ */}
           <rect x="18" y="118" width="150" height="300" rx="14" {...shapeProps(v.bandState, { soft: true })} />
           <text x="93" y="143" textAnchor="middle" fontSize="13" fontWeight="800" className="f-orange">
             {t("flow.cycle.studioTitle")}
@@ -215,40 +325,30 @@ export function FlowCycle(props: FlowCycleProps) {
               {t("flow.cycle.backlogS2")}
             </text>
           </g>
+          {/* ＋ añadir al Product Backlog — abre el modal de solicitud de cambio.
+              foreignObject: botón HTML real (accesible) anclado bajo la estación. */}
+          <foreignObject x="8" y="422" width="168" height="24">
+            <button
+              className="cyc-add"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddBacklog();
+              }}
+            >
+              {t("flow.cycle.backlogAdd")}
+            </button>
+          </foreignObject>
 
           {/* flecha backlog -> planning */}
           <path d="M168 366 H 216" className="ar-o" markerEnd="url(#cycAO)" />
 
-          {/* ============ SPRINT PLANNING (ceremonia) ============ */}
-          <g
-            className={v.planning.runId ? "cyc-station" : undefined}
-            onClick={() => openCeremony(v.planning)}
-          >
-            <rect
-              x="222"
-              y="330"
-              width="118"
-              height="72"
-              rx="10"
-              {...shapeProps(v.planning.state, {
-                soft: true,
-                dim: v.planning.dim,
-                selected: selected === ceremonyId(v.planning),
-              })}
-            />
-            <text x="281" y="354" textAnchor="middle" fontSize="11" fontWeight="800" className="f-blue" opacity={v.planning.dim ? 0.55 : 1}>
-              {t("flow.cycle.planningT1")}
-            </text>
-            <text x="281" y="368" textAnchor="middle" fontSize="11" fontWeight="800" className="f-blue" opacity={v.planning.dim ? 0.55 : 1}>
-              {t("flow.cycle.planningT2")}
-            </text>
-            <text x="281" y="384" textAnchor="middle" fontSize="8.5" className="f-blue" opacity={v.planning.dim ? 0.55 : 1}>
-              {t("flow.cycle.planningS1")}
-            </text>
-            <text x="281" y="395" textAnchor="middle" fontSize="8.5" className="f-blue" opacity={v.planning.dim ? 0.55 : 1}>
-              {t("flow.cycle.planningS2")}
-            </text>
-          </g>
+          {/* ============ SPRINT PLANNING (ceremonia · control) ============ */}
+          {ceremonyBox(
+            v.planning,
+            { x: 222, y: 330, w: 118, h: 72, cx: 281 },
+            [t("flow.cycle.planningT1"), t("flow.cycle.planningT2")],
+            t("flow.cycle.planningS1"),
+          )}
 
           {/* flecha planning -> sprint backlog */}
           <path d="M340 366 H 388" className="ar-b" markerEnd="url(#cycAB)" />
@@ -273,18 +373,20 @@ export function FlowCycle(props: FlowCycleProps) {
           {/* flecha sprint backlog -> ciclo sprint */}
           <path d="M506 366 C 550 366, 560 330, 590 300" className="ar-o" markerEnd="url(#cycAO)" />
 
-          {/* ============ CÍRCULO DAILY DIGEST (estático informativo) ============ */}
-          <circle cx="660" cy="118" r="46" fill="none" className="cyc-daily" />
+          {/* ============ CÍRCULO DAILY (control · configurar canal) ============ */}
+          <g className="cyc-station" onClick={() => onOpenSettings("notifications")} role="button" aria-label={t("flow.cycle.dailyS")}>
+            <circle cx="660" cy="118" r="46" fill="none" className="cyc-daily" />
+            <text x="660" y="110" textAnchor="middle" fontSize="10.5" fontWeight="800" className="f-blue">
+              {t("flow.cycle.dailyT1")}
+            </text>
+            <text x="660" y="123" textAnchor="middle" fontSize="10.5" fontWeight="800" className="f-blue">
+              {t("flow.cycle.dailyT2")}
+            </text>
+            <text x="660" y="137" textAnchor="middle" fontSize="8" className="f-blue">
+              {t("flow.cycle.dailyS")}
+            </text>
+          </g>
           <path d="M660 72 A 46 46 0 0 1 706 118" className="ar-b" markerEnd="url(#cycAB)" />
-          <text x="660" y="110" textAnchor="middle" fontSize="10.5" fontWeight="800" className="f-blue">
-            {t("flow.cycle.dailyT1")}
-          </text>
-          <text x="660" y="123" textAnchor="middle" fontSize="10.5" fontWeight="800" className="f-blue">
-            {t("flow.cycle.dailyT2")}
-          </text>
-          <text x="660" y="137" textAnchor="middle" fontSize="8" className="f-blue">
-            {t("flow.cycle.dailyS")}
-          </text>
           <path d="M660 168 V 196" className="ar-b-plain" />
 
           {/* ============ CÍRCULO SPRINT N ============ */}
@@ -353,58 +455,24 @@ export function FlowCycle(props: FlowCycleProps) {
           {/* flecha incremento -> review */}
           <path d="M768 477 H 700" className="ar-b" markerEnd="url(#cycAB)" />
 
-          {/* ============ SPRINT REVIEW (ceremonia) ============ */}
-          <g className={v.review.runId ? "cyc-station" : undefined} onClick={() => openCeremony(v.review)}>
-            <rect
-              x="576"
-              y="446"
-              width="118"
-              height="62"
-              rx="10"
-              {...shapeProps(v.review.state, {
-                soft: true,
-                dim: v.review.dim,
-                selected: selected === ceremonyId(v.review),
-              })}
-            />
-            <text x="635" y="466" textAnchor="middle" fontSize="11" fontWeight="800" className="f-blue" opacity={v.review.dim ? 0.55 : 1}>
-              {t("flow.cycle.reviewT")}
-            </text>
-            <text x="635" y="481" textAnchor="middle" fontSize="8.5" className="f-blue" opacity={v.review.dim ? 0.55 : 1}>
-              {t("flow.cycle.reviewS1")}
-            </text>
-            <text x="635" y="493" textAnchor="middle" fontSize="8.5" className="f-blue" opacity={v.review.dim ? 0.55 : 1}>
-              {t("flow.cycle.reviewS2")}
-            </text>
-          </g>
+          {/* ============ SPRINT REVIEW (ceremonia · control) ============ */}
+          {ceremonyBox(
+            v.review,
+            { x: 576, y: 446, w: 118, h: 62, cx: 635 },
+            [t("flow.cycle.reviewT")],
+            t("flow.cycle.reviewS1"),
+          )}
 
           {/* flecha review -> retro */}
           <path d="M576 477 H 508" className="ar-b" markerEnd="url(#cycAB)" />
 
-          {/* ============ RETRO (ceremonia) ============ */}
-          <g className={v.retro.runId ? "cyc-station" : undefined} onClick={() => openCeremony(v.retro)}>
-            <rect
-              x="384"
-              y="446"
-              width="118"
-              height="62"
-              rx="10"
-              {...shapeProps(v.retro.state, {
-                soft: true,
-                dim: v.retro.dim,
-                selected: selected === ceremonyId(v.retro),
-              })}
-            />
-            <text x="443" y="466" textAnchor="middle" fontSize="11" fontWeight="800" className="f-blue" opacity={v.retro.dim ? 0.55 : 1}>
-              {t("flow.cycle.retroT")}
-            </text>
-            <text x="443" y="481" textAnchor="middle" fontSize="8.5" className="f-blue" opacity={v.retro.dim ? 0.55 : 1}>
-              {t("flow.cycle.retroS1")}
-            </text>
-            <text x="443" y="493" textAnchor="middle" fontSize="8.5" className="f-blue" opacity={v.retro.dim ? 0.55 : 1}>
-              {t("flow.cycle.retroS2")}
-            </text>
-          </g>
+          {/* ============ RETROSPECTIVA (ceremonia · control) ============ */}
+          {ceremonyBox(
+            v.retro,
+            { x: 384, y: 446, w: 118, h: 62, cx: 443 },
+            [t("flow.cycle.retroT")],
+            t("flow.cycle.retroS1"),
+          )}
 
           {/* flecha retro -> planning (cierra el círculo) */}
           <path d="M384 477 C 300 477, 281 460, 281 408" className="ar-b" markerEnd="url(#cycAB)" />
@@ -412,27 +480,25 @@ export function FlowCycle(props: FlowCycleProps) {
             {t("flow.cycle.loopLabel")}
           </text>
 
-          {/* ============ EVOLUCIÓN: flecha de vuelta al product backlog ============ */}
-          <path
-            d="M828 446 C 828 60, 400 40, 110 40 C 60 40, 40 60, 55 112"
-            className="ar-o-thin"
-            markerEnd="url(#cycAO)"
-          />
-          <text x="440" y="32" textAnchor="middle" fontSize="10" fontWeight="700" className="f-orange">
+          {/* ============ EVOLUCIÓN: polilínea ORTOGONAL por los márgenes ============
+              sube por la derecha desde INCREMENT, corre por el borde superior, baja al
+              Product Backlog — sin cruzar ninguna caja ni texto del viewBox. */}
+          <path d="M888 446 V 24 H 93 V 110" className="ar-o-thin" markerEnd="url(#cycAO)" />
+          <text x="440" y="15" textAnchor="middle" fontSize="10" fontWeight="700" className="f-orange">
             {t("flow.cycle.evolutionLabel")}
           </text>
 
           {/* leyenda — re-etiquetada a estado VIVO conservando el lenguaje visual */}
-          <g transform="translate(22,470)">
+          <g transform="translate(22,522)">
             <line x1="0" y1="0" x2="26" y2="0" className="leg-o" />
             <text x="32" y="4" fontSize="10" fontWeight="600" className="f-ink">
               {t("flow.cycle.legendDone")}
             </text>
-            <line x1="0" y1="20" x2="26" y2="20" className="leg-b" />
-            <text x="32" y="24" fontSize="10" fontWeight="600" className="f-ink">
+            <line x1="180" y1="0" x2="206" y2="0" className="leg-b" />
+            <text x="212" y="4" fontSize="10" fontWeight="600" className="f-ink">
               {t("flow.cycle.legendPending")}
             </text>
-            <text x="0" y="46" fontSize="10" fontWeight="700" className="f-amber">
+            <text x="420" y="4" fontSize="10" fontWeight="700" className="f-amber">
               {t("flow.cycle.legendGate")}
             </text>
           </g>

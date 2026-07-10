@@ -190,6 +190,57 @@ test("ceremony: en modo ceremony con run → estado vivo + runId para el drawer"
   assert.equal(v.retro.runId, null);
 });
 
+// ── Ciclo de vida de 5 estados de la estación de ceremonia (control) ─────────────
+
+test("control: modo auto → off (no activada) en las tres ceremonias", () => {
+  const m = model({
+    sprints: [sprint("SP1")],
+    tickets: [story("a", "SP1", { status: "running" })],
+    modes: AUTO,
+  });
+  const v = buildCycleView(m, AUTO);
+  assert.equal(v.planning.control, "off");
+  assert.equal(v.review.control, "off");
+  assert.equal(v.retro.control, "off");
+  assert.equal(v.planning.state, "pending"); // off comparte la forma punteada
+  assert.equal(v.planning.dim, true);
+});
+
+test("control: modo ceremony sin run → waiting (activada, aún no le toca)", () => {
+  const m = model({
+    sprints: [sprint("SP1")],
+    tickets: [story("a", "SP1", { status: "backlog" })],
+    modes: CEREMONY,
+  });
+  const v = buildCycleView(m, CEREMONY);
+  assert.equal(v.planning.control, "waiting");
+  assert.equal(v.planning.state, "pending");
+  assert.equal(v.planning.runId, null);
+});
+
+test("control: run en vuelo → running; sellado (*_at) → done con fecha", () => {
+  const m = model({
+    sprints: [
+      sprint("SP1", {
+        planning_run_id: "run-plan", // sin planned_at → en vuelo
+        review_run_id: "run-rev",
+        reviewed_at: 4242, // sellado → done con fecha
+      }),
+    ],
+    tickets: [story("a", "SP1", { status: "running" })],
+    modes: CEREMONY,
+  });
+  const v = buildCycleView(m, CEREMONY);
+  assert.equal(v.planning.control, "running");
+  assert.equal(v.planning.state, "running");
+  assert.equal(v.planning.runId, "run-plan");
+  assert.equal(v.planning.at, null);
+  assert.equal(v.review.control, "done");
+  assert.equal(v.review.state, "done");
+  assert.equal(v.review.at, 4242); // sello con fecha
+  assert.equal(v.retro.control, "waiting"); // sin retro_run_id
+});
+
 // ── Incremento + preview del review aceptado ────────────────────────────────────
 
 test("increment: preview sólo cuando el review fue aceptado (reviewed_at>0)", () => {
