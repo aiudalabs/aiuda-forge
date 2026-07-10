@@ -10,7 +10,7 @@
 // ciclo de vida de 5 estados de cycleModel: off → Settings; waiting → informativa;
 // running/awaiting/done → su run/gate. Ninguna caja punteada queda muda.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { statusToken } from "@/lib/statusToken";
 import type { CeremonyModes, FlowModel } from "../flowGraph";
@@ -82,6 +82,38 @@ function shapeProps(
     },
     className: `cyc-shape${anim}${opts.selected ? " cyc-sel" : ""}`,
   };
+}
+
+// Texto SVG que NUNCA se sale de su figura: mide el largo natural tras el montaje
+// y, si excede maxWidth, fija textLength+lengthAdjust para comprimirlo al ancho
+// disponible. A prueba de idiomas (es/en/pt tienen largos distintos) sin tocar el
+// layout. Sin transform (scroll-safe). Los títulos cortos siguen como <text> normal.
+function FitText({
+  maxWidth,
+  children,
+  ...rest
+}: { maxWidth: number; children: React.ReactNode } & React.SVGProps<SVGTextElement>) {
+  const ref = useRef<SVGTextElement>(null);
+  const [textLength, setTextLength] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Medir el largo NATURAL (sin la restricción previa) y clampar si hace falta.
+    el.removeAttribute("textLength");
+    el.removeAttribute("lengthAdjust");
+    const natural = el.getComputedTextLength();
+    setTextLength(natural > maxWidth ? maxWidth : undefined);
+  }, [children, maxWidth]);
+  return (
+    <text
+      ref={ref}
+      textLength={textLength}
+      lengthAdjust={textLength ? "spacingAndGlyphs" : undefined}
+      {...rest}
+    >
+      {children}
+    </text>
+  );
 }
 
 // Color de una LÍNEA de fase de la banda de diseño.
@@ -213,20 +245,22 @@ export function FlowCycle(props: FlowCycleProps) {
             {ln}
           </text>
         ))}
-        <text
+        <FitText
           x={geom.cx}
           y={titleY + titleLines.length * 14 + 2}
+          maxWidth={geom.w - 10}
           textAnchor="middle"
           fontSize="8.5"
           className="f-blue"
           opacity={c.dim ? 0.55 : 1}
         >
           {descLine}
-        </text>
+        </FitText>
         {/* sublabel dinámico: el estado VIVO como control */}
-        <text
+        <FitText
           x={geom.cx}
           y={titleY + titleLines.length * 14 + 14}
+          maxWidth={geom.w - 10}
           textAnchor="middle"
           fontSize="8.5"
           fontWeight="700"
@@ -235,7 +269,7 @@ export function FlowCycle(props: FlowCycleProps) {
           opacity={c.dim ? 0.7 : 1}
         >
           {controlLabel(c)}
-        </text>
+        </FitText>
       </g>
     );
   };
@@ -262,9 +296,9 @@ export function FlowCycle(props: FlowCycleProps) {
           <text x="93" y="143" textAnchor="middle" fontSize="13" fontWeight="800" className="f-orange">
             {t("flow.cycle.studioTitle")}
           </text>
-          <text x="93" y="158" textAnchor="middle" fontSize="9" className="f-ink2">
+          <FitText x="93" y="158" maxWidth={140} textAnchor="middle" fontSize="9" className="f-ink2">
             {t("flow.cycle.studioSub")}
-          </text>
+          </FitText>
           <g fontSize="10.5" fontWeight="600">
             {(
               [
@@ -293,9 +327,10 @@ export function FlowCycle(props: FlowCycleProps) {
               );
             })}
           </g>
-          <text
+          <FitText
             x="93"
             y="294"
+            maxWidth={144}
             textAnchor="middle"
             fontSize="9"
             fontWeight="700"
@@ -304,10 +339,10 @@ export function FlowCycle(props: FlowCycleProps) {
             onClick={openGate}
           >
             {t("flow.cycle.gates")}
-          </text>
-          <text x="93" y="308" textAnchor="middle" fontSize="9" fontWeight="700" className="f-blue">
+          </FitText>
+          <FitText x="93" y="308" maxWidth={144} textAnchor="middle" fontSize="9" fontWeight="700" className="f-blue">
             {t("flow.cycle.gatesVerbs")}
-          </text>
+          </FitText>
 
           {/* Product backlog */}
           <g className="cyc-station" onClick={onOpenBoard}>
@@ -318,12 +353,12 @@ export function FlowCycle(props: FlowCycleProps) {
             <text x="93" y="366" textAnchor="middle" fontSize="11" fontWeight="800" className="f-ink">
               {t("flow.cycle.backlogT2")}
             </text>
-            <text x="93" y="382" textAnchor="middle" fontSize="8.5" className="f-ink2">
+            <FitText x="93" y="382" maxWidth={112} textAnchor="middle" fontSize="8.5" className="f-ink2">
               {t("flow.cycle.backlogS1")}
-            </text>
-            <text x="93" y="394" textAnchor="middle" fontSize="8.5" className="f-ink2">
+            </FitText>
+            <FitText x="93" y="394" maxWidth={112} textAnchor="middle" fontSize="8.5" className="f-ink2">
               {t("flow.cycle.backlogS2")}
-            </text>
+            </FitText>
           </g>
           {/* ＋ añadir al Product Backlog — abre el modal de solicitud de cambio.
               foreignObject: botón HTML real (accesible) anclado bajo la estación. */}
@@ -362,12 +397,12 @@ export function FlowCycle(props: FlowCycleProps) {
             <text x="450" y="368" textAnchor="middle" fontSize="11" fontWeight="800" className="f-ink">
               {t("flow.cycle.sprintBacklogT2")}
             </text>
-            <text x="450" y="384" textAnchor="middle" fontSize="8.5" className="f-ink2">
+            <FitText x="450" y="384" maxWidth={104} textAnchor="middle" fontSize="8.5" className="f-ink2">
               {t("flow.cycle.sprintBacklogS1")}
-            </text>
-            <text x="450" y="395" textAnchor="middle" fontSize="8.5" className="f-ink2">
+            </FitText>
+            <FitText x="450" y="395" maxWidth={104} textAnchor="middle" fontSize="8.5" className="f-ink2">
               {t("flow.cycle.sprintBacklogS2")}
-            </text>
+            </FitText>
           </g>
 
           {/* flecha sprint backlog -> ciclo sprint */}
@@ -382,9 +417,9 @@ export function FlowCycle(props: FlowCycleProps) {
             <text x="660" y="123" textAnchor="middle" fontSize="10.5" fontWeight="800" className="f-blue">
               {t("flow.cycle.dailyT2")}
             </text>
-            <text x="660" y="137" textAnchor="middle" fontSize="8" className="f-blue">
+            <FitText x="660" y="137" maxWidth={80} textAnchor="middle" fontSize="8" className="f-blue">
               {t("flow.cycle.dailyS")}
-            </text>
+            </FitText>
           </g>
           <path d="M660 72 A 46 46 0 0 1 706 118" className="ar-b" markerEnd="url(#cycAB)" />
           <path d="M660 168 V 196" className="ar-b-plain" />
@@ -415,22 +450,22 @@ export function FlowCycle(props: FlowCycleProps) {
               {sprintName}
             </text>
             <g fontSize="9.5" fontWeight="600" className="f-ink">
-              <text x="660" y="288" textAnchor="middle" className="f-ink">
+              <FitText x="660" y="288" maxWidth={188} textAnchor="middle" className="f-ink">
                 {t("flow.cycle.sprintL1")}
-              </text>
-              <text x="660" y="303" textAnchor="middle" className="f-ink">
+              </FitText>
+              <FitText x="660" y="303" maxWidth={190} textAnchor="middle" className="f-ink">
                 {t("flow.cycle.sprintL2")}
-              </text>
-              <text x="660" y="318" textAnchor="middle" className="f-ink">
+              </FitText>
+              <FitText x="660" y="318" maxWidth={186} textAnchor="middle" className="f-ink">
                 {t("flow.cycle.sprintL3")}
-              </text>
+              </FitText>
             </g>
-            <text x="660" y="340" textAnchor="middle" fontSize="8.5" fontWeight="700" className="f-blue">
+            <FitText x="660" y="340" maxWidth={178} textAnchor="middle" fontSize="8.5" fontWeight="700" className="f-blue">
               {t("flow.cycle.sprintB1")}
-            </text>
-            <text x="660" y="351" textAnchor="middle" fontSize="8.5" fontWeight="700" className="f-blue">
+            </FitText>
+            <FitText x="660" y="351" maxWidth={178} textAnchor="middle" fontSize="8.5" fontWeight="700" className="f-blue">
               {t("flow.cycle.sprintB2")}
-            </text>
+            </FitText>
           </g>
           <path d="M660 200 A 100 100 0 0 1 760 300" className="ar-o-thick" markerEnd="url(#cycAO)" />
           <path d="M660 400 A 100 100 0 0 1 560 300" className="ar-o-thick" markerEnd="url(#cycAO)" />
@@ -444,12 +479,12 @@ export function FlowCycle(props: FlowCycleProps) {
             <text x="828" y="468" textAnchor="middle" fontSize="11" fontWeight="800" className="f-ink">
               {t("flow.cycle.incrementT")}
             </text>
-            <text x="828" y="483" textAnchor="middle" fontSize="8.5" className="f-ink2">
+            <FitText x="828" y="483" maxWidth={112} textAnchor="middle" fontSize="8.5" className="f-ink2">
               {t("flow.cycle.incrementS1")}
-            </text>
-            <text x="828" y="495" textAnchor="middle" fontSize="8.5" fontWeight="700" className="f-blue">
+            </FitText>
+            <FitText x="828" y="495" maxWidth={112} textAnchor="middle" fontSize="8.5" fontWeight="700" className="f-blue">
               {v.increment.previewRunId ? `▶ ${t("flow.cycle.incrementPreview")}` : t("flow.cycle.incrementS2")}
-            </text>
+            </FitText>
           </g>
 
           {/* flecha incremento -> review */}
