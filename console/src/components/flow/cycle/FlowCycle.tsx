@@ -152,6 +152,10 @@ export function FlowCycle(props: FlowCycleProps) {
   const stage = (k: StageKey) => stageByKey.get(k)!;
 
   const sprintName = v.sprint ? v.sprint.name : t("flow.cycle.sprintN");
+  // Nombre largo → se trunca con "…" (cabe en el círculo); el nombre completo va en
+  // el tooltip (<title>) y sigue entero al abrir Sprints. FitText comprime el resto.
+  const sprintNameShort =
+    sprintName.length > 24 ? `${sprintName.slice(0, 23).trimEnd()}…` : sprintName;
   const sprintId = v.sprint?.id ?? null;
 
   // Ids de nodo de ceremonia (== los que el drawer compartido resuelve en el modelo).
@@ -445,10 +449,11 @@ export function FlowCycle(props: FlowCycleProps) {
             <text x="692" y="248" textAnchor="middle" fontSize="11" fontWeight="800" style={{ fill: tok("failed") }}>
               ✕{v.counts.failed}
             </text>
-            {/* nombre real del sprint (o "SPRINT N") en el lugar del título */}
-            <text x="660" y="268" textAnchor="middle" fontSize="14" fontWeight="900" className="f-orange">
-              {sprintName}
-            </text>
+            {/* nombre real del sprint (o "SPRINT N"): truncado + tooltip con el completo */}
+            <FitText x="660" y="268" maxWidth={186} textAnchor="middle" fontSize="14" fontWeight="900" className="f-orange">
+              <title>{sprintName}</title>
+              {sprintNameShort}
+            </FitText>
             <g fontSize="9.5" fontWeight="600" className="f-ink">
               <FitText x="660" y="288" maxWidth={188} textAnchor="middle" className="f-ink">
                 {t("flow.cycle.sprintL1")}
