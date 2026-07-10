@@ -33,6 +33,13 @@ jobs:
           # Un solo secret para ambos workflows de Claude (claude.yml y este):
           # el OAuth token de la suscripcion Claude (claude setup-token).
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Los PRs los abren AGENTES (claude_action abre el PR como el bot `claude`;
+          # copilot como `copilot-swe-agent`). Sin esto, claude-code-action rechaza el
+          # run con "Workflow initiated by non-human actor: claude (type: Bot)" y el
+          # gate de review queda rojo en TODO PR de agente. Este gate es read-only (no
+          # edita codigo), asi que revisar PRs de cualquier bot es exactamente lo que
+          # queremos.
+          allowed_bots: "*"
           claude_args: "--model claude-opus-4-8"
           prompt: |
             You are the release gate for {{project_name}}. You run a DIFFERENT
