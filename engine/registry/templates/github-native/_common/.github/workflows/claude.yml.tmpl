@@ -24,6 +24,13 @@ permissions:
 jobs:
   claude:
     runs-on: ubuntu-latest
+    # Backstop determinista contra un runner colgado (p.ej. un agente que se pone a
+    # "esperar" algo que en un runner efímero nunca llega): a los 45 min GitHub
+    # cancela el job y los pasos if:always() de abajo — "Rescue checkpoint" y
+    # "Clear running label" — corren igual en la ventana de gracia, así que el
+    # trabajo se rescata a un PR draft y el lock agent:running se libera. Sin esto,
+    # el default de GitHub Actions es 6 h de cuelgue.
+    timeout-minutes: 45
     steps:
       # Señal de "corriendo" observable en GitHub (la lee el conductor de
       # aiuda-forge para no degradar la story a backlog mientras este run trabaja):

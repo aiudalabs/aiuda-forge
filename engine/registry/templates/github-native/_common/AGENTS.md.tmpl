@@ -61,3 +61,11 @@ before opening the PR; the PR does not merge until they pass.
 - Do not reformat unrelated files or rename for taste.
 - Never edit `.github/workflows/**` to make a check pass — changing CI to go
   green is tampering and is reviewed as such.
+- The CI runner is ephemeral. Run every build, test, or command synchronously and
+  wait for it to finish inside your turn — never put work in the background and end
+  your turn waiting for it, and never schedule a wakeup, check-in, or deferred
+  "resume later": nothing wakes you and the runner dies when your turn ends. If a
+  build is too long to finish in your turn, do not run it — commit the code and open
+  the PR. Do not build heavy release artifacts (mobile app binaries such as APK/IPA,
+  production bundles) yourself; a dedicated CI job builds those. Your job is code and
+  tests.

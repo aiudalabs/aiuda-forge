@@ -47,6 +47,13 @@ the admin (react-dev) lane. Dart↔TS type parity is a CI-enforced check.
 7. **The agent commits and opens the PR.** Work on a branch, commit, push, open a
    PR that links the issue (`Closes #<n>`). Never edit `.github/workflows/**` to
    make a check pass — that is tampering and is reviewed as such.
+8. **The CI runner is ephemeral.** Run every build, test, or command synchronously
+   and wait for it inside your turn — never background work and end your turn waiting
+   for it, and never schedule a wakeup, check-in, or deferred "resume later": nothing
+   wakes you and the runner dies when your turn ends. If a build won't finish in your
+   turn, don't run it — commit the code and open the PR. Do not build heavy release
+   artifacts (mobile binaries like APK/IPA, production bundles) yourself; a dedicated
+   CI job (`build-apk`) does that. Your job is code and tests.
 
 ## Validation (the gate)
 

@@ -1,0 +1,73 @@
+name: build-apk
+
+# Build del APK de release como job de CI DETERMINISTA — NO trabajo del agente. El
+# agente implementa código + tests; empaquetar el binario de la app es un paso
+# reproducible de CI, no algo que Claude/Copilot deba lanzar en background dentro de
+# su propio runner efímero (ahí el turno termina, la sesión muere y el build queda
+# colgado sin producir nada). Dispará esto a mano (workflow_dispatch) o con un tag de
+# versión; el .apk queda como artifact del run.
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  # App a empaquetar (misma variable que ui-verify; el generador la sustituye,
+  # default apps/customer).
+  APP_PATH: "{{app_path}}"
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Guard hashFiles (mismo patrón defensivo que ui-verify / copilot-setup-steps):
+      # si la app no existe en el árbol, cada paso se salta y el job pasa en verde.
+      - name: Set up Flutter
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # gradle de Android necesita un JDK; 21 es el mismo runtime que declara el
+      # contrato del stack (.fluxo/verify/stack.verify.yaml → ci_setup.java).
+      - name: Set up Java (Android build toolchain)
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Bootstrap Dart workspace (melos, best-effort)
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:$HOME/.pub-cache/bin"
+          # melos linkea el workspace; si falla, `flutter build` corre pub get igual.
+          dart pub global activate melos >/dev/null 2>&1 || true
+          melos bootstrap || echo "melos bootstrap best-effort falló; seguimos (flutter build hará pub get)."
+
+      - name: Build release APK
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        working-directory: ${{ env.APP_PATH }}
+        # Sin keystore configurado, --release firma con la clave debug y produce un
+        # APK instalable (artefacto interno). La firma de release real (keystore en
+        # secrets) es un follow-up; iOS (macOS runner + signing) queda diferido.
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: ${{ env.APP_PATH }}/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
