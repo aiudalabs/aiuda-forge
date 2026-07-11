@@ -319,13 +319,15 @@
         <text x="93" y="366" text-anchor="middle" font-size="11" font-weight="800" class="f-ink">BACKLOG</text>
         <text x="93" y="382" text-anchor="middle" font-size="8.5" class="f-ink2">las historias del producto</text>
         <text x="93" y="394" text-anchor="middle" font-size="8.5" class="f-ink2">(del diseño aprobado)</text>
+        <text x="93" y="437" text-anchor="middle" font-size="8.5" font-weight="600" class="f-orange">＋ añadir al Product Backlog</text>
         <path d="M168 366 H 216" class="ar-o" marker-end="url(#cAO)"/>
 
         <!-- SPRINT PLANNING -->
         <rect x="222" y="330" width="118" height="72" rx="10" class="shape" style="stroke:var(--cyc-orange);stroke-width:2;fill:var(--cyc-orange-soft)"/>
-        <text x="281" y="356" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">SPRINT</text>
-        <text x="281" y="370" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">PLANNING</text>
-        <text x="281" y="388" text-anchor="middle" font-size="8.5" class="f-blue">el plan · ◆ tu aprobación</text>
+        <text x="281" y="354" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">SPRINT</text>
+        <text x="281" y="368" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">PLANNING</text>
+        <text x="281" y="384" text-anchor="middle" font-size="8.5" class="f-blue">el plan · ◆ tu aprobación</text>
+        <text x="281" y="396" text-anchor="middle" font-size="8.5" font-weight="700" style="fill:var(--cyc-ink2)">hecha</text>
         <path d="M340 366 H 388" class="ar-b" marker-end="url(#cAB)"/>
 
         <!-- SPRINT BACKLOG -->
@@ -339,9 +341,9 @@
         <!-- DAILY SCRUM -->
         <circle cx="660" cy="118" r="46" class="cyc-daily"/>
         <path d="M660 72 A 46 46 0 0 1 706 118" class="ar-b" marker-end="url(#cAB)"/>
-        <text x="660" y="112" text-anchor="middle" font-size="10.5" font-weight="800" class="f-blue">DAILY</text>
-        <text x="660" y="125" text-anchor="middle" font-size="10.5" font-weight="800" class="f-blue">SCRUM</text>
-        <text x="660" y="139" text-anchor="middle" font-size="8" class="f-blue">resumen a tu canal</text>
+        <text x="660" y="110" text-anchor="middle" font-size="10.5" font-weight="800" class="f-blue">DAILY</text>
+        <text x="660" y="123" text-anchor="middle" font-size="10.5" font-weight="800" class="f-blue">SCRUM</text>
+        <text x="660" y="137" text-anchor="middle" font-size="8" class="f-blue">resumen a tu canal</text>
         <path d="M660 168 V 196" class="ar-b-plain"/>
 
         <!-- SPRINT N -->
@@ -352,7 +354,7 @@
         <text x="660" y="268" text-anchor="middle" font-size="14" font-weight="900" class="f-orange">SPRINT 2</text>
         <g font-size="9" font-weight="600">
           <text x="660" y="288" text-anchor="middle" class="f-ink">spec dev-ready → implementación</text>
-          <text x="660" y="303" text-anchor="middle" class="f-ink">tests → revisión → verificación</text>
+          <text x="660" y="303" text-anchor="middle" class="f-ink">tests → revisión de código → verificación</text>
           <text x="660" y="318" text-anchor="middle" class="f-ink">+ QA visual vs mockup → PR</text>
         </g>
         <text x="660" y="340" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">cambios mid-sprint: editar · mover ·</text>
@@ -370,27 +372,28 @@
 
         <!-- SPRINT REVIEW -->
         <rect x="576" y="446" width="118" height="62" rx="10" class="shape" style="stroke:var(--cyc-blue);stroke-width:2;fill:var(--cyc-blue-soft);stroke-dasharray:6 4"/>
-        <text x="635" y="468" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">SPRINT REVIEW</text>
-        <text x="635" y="483" text-anchor="middle" font-size="8.5" class="f-blue">reporte con evidencia</text>
-        <text x="635" y="495" text-anchor="middle" font-size="8.5" class="f-blue">◆ tu aprobación</text>
+        <text x="635" y="470" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">SPRINT REVIEW</text>
+        <text x="635" y="486" text-anchor="middle" font-size="8.5" class="f-blue">reporte con evidencia</text>
+        <text x="635" y="498" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">al cerrar el sprint</text>
         <path d="M576 477 H 508" class="ar-b" marker-end="url(#cAB)"/>
 
         <!-- RETROSPECTIVA -->
         <rect x="384" y="446" width="118" height="62" rx="10" class="shape" style="stroke:var(--cyc-blue);stroke-width:2;fill:var(--cyc-blue-soft);stroke-dasharray:6 4"/>
         <text x="443" y="470" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">RETROSPECTIVA</text>
         <text x="443" y="486" text-anchor="middle" font-size="8.5" class="f-blue">analiza y mejora el método</text>
+        <text x="443" y="498" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">al cerrar el sprint</text>
         <path d="M384 477 C 300 477, 281 460, 281 408" class="ar-b" marker-end="url(#cAB)"/>
         <text x="322" y="452" text-anchor="middle" font-size="9" font-weight="700" class="f-blue">mejoras → próximo sprint</text>
 
-        <!-- Evolución -->
-        <path d="M828 446 C 828 60, 400 40, 110 40 C 60 40, 40 60, 55 112" class="ar-o-thin" marker-end="url(#cAO)"/>
-        <text x="440" y="32" text-anchor="middle" font-size="10" font-weight="700" class="f-orange">nuevas necesidades · bugs → refinamiento → Product Backlog</text>
+        <!-- Evolución: polilínea ORTOGONAL por los márgenes — sube por la derecha, corre por el borde superior (arriba de DAILY SCRUM), baja al Product Backlog -->
+        <path d="M888 446 V 24 H 93 V 110" class="ar-o-thin" marker-end="url(#cAO)"/>
+        <text x="440" y="15" text-anchor="middle" font-size="10" font-weight="700" class="f-orange">nuevas necesidades · bugs → refinamiento → Product Backlog</text>
 
-        <!-- Leyenda -->
-        <g transform="translate(22,470)">
+        <!-- Leyenda — fila única al pie, como el producto -->
+        <g transform="translate(22,522)">
           <line x1="0" y1="0" x2="26" y2="0" class="leg-o"/><text x="32" y="4" font-size="10" font-weight="600" class="f-ink">completado / activo</text>
-          <line x1="0" y1="20" x2="26" y2="20" class="leg-b"/><text x="32" y="24" font-size="10" font-weight="600" class="f-ink">pendiente / aún no corrido</text>
-          <text x="0" y="46" font-size="10" font-weight="700" class="f-amber">◆ = esperando tu decisión</text>
+          <line x1="180" y1="0" x2="206" y2="0" class="leg-b"/><text x="212" y="4" font-size="10" font-weight="600" class="f-ink">pendiente / aún no corrido</text>
+          <text x="420" y="4" font-size="10" font-weight="700" class="f-amber">◆ = esperando tu decisión</text>
         </g>
       </svg>
     </div>
