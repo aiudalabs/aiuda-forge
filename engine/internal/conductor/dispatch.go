@@ -390,8 +390,12 @@ func (d *Dispatcher) fireChannel(ctx context.Context, gh GitHubDispatcher, repoU
 			"Commit AND push after completing EACH story (or any substantial unit of work) so progress survives " +
 			"session limits. If you sense you are running out of session, push what is done and open the PR as " +
 			"draft with a checklist of what remains. NEVER spawn background workers and end your turn waiting " +
-			"for them — when your turn ends the session ENDS and unpushed work is lost. Open the PR BEFORE any " +
-			"optional self-review pass.\n\n" + prompt
+			"for them, and NEVER schedule a wakeup, a check-in, or a deferred 'resume later' task — there is NO " +
+			"scheduler here and NOTHING will wake you: when your turn ends the session ENDS and unpushed work is " +
+			"lost. Run every build, test, or command SYNCHRONOUSLY in the foreground and wait for it to finish " +
+			"inside this turn; if a build is too long to finish in your turn, do NOT run it — commit the code and " +
+			"open the PR. Do NOT build release artifacts (APKs, IPAs, app bundles) yourself — a dedicated CI job " +
+			"builds those; your job is code and tests. Open the PR BEFORE any optional self-review pass.\n\n" + prompt
 		inputs := map[string]string{"prompt": prompt}
 		if issues != "" {
 			inputs["issues"] = issues

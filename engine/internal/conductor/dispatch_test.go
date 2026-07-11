@@ -168,6 +168,37 @@ func TestDispatchStoryViaClaudeAction(t *testing.T) {
 	}
 }
 
+// TestClaudeActionPromptEphemeralDiscipline: el preámbulo del canal claude_action
+// (runner efímero) debe prohibir EXPLÍCITO el patrón que colgó un Action real — un
+// agente que lanzó builds de APK en background y "programó un check-in/wakeup" para
+// reanudar (imposible: el Action muere al terminar el turno, nada lo re-despierta).
+// Bloquea la regresión: builds síncronos, sin wakeup/background, sin construir el APK.
+func TestClaudeActionPromptEphemeralDiscipline(t *testing.T) {
+	st := newStore(t)
+	seedDispatch(t, st)
+	gh := &fakeDispatchGH{}
+	d := &Dispatcher{Tickets: st, GH: gh}
+	pol := Policy{ExecutionUnit: "story", DispatchMode: "approve", Executor: "claude_action"}
+
+	if _, err := d.Dispatch(context.Background(), "p1", "https://github.com/o/r", pol, "S-01"); err != nil {
+		t.Fatal(err)
+	}
+	if len(gh.workflows) != 1 {
+		t.Fatalf("workflows = %d, want 1", len(gh.workflows))
+	}
+	p := gh.workflows[0]
+	for _, want := range []string{
+		"NEVER schedule a wakeup", // no hay scheduler que lo re-despierte
+		"SYNCHRONOUSLY",           // builds/tests en foreground, esperando
+		"do NOT run it",           // build demasiado largo → no correrlo
+		"Do NOT build release artifacts", // el APK lo construye un job de CI
+	} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("el preámbulo claude_action no contiene %q:\n%s", want, p)
+		}
+	}
+}
+
 // TestDispatchSprintPreLabelsAllIssues: al despachar un sprint por claude_action, el
 // conductor marca agent:running TODOS los issues del sprint en el t0 — no sólo el
 // primero. Es la clave del fix del flap: la señal de "corriendo" existe en GitHub
