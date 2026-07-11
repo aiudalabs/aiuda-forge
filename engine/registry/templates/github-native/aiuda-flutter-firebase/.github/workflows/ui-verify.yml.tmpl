@@ -60,6 +60,23 @@ jobs:
           dart pub global activate melos >/dev/null 2>&1 || true
           melos bootstrap || echo "melos bootstrap best-effort fallo; seguimos (flutter build hara pub get)."
 
+      # Self-heal (§2C): si lib/ existe pero nunca se corrio `flutter create`, falta la
+      # carpeta web/ y `flutter build web` fallaria. El comando de bootstrap vive en el
+      # contrato del stack (DATA, §1-bis); se corre SOLO si falta la plataforma web.
+      # Idempotente: genera solo lo que falta. Cierra el "bug #1" (provisioning CHECK D).
+      - name: Ensure web platform (self-heal from contract)
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' && hashFiles('{{app_path}}/web/index.html') == '' }}
+        working-directory: ${{ env.APP_PATH }}
+        run: |
+          set -euo pipefail
+          BOOT="$(sed -n 's/^[[:space:]]*bootstrap:[[:space:]]*"\(.*\)".*/\1/p' "$GITHUB_WORKSPACE/.fluxo/verify/stack.verify.yaml" | head -1 || true)"
+          case "$BOOT" in
+            "flutter create"*) : ;;
+            *) BOOT="flutter create --platforms=web ." ;;
+          esac
+          echo "Self-heal de plataforma (lib/ presente, web/ ausente): $BOOT"
+          eval "$BOOT"
+
       - name: Build Flutter web
         if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
         working-directory: ${{ env.APP_PATH }}

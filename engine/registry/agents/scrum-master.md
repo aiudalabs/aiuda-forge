@@ -71,6 +71,19 @@ one story at a time, just before it is built.
      `python-dev`, or `dev` when the stack has no specialist). Use the ids exactly as written —
      each must resolve to a registry agent.
 
+3a. **Platform-bootstrap foundation story (stacks that need a build target scaffolded).**
+   If the stack's `.fluxo/verify/stack.verify.yaml` declares `build.bootstrap`, add ONE
+   wave-0 story owned by the app lane (e.g. `flutter-dev`) with NO deps and
+   `screen_key: none`: "Make the app buildable — run the stack's `build.bootstrap` command
+   (e.g. `flutter create --platforms=android,ios,web .`) in each app directory so the
+   platform folders (`android/`, `ios/`, `web/`) exist, and COMMIT them. Run it synchronously;
+   do NOT build a release artifact — a CI job does that." This closes the gap where an agent
+   writes `lib/` + `pubspec.yaml` but the platform was never scaffolded (provisioning CHECK D
+   "bug #1", which today only DETECTS the missing `android/`). The build workflows also
+   self-heal from the same `build.bootstrap`, so this story is the PERSISTENCE path: it
+   versions the platform config in the repo (needed for signing, native config, reproducible
+   builds). If the contract declares no `build.bootstrap`, skip it entirely — purely additive.
+
 3b. **Design-system foundation story (any project with a UI).** If `docs/DESIGN_SYSTEM.md`
    exists, add ONE wave-1 story owned by the frontend lane (`react-dev` / `flutter-dev`):
    "Implement the design system — wire the tokens (color, typography, spacing, radii,

@@ -6,6 +6,16 @@ stack: aiuda-flutter-firebase
 platform: [android, ios]              # web | android | ios | (list)
 image: fluxo-flutter                  # lane->image (§3); the kernel only transports the string
 
+# How to make the app BUILDABLE for its target platform(s) (§2C). `build.bootstrap` is
+# SHARED DATA (§1-bis): the SAME command materializes the platform folders (android/ios/web)
+# in two places — the platform-bootstrap foundation story (persists them in the repo) and
+# the build workflows' self-heal step (generates them on the fly if missing). It closes the
+# gap where an agent wrote lib/ + pubspec but `flutter create` was never run, so the platform
+# never existed (provisioning CHECK D "bug #1"). Idempotent: generates only what's missing.
+# `platform:` above is the declared target; `build.bootstrap` is its concrete materialization.
+build:
+  bootstrap: "flutter create --platforms=android,ios,web ."
+
 # How to boot the REAL backend in CI (consumed by e2e-verify, §2B). The orchestrator
 # starts this detached, waits for ready_probe, runs seed/flow/invariants, then tears down.
 backend:

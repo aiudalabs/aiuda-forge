@@ -84,3 +84,46 @@ func TestScaffoldApkWorkflowFlutterOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestScaffoldBuildabilitySelfHeal: la buildabilidad es contract-driven. El contrato del
+// stack Flutter declara `build.bootstrap` (el `flutter create` que materializa las carpetas
+// de plataforma), y los workflows de build (build-apk web/apk + ui-verify) tienen un paso
+// self-heal que lee ESE comando del contrato y lo corre si la plataforma falta — cerrando el
+// "bug #1" (apps con lib/ pero sin android/) que hoy el provisioning-lint solo detecta.
+func TestScaffoldBuildabilitySelfHeal(t *testing.T) {
+	files, _, err := Render(realTemplates, "aiuda-flutter-firebase", Vars{
+		"project_name": "Acme", "language": "es", "art_director": "on", "app_path": "apps/customer",
+	})
+	if err != nil {
+		t.Fatalf("Render(flutter): %v", err)
+	}
+	byPath := byPathContent(files)
+
+	// 1) El contrato declara build.bootstrap (DATA compartida self-heal + foundation story).
+	contract, ok := byPath[".fluxo/verify/stack.verify.yaml"]
+	if !ok {
+		t.Fatal("falta .fluxo/verify/stack.verify.yaml")
+	}
+	for _, want := range []string{"build:", "bootstrap:", "flutter create --platforms=android,ios,web ."} {
+		if !strings.Contains(contract, want) {
+			t.Errorf("el contrato no declara %q", want)
+		}
+	}
+
+	// 2) build-apk (android) y ui-verify (web) tienen el paso self-heal que lee el contrato.
+	checks := map[string][]string{
+		".github/workflows/build-apk.yml": {"Ensure Android platform (self-heal from contract)", "stack.verify.yaml", "flutter create"},
+		".github/workflows/ui-verify.yml": {"Ensure web platform (self-heal from contract)", "stack.verify.yaml", "flutter create"},
+	}
+	for path, wants := range checks {
+		content, ok := byPath[path]
+		if !ok {
+			t.Fatalf("falta %s", path)
+		}
+		for _, w := range wants {
+			if !strings.Contains(content, w) {
+				t.Errorf("%s no contiene %q (self-heal contract-driven)", path, w)
+			}
+		}
+	}
+}
