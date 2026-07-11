@@ -146,6 +146,35 @@ S1 (brain+RLS, aditivo) ─► S2 (aislamiento+realtime) ─► S3 (Maestro) ─
 - Sandboxear los agentes de diseño en contenedor: después de que el runtime SDK esté estable.
 - Multi-app / full-stack por proyecto: después de que el motor de una-app sea sólido.
 
+## Última milla — piezas que el ejemplo end-to-end (Doña Rosa: app móvil + web) EXPONE
+
+Verificación del ejemplo contra el código: el spine **diseño → PR → preview web** está bien considerado; la **"última milla a un
+producto que el cliente usa" tiene gaps reales** que la arquitectura no nombraba. Rankeados por cuánto muerden:
+
+- `[LM-1]` **Publicación móvil a tiendas — falta casi entero.** HOY `build-apk.yml` produce un APK firmado con clave **debug** como
+  artefacto interno (`build-apk.yml.tmpl:62-64`: *"Sin keystore… firma con la clave debug… La firma de release real… es un follow-up;
+  iOS… queda diferido"*). Falta: firma de release (keystore en secrets), **iOS** (runner macOS + signing Apple), y submission (App Store
+  Connect / Play Console, metadata, review). Interino realista: **Firebase App Distribution / link de prueba** (aún sin cablear). · S4→S6.
+- `[LM-2]` **Infra + entornos del app DEL CLIENTE — no existe.** No hay provisioning del backend del cliente (crear su Firebase/Supabase,
+  entornos dev/preview/prod, secrets de la app, DNS/dominio como `bella-turnos.web.app`). El preview web (Vercel) y `e2e-verify` corren
+  contra un backend **efímero/emulador**; publicar a prod necesita infra persistente. La arquitectura provisiona el sustrato de FLUXO
+  (Supabase del brain), NO el del cliente. · S4.
+- `[LM-3]` **Verificación VISUAL real (no solo "arranca") — aspiracional.** `ui-verify` usa Playwright/chromium y su propio comentario
+  dice *"prueba que la app ARRANCA; nadie juzgaba si se VE"* (`ui-verify.yml.tmpl:177`). Falta el **juez-visión** (art-director vs
+  mockup) y, para móvil, un device/emulador real (hoy es Flutter-web renderizado en chromium). Cierra AUTO-3 **de verdad**. · S4.
+- `[LM-4]` **Multi-superficie completa — parcial.** El stack `aiuda-flutter-firebase` cubre customer-app + admin + backend, pero
+  `ui-verify` valida **UN solo app primario** (`app_path` default `apps/customer`, `README:66`); el provider-app / web-admin no tienen
+  verify propio, y la buildabilidad multi-app es fase-2. · S5.
+- `[LM-5]` **Integración cross-lane e2e — no es un gate.** El grafo ordena lanes y `e2e-verify` corre el backend, pero *"el app
+  desplegado habla con el backend desplegado"* no se verifica; el contrato de frontera (`provisioning.yaml`) es lint **estático**. · S4.
+- `[LM-6]` **Change-requests con infra/terceros** (el "recordatorio por WhatsApp" del cierre): features nuevas necesitan servicios +
+  secrets (WhatsApp Business API, push) que nadie provisiona — el mismo patrón de LM-2 a nivel feature. · backlog.
+
+**Conclusión de la verificación:** la arquitectura consideró bien la **fábrica** (idea→código→PR→preview); **NO** consideró la
+**entrega/operación del producto** (tiendas, infra y entornos del cliente, verificación visual/integración real). El ejemplo de Rosa es
+honesto solo hasta el paso 7 (web preview); los pasos 8 (tiendas) y "publicado a prod" son objetivo, no realidad. Estas 6 piezas se
+suman al plan (mayormente S4, algunas S5/S6).
+
 ## Decisiones abiertas (bloquean S1+)
 1. **Apuesta de plataforma:** ¿Supabase (Postgres+RLS+Auth+Realtime+Vault) + Vercel/CF para preview? ¿o neutral/self-host Postgres?
 2. **Punto de arranque:** ¿S0 (hardening) primero —recomendado— o directo a S1 (brain)?

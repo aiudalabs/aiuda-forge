@@ -233,7 +233,7 @@
         <div class="chk"><span class="b">✓</span> Un revisor aprobó el código</div>
         <div class="chk"><span class="b">✓</span> La pantalla se ve como el dibujo</div>
       </div>
-      <div class="behind">🔧 detrás de escena · <b>Gate de verificación REQUERIDO</b> (pruebas + revisión + QA visual). Ya no es “verde-pero-vacío”: bloquea el merge de verdad.</div>
+      <div class="behind">🔧 detrás de escena · <b>Gate de verificación REQUERIDO</b> (pruebas + revisión). <b>Hoy:</b> Playwright prueba que la pantalla <i>arranca</i>; el juicio de si <i>se ve como el dibujo</i> (juez-visión vs mockup) todavía no está cableado (LM-3 / AUTO-3).</div>
     </div>
   </div>
 
@@ -280,7 +280,7 @@
     <div class="num">8</div>
     <div class="card">
       <h2>La APP MÓVIL se arma y se publica a las clientas.</h2>
-      <p class="lead">Para el celular, Fluxo <b>arma la app</b> (el archivo instalable) en un trabajo aparte, y la manda a un <b>link de prueba</b> primero (para que Rosa la pruebe en su teléfono) y después a las <b>tiendas</b> (App Store / Google Play).</p>
+      <p class="lead">Para el celular, Fluxo <b>arma la app</b> (el archivo instalable) en un trabajo aparte y la manda a un <b>link de prueba</b> para que Rosa la pruebe en su teléfono. <b>La publicación final a las tiendas</b> (firma de release, cuenta de Apple/Google, revisión) es un paso que <b>todavía estamos cableando</b> — ver la nota de estado más abajo.</p>
       <div class="frames">
         <div class="phone">
           <div class="scr"><span class="notch"></span>
@@ -296,7 +296,7 @@
         </div>
       </div>
       <div class="caption">📱 lo que ven las clientas en el celular</div>
-      <div class="behind">🔧 detrás de escena · <b>Runtime</b> (job de CI dedicado que compila el APK/app) — el agente hace código y tests; el artefacto lo arma un trabajo aparte.</div>
+      <div class="behind">🔧 detrás de escena · <b>Runtime</b> (job de CI dedicado que compila el APK) — el agente hace código y tests; el artefacto lo arma un trabajo aparte. <b>Hoy:</b> APK firmado con clave <i>debug</i> como artefacto interno (<span class="mono">build-apk.yml</span>). Firma de release + iOS + tiendas = pendiente (LM-1).</div>
     </div>
   </div>
 
@@ -318,6 +318,32 @@
 
 </div>
 </div>
+
+<section class="wrap" style="max-width:900px;margin:0 auto 8px">
+  <div class="card" style="border-color:var(--accent-line)">
+    <h2 style="font-size:21px">Honestidad: qué es real hoy y qué falta</h2>
+    <p class="lead">Este recorrido es el <b>objetivo</b> de punta a punta. Verificado contra el código, hoy la foto es:</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px">
+      <div>
+        <div class="mono" style="font-size:12px;color:var(--emerald);font-weight:600;margin-bottom:8px">✓ YA FUNCIONA</div>
+        <ul style="margin:0;padding-left:18px;color:var(--ink2);font-size:14px;line-height:1.85">
+          <li>Diseño gateado → backlog → tareas en el GitHub del cliente</li>
+          <li>Agentes escriben código en la nube del cliente, con sus llaves</li>
+          <li>Pruebas + revisión de código; se arma un APK instalable (interno)</li>
+        </ul>
+      </div>
+      <div>
+        <div class="mono" style="font-size:12px;color:var(--accent);font-weight:600;margin-bottom:8px">⧗ TODAVÍA EN CONSTRUCCIÓN</div>
+        <ul style="margin:0;padding-left:18px;color:var(--ink2);font-size:14px;line-height:1.85">
+          <li>Publicar a las tiendas (firma de release, iOS, App Store/Play) — LM-1</li>
+          <li>Levantar el backend real del cliente (Firebase/Supabase, dominio, prod) — LM-2</li>
+          <li>Juzgar que la pantalla “se ve como el dibujo”, no solo que arranca — LM-3</li>
+        </ul>
+      </div>
+    </div>
+    <p class="behind" style="border:0;padding:0;margin-top:14px">🔧 El plan de estas piezas está en <span class="mono">docs/PLAN-2026-07-11-sprints-migracion-v2.md</span> → sección “Última milla”.</p>
+  </div>
+</section>
 
 <section class="final">
   <div class="finalcard">
