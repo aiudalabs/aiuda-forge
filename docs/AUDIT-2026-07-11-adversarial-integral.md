@@ -26,11 +26,59 @@ Desglosado, sin cariño:
 
 **Traducción:** Fluxo es hoy un **acelerador de entrega de agencia, single-tenant / operador-confiable, que funciona** —
 NO todavía un SaaS multi-tenant autónomo seguro. La distancia entre las dos cosas son ~6 fixes quirúrgicos de seguridad/aislamiento
-(baratos, el código ya tiene las variantes correctas al lado) + una decisión de posicionamiento (matar el self-serve).
+(baratos, el código ya tiene las variantes correctas al lado) + una decisión de posicionamiento (matar el self-serve **por asiento**).
+
+---
+
+## Addendum 2026-07-11 — Reencuadre de negocio (post-discusión con el fundador)
+
+La lente de NEGOCIO original tasó como moat el **artefacto** (el spec/backlog) y asumió el modelo **BYO-keys** (el usuario paga
+su propio Copilot/Claude). Dos correcciones del fundador cambian ese encuadre — sin mover un milímetro los hallazgos técnicos, que
+de hecho **suben de importancia**:
+
+1. **El modelo es managed keys (factura única), no BYO-keys.** Fluxo provee las API keys y cobra el compute + el wrapper. Esto:
+   - **Mata GTM-3** (la "tercera factura"): no sumás a Copilot+Claude, los **reemplazás** con una sola factura.
+   - **Debilita fuerte GTM-4** (cliff de activación): el signup no necesita pre-tener Copilot Business con coding-agent habilitado.
+   - **Refuerza el ICP agencia** (no rescata el self-serve solo): para un dev solo con Claude Max el compte ya es sunk-cost; para un
+     **equipo** que quiere billing central + no repartir keys + gobernanza, managed keys es el valor.
+   - **Costo:** te volvés revendedor de compute (margen fino, riesgo de precio de modelo, control de abuso/rate-limit por tenant). Es
+     el modelo de Cursor/Lovable: viable, pero operacionalmente pesado y **agrava la superficie de seguridad** (tus keys y tu factura
+     quedan expuestas a un workflow envenenado — ver SEC-1).
+
+2. **El wedge real NO es el artefacto — es el WRAPPER.** Spec Kit es un CLI stateless en un IDE: escupe archivos y se olvida. Fluxo
+   (aspira a) ser un **sistema de registro persistente y auditable de todo lo que el proceso de IA genera y normalmente se pierde** —
+   las decisiones, las respuestas de los gates, los diseños rechazados, el provenance requisito→issue→PR — con scope de proyecto y
+   tenant (el `brain/`), una **UI de equipo** (grafo de dependencias + click-para-despachar) y **factura única**. Eso NO lo dan Spec Kit
+   ni Agent HQ. **Es el moat que sobrevive a la commoditización.** → GTM-1 baja de *crítico/existencial* a **alto y reencuadrable**.
+
+**Pero el moat y los hallazgos no se contradicen — se necesitan.** El valor vendible es "conocimiento **auditable, sostenible,
+confiable**". Y **ARCH-1** (escritura cross-tenant) literalmente envenena esa knowledge base con data de otro tenant; **AUTO-3** (gate
+verde-pero-vacío) mete al "registro auditable" merges que nunca se verificaron; **SEC-1** expone las keys que ahora son tuyas. Los
+hallazgos técnicos dejan de ser "deuda" y pasan a ser **precondiciones de existencia del moat**.
+
+**Corrección a la recomendación original:** NO "concedé la ejecución a Agent HQ". Concedé **out-engineerar el runtime multi-agente**
+(no le ganás a GitHub el motor); NO concedas **la capa de ejecución gráfica, gobernada, de factura única y con memoria** — ese
+envoltorio es el producto.
+
+### Premortem reescrito (con el enfoque del fundador)
+
+> Es 2027. Fluxo **no** murió porque GitHub tenía Spec Kit gratis — la knowledge base auditable + la UI de equipo + la factura única
+> eran un lugar que Spec Kit nunca ocupó. Murió porque **vendió la magia grado-Lovable antes de que los engines cruzaran el umbral de
+> confiabilidad.** La primera agencia entregó a *su* cliente un backlog "auditable" que traía, por ARCH-1, data de otro tenant; el gate
+> verde-pero-vacío dejó pasar una pantalla rota que el cliente vio en la demo. En un mercado LATAM de agencias que corre por referidos,
+> **una falla visible frente al cliente-de-un-cliente fue fatal** — el boca a boca que iba a ser el GTM se volvió el instrumento de
+> muerte. La visión era correcta; la **secuencia** (vender antes de endurecer) la mató.
+
+**La única prioridad que cambia respecto al cuerpo del reporte:** #1 no es repivotar el producto — es **cruzar el umbral de
+confiabilidad + blindar la knowledge base (aislamiento + gate que verifique de verdad) ANTES de escalar cualquier GTM.** El repivote de
+*pricing* (matar el asiento self-serve → agencia + managed keys) sigue en pie; la knowledge base sube a **pieza central del pitch**.
 
 ---
 
 ## Los 5 riesgos que MATAN el producto
+
+> Nota: leídos con el addendum de arriba, el riesgo #1 se reencuadra (el wedge no es "gratis": el moat es el wrapper, no el artefacto).
+> Los riesgos #2–#5 (técnicos/seguridad) **suben de importancia** porque son las precondiciones del moat.
 
 1. **[NEGOCIO] El wedge ya es gratis y open-source.** El "discovery→PRD→arquitectura→UI→backlog gateado que aterriza en
    issues + dependencias nativas" que la GTM llama "lo menos disputado, nadie lo hace" es un clon funcional de **GitHub Spec Kit**
@@ -162,13 +210,16 @@ Estado: **CONFIRMED** = ningún verificador lo refutó · **PLAUSIBLE** = un ver
 > HUMANOS y la TRAZABILIDAD cliente-facing como el producto, no como una limitación.**
 
 ### Qué MATAR primero
-1. **El tier self-serve de $49/asiento** y la ambición de SaaS horizontal "ahora". La captura de valor está invertida (regala el
-   diferenciador, cobra la commodity) y es una tercera factura para un trabajo que GitHub ya hace en una. El propio ADR dice: productizar
-   *después* de N casos entregados.
-2. **La ambición de "dueño de la ejecución"** (el conductor multi-modelo como diferenciador cobrado). Eso es Agent HQ, bundleado. Concedelo.
-3. **La narrativa de autonomía-total** ("quitamos al humano"). No está entregada y el mercado castiga la promesa incumplida. Reencuadrá:
-   los gates humanos SON el producto para una agencia que le rinde cuentas a un cliente.
-4. **El scope-creep de multi-app / full-stack** hasta que el motor de una-app sea sólido.
+1. **El tier self-serve por asiento** (no el producto). La captura de valor estaba invertida: cobraba la commodity (artefacto/ejecución)
+   y regalaba el diferenciador (wrapper). Ir a **plan de agencia + managed keys (factura única)**. El ADR: productizar *después* de N casos.
+2. **La ambición de out-engineerar el RUNTIME multi-agente de GitHub** (no el de "dueño de la ejecución"). No le ganás a Agent HQ el
+   motor — **envolvelo**. Lo que NO se concede: la capa de ejecución **gráfica, gobernada, de factura única y con memoria** (grafo de
+   deps + click-para-despachar + knowledge base) — ese envoltorio es el producto.
+3. **La narrativa de autonomía-total** ("quitamos al humano") **como pitch de hoy**. No está entregada y el mercado castiga la promesa
+   incumplida. Reencuadrá: los gates humanos + el registro auditable SON el producto para una agencia que le rinde cuentas a un cliente.
+4. **Escalar el GTM antes de cruzar el umbral de confiabilidad.** En un mercado de referidos, una falla visible frente al cliente-de-un-
+   cliente es fatal (ver premortem reescrito). Endurecer engines + aislamiento ANTES de vender la magia grado-Lovable.
+5. **El scope-creep de multi-app / full-stack** hasta que el motor de una-app sea sólido.
 
 ### Qué ARREGLAR YA (bloqueante para cualquier 2º tenant — todo quirúrgico, el código ya tiene la variante correcta al lado)
 - **ARCH-1 + ARCH-3**: agregar `AND project_id=?` a `SyncExternalStatus` y usar `GetStoryInProject` en el path de dispatch (ambas
@@ -183,9 +234,15 @@ Estado: **CONFIRMED** = ningún verificador lo refutó · **PLAUSIBLE** = un ver
   `e2e/ui-verify` corran verde de verdad, sacarlos de `continue-on-error`. Sin esto, "calidad gobernada" es falso.
 
 ### Qué DOBLAR
+- **La knowledge base auditable y persistente por proyecto/tenant (`brain/`) como MOAT y pieza central del pitch**: el registro de
+  todo lo que el proceso de IA genera y normalmente se pierde — decisiones, respuestas de gates, diseños rechazados, provenance
+  requisito→issue→PR. Es lo que Spec Kit (stateless) y Agent HQ (runtime) NO tienen. **Pero venderla exige antes blindarla** (ARCH-1
+  la envenena cross-tenant; AUTO-3 la llena de merges falso-verde): sin eso, "auditable" es una promesa que no podés cumplir.
 - **La fábrica de specs gateada como ENTREGABLE de cliente**: brief vago en español → discovery→PRD→arquitectura→UI→backlog gateado que
   aterriza como Issues con grafo `blocked_by`, **con un trail de trazabilidad requisito→issue→PR que la agencia le muestra al cliente**.
   Eso es lo que Spec Kit (CLI solo-dev, un IDE) NO da: plano de control hosted + gates de gobernanza + artefacto auditable presentable.
+- **La UI de equipo (grafo de dependencias + click-para-despachar + preview en real-time tipo Lovable)** como la ergonomía que ningún
+  agente-de-terminal da — pero cerrando UX-1 primero (hoy el flujo se corta: default `approve` + Studio no linkea a ejecución).
 - **Answering conversacional de los open-questions de cada gate** (backlog #3) — el gate ES el producto; hacelo excelente.
 - **Español-first en la elicitación** — donde las herramientas GitHub-native, inglés-first, subatienden.
 - **El motor de recuperación** hasta que converja (menos intervenciones por proyecto, medido), no whack-a-mole.
