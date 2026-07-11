@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Fluxo · Un ejemplo de punta a punta (para que lo entienda cualquiera)</title>
+<meta name="description" content="De una idea a una app en el celular y una web publicada — contado con la peluquería de Doña Rosa, paso a paso, sin jerga."/>
+<link rel="preconnect" href="https://api.fontshare.com" crossorigin/>
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  :root{
+    --bg:#FAF8F4; --bg2:#F3F0EA; --bg3:#EBE7DE;
+    --ink:#0D0D0F; --ink2:#2A2A2F; --ink3:#52525A; --ink4:#8A8A92;
+    --accent:#E8440A; --accent-h:#D13A06; --accent-soft:rgba(232,68,10,.07); --accent-line:rgba(232,68,10,.24);
+    --navy:#142850; --navy-soft:rgba(20,40,80,.08); --emerald:#0A7B5A; --emerald-soft:rgba(10,123,90,.1); --amber:#b45309;
+    --stroke:rgba(13,13,15,.08); --stroke-strong:rgba(13,13,15,.16);
+    --shadow-soft:0 16px 42px rgba(13,13,15,.07); --shadow-accent:0 12px 28px rgba(232,68,10,.2);
+    --sans:"Satoshi",system-ui,sans-serif; --serif:"Instrument Serif",Georgia,serif; --mono:"JetBrains Mono",monospace;
+    --ease:cubic-bezier(.16,1,.3,1); --r:12px; --r-lg:16px; --r-xl:28px; --max:900px;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+    background:radial-gradient(circle at 12% 2%,rgba(232,68,10,.10),transparent 27%),radial-gradient(circle at 92% 6%,rgba(20,40,80,.07),transparent 30%),linear-gradient(180deg,#faf8f4 0%,#f7f4ee 42%,#faf8f4 100%);}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.028;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  a{color:inherit;text-decoration:none}
+  h1,h2,h3{margin:0;font-weight:900;letter-spacing:-.03em;line-height:1.08}
+  em{font-family:var(--serif);font-style:italic;font-weight:400;color:var(--accent)}
+  .mono{font-family:var(--mono)}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+
+  header.nav{position:sticky;top:0;z-index:100;background:rgba(250,248,244,.88);backdrop-filter:blur(20px);border-bottom:1px solid rgba(13,13,15,.04)}
+  .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px;max-width:1120px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:900;font-size:19px}
+  .brand .dot{width:12px;height:12px;border-radius:3px;background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);rotate:45deg}
+  .brand small{font-family:var(--mono);font-weight:400;font-size:10px;color:var(--ink4);letter-spacing:.1em;text-transform:uppercase}
+  .backlink{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--ink3);border:1px solid var(--stroke-strong);border-radius:10px;padding:8px 13px;transition:.15s}
+  .backlink:hover{color:var(--ink);border-color:var(--ink)}
+
+  .hero{padding:64px 0 28px;text-align:center}
+  .eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:16px;font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+  .eyebrow .ln{width:20px;height:1.5px;background:var(--accent)}
+  .hero h1{font-size:clamp(32px,5vw,52px)}
+  .hero p{font-size:19px;color:var(--ink3);max-width:56ch;margin:20px auto 0;line-height:1.7}
+  .hero p b{color:var(--ink)}
+
+  /* Rosa card */
+  .rosa{display:flex;gap:20px;align-items:center;background:var(--ink);color:var(--bg);border-radius:var(--r-xl);padding:28px 30px;margin:34px auto 0;max-width:var(--max);position:relative;overflow:hidden}
+  .rosa .glow{position:absolute;top:-40%;right:-10%;width:340px;height:340px;border-radius:50%;background:radial-gradient(circle,rgba(232,68,10,.22),transparent 65%)}
+  .rosa .face{flex:0 0 74px;height:74px;border-radius:50%;background:linear-gradient(135deg,#E8440A,#f0894f);display:grid;place-items:center;font-size:36px;position:relative;box-shadow:0 8px 24px rgba(232,68,10,.4)}
+  .rosa .txt{position:relative}
+  .rosa .txt h3{font-size:20px;color:#fff}
+  .rosa .txt p{margin:6px 0 0;color:rgba(255,255,255,.72);font-size:15px;line-height:1.55}
+  .rosa .txt .want{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .rosa .chip{font-family:var(--mono);font-size:11px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);color:#fff;padding:5px 10px;border-radius:100px}
+
+  /* timeline */
+  .steps{position:relative;padding:40px 0 20px}
+  .steps::before{content:"";position:absolute;left:31px;top:60px;bottom:80px;width:2px;background:linear-gradient(180deg,var(--accent),var(--navy));opacity:.25}
+  .step{position:relative;padding-left:78px;margin-bottom:34px}
+  .step .num{position:absolute;left:0;top:0;width:64px;height:64px;border-radius:50%;background:var(--bg);border:1px solid var(--stroke-strong);display:grid;place-items:center;font-family:var(--mono);font-size:22px;font-weight:600;color:var(--accent);box-shadow:0 2px 12px rgba(0,0,0,.05);z-index:2}
+  .step.done .num{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .card{background:#FFFDF9;border:1px solid var(--stroke);border-radius:var(--r-lg);padding:22px 24px;box-shadow:var(--shadow-soft)}
+  .card h2{font-size:21px;letter-spacing:-.02em}
+  .card .lead{color:var(--ink2);margin:10px 0 0;font-size:16px;line-height:1.65}
+  .card .lead b{color:var(--ink)}
+  .behind{margin-top:14px;padding-top:12px;border-top:1px dashed var(--stroke-strong);font-family:var(--mono);font-size:12px;color:var(--ink3);line-height:1.6}
+  .behind b{color:var(--navy);font-weight:600}
+
+  /* mini visuals */
+  .gates{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .gate{font-size:13px;background:var(--bg2);border:1px solid var(--stroke);border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:7px}
+  .gate .ok{color:var(--emerald);font-weight:700}
+  .tickets{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+  .ticket{display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--stroke);border-radius:10px;padding:10px 12px;font-size:14px}
+  .ticket .tid{font-family:var(--mono);font-size:11px;color:var(--navy);background:var(--navy-soft);padding:3px 7px;border-radius:6px;font-weight:600}
+  .ticket .dep{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink4)}
+  .lanes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+  .lane{background:var(--bg2);border:1px solid var(--stroke);border-radius:12px;padding:14px;text-align:center}
+  .lane .ic{font-size:26px}
+  .lane .nm{font-weight:700;font-size:14px;margin-top:6px}
+  .lane .who{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-top:3px}
+  .checks{display:flex;flex-direction:column;gap:7px;margin-top:14px}
+  .chk{display:flex;align-items:center;gap:9px;font-size:14px}
+  .chk .b{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;background:var(--emerald)}
+  .pr{margin-top:14px;background:var(--bg2);border:1px solid var(--stroke);border-radius:12px;padding:14px 16px}
+  .pr .top{display:flex;align-items:center;gap:10px;font-size:14px}
+  .pr .mg{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--emerald);color:#fff;padding:4px 10px;border-radius:100px;font-weight:600}
+  .pr .sub{font-family:var(--mono);font-size:11.5px;color:var(--ink3);margin-top:8px}
+
+  /* deploy frames */
+  .frames{display:grid;grid-template-columns:1.3fr .7fr;gap:18px;margin-top:16px}
+  @media(max-width:640px){.frames{grid-template-columns:1fr}.lanes{grid-template-columns:1fr}}
+  .browser{background:var(--bg2);border:1px solid var(--stroke-strong);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-soft)}
+  .browser .bar{display:flex;align-items:center;gap:6px;padding:9px 12px;background:#e9e2d6;border-bottom:1px solid var(--stroke)}
+  .browser .bar .d{width:9px;height:9px;border-radius:50%;background:#c9bfb0}
+  .browser .url{margin-left:8px;flex:1;background:#fff;border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+  .browser .body{padding:16px;min-height:120px}
+  .browser .h{height:10px;background:var(--accent);width:40%;border-radius:4px}
+  .browser .row2{display:flex;gap:8px;margin-top:12px}
+  .browser .b1{flex:1;height:52px;background:#fff;border:1px solid var(--stroke);border-radius:8px}
+  .browser .b2{width:80px;height:52px;background:var(--navy-soft);border:1px solid var(--stroke);border-radius:8px}
+  .browser .line{height:8px;background:#e4ddce;border-radius:4px;margin-top:10px}
+  .browser .line.s{width:60%}
+  .phone{margin:0 auto;width:150px;height:290px;background:var(--ink);border-radius:26px;padding:9px;box-shadow:var(--shadow-soft)}
+  .phone .scr{background:#fff;border-radius:18px;height:100%;overflow:hidden;position:relative}
+  .phone .notch{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:44px;height:5px;background:#0d0d0f;border-radius:3px;opacity:.25}
+  .phone .top{background:var(--accent);height:64px;border-radius:0 0 14px 14px}
+  .phone .bk{padding:12px}
+  .phone .bt{height:9px;width:70%;background:#e4ddce;border-radius:4px;margin-bottom:9px}
+  .phone .slot{height:34px;background:var(--bg2);border:1px solid var(--stroke);border-radius:9px;margin-bottom:8px;display:flex;align-items:center;padding:0 9px;font-size:9px;color:var(--ink3);font-family:var(--mono)}
+  .phone .cta{position:absolute;bottom:14px;left:12px;right:12px;height:32px;background:var(--accent);border-radius:9px;display:grid;place-items:center;color:#fff;font-size:10px;font-weight:700}
+  .caption{text-align:center;font-family:var(--mono);font-size:11px;color:var(--ink4);margin-top:8px}
+
+  /* brain */
+  .brain{margin-top:14px;display:flex;flex-direction:column;gap:0}
+  .bn{display:flex;align-items:center;gap:12px;font-size:14px;position:relative;padding:8px 0}
+  .bn .dt{width:11px;height:11px;border-radius:50%;background:var(--navy);flex:0 0 11px;z-index:2}
+  .bn:not(:last-child)::after{content:"";position:absolute;left:5px;top:19px;bottom:-8px;width:1px;background:var(--stroke-strong)}
+  .bn .ar{color:var(--ink4);font-family:var(--mono);font-size:11px}
+
+  .final{margin:20px auto 60px;max-width:var(--max)}
+  .finalcard{background:var(--bg3);border:1px solid var(--stroke);border-radius:var(--r-xl);padding:34px;text-align:center}
+  .finalcard h2{font-size:clamp(22px,3vw,30px)}
+  .finalcard p{color:var(--ink3);max-width:52ch;margin:14px auto 0;font-size:16px}
+  .finalcard .loop{display:inline-flex;align-items:center;gap:8px;margin-top:16px;font-family:var(--mono);font-size:12px;color:var(--accent);border:1px solid var(--accent-line);border-radius:100px;padding:8px 16px}
+  footer{border-top:1px solid var(--stroke);padding:26px 0;text-align:center;font-family:var(--mono);font-size:11px;color:var(--ink4)}
+  footer a{color:var(--ink3)}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot"></span> Fluxo <small>by AIuda Labs</small></a>
+    <a class="backlink" href="index.html">← Volver al landing</a>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div class="eyebrow"><span class="ln"></span> Un ejemplo de punta a punta</div>
+    <h1>De una <em>idea</em> a una app en el celular y una web <em>publicada</em>.</h1>
+    <p>Contado con la peluquería de Doña Rosa — <b>sin una sola palabra rara</b>. Cada paso muestra, chiquito y abajo, qué pieza de Fluxo lo hace.</p>
+  </div>
+  <div class="rosa">
+    <span class="glow"></span>
+    <div class="face">💇‍♀️</div>
+    <div class="txt">
+      <h3>Doña Rosa · Peluquería "Bella"</h3>
+      <p>“Quiero que mis clientas reserven turno desde el celular, y yo quiero ver y ordenar los turnos desde la computadora.”</p>
+      <div class="want">
+        <span class="chip">📱 app para las clientas</span>
+        <span class="chip">💻 web para Rosa</span>
+        <span class="chip">🇪🇸 en español</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+<div class="steps">
+
+  <!-- 1 -->
+  <div class="step done">
+    <div class="num">1</div>
+    <div class="card">
+      <h2>Rosa cuenta qué quiere — en español, como hablando.</h2>
+      <p class="lead">No hace falta saber de computación. Rosa (o la agencia que la atiende) escribe la idea con sus palabras. Fluxo la lee y empieza a hacer preguntas para entender bien.</p>
+      <div class="behind">🔧 detrás de escena · <b>Studio / Diseño</b> — el pipeline de diseño arranca con la idea.</div>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="step done">
+    <div class="num">2</div>
+    <div class="card">
+      <h2>Fluxo diseña paso a paso, y Rosa aprueba cada paso.</h2>
+      <p class="lead">Como un arquitecto que te muestra los planos antes de construir: primero entiende, después escribe qué va a hacer la app, cómo se organiza, y te muestra un <b>dibujo navegable</b> de las pantallas que podés clickear. En cada paso hay un <b>candado ◆</b>: nada avanza sin tu “dale, me gusta”.</p>
+      <div class="gates">
+        <span class="gate"><span class="ok">✓</span> qué necesita</span>
+        <span class="gate"><span class="ok">✓</span> qué hace la app</span>
+        <span class="gate"><span class="ok">✓</span> cómo se organiza</span>
+        <span class="gate"><span class="ok">✓</span> dibujo de pantallas</span>
+        <span class="gate">◆ <b>Rosa aprueba</b></span>
+      </div>
+      <div class="behind">🔧 detrás de escena · <b>6 fases gateadas</b> (agentes de diseño) + <b>tus aprobaciones</b>. Todo lo decidido se guarda en el <b>Brain</b> (el cuaderno).</div>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="step done">
+    <div class="num">3</div>
+    <div class="card">
+      <h2>Sale una lista de tareas ordenada — en el espacio de Rosa.</h2>
+      <p class="lead">El diseño se convierte en una <b>lista de tareas</b> (“hacer el login”, “hacer la reserva”, “hacer la pantalla de Rosa”…) puestas en <b>orden</b>: primero lo que va primero. Y viven en <b>el GitHub de Rosa</b> (su propio espacio, no el nuestro).</p>
+      <div class="tickets">
+        <div class="ticket"><span class="tid">T-01</span> Entrar a la app (login) <span class="dep">— primero</span></div>
+        <div class="ticket"><span class="tid">T-02</span> Reservar un turno <span class="dep">— necesita T-01</span></div>
+        <div class="ticket"><span class="tid">T-03</span> Pantalla de Rosa (ver turnos) <span class="dep">— necesita T-02</span></div>
+      </div>
+      <div class="behind">🔧 detrás de escena · <b>Backlog → Issues de GitHub</b> con el grafo de dependencias <span class="mono">blocked_by</span>, en el repo del cliente.</div>
+    </div>
+  </div>
+
+  <!-- 4 -->
+  <div class="step done">
+    <div class="num">4</div>
+    <div class="card">
+      <h2>Programadores-robot hacen el trabajo — donde Rosa quiera.</h2>
+      <p class="lead">Fluxo agarra cada tarea y se la da a un <b>agente</b> (un programador que trabaja solo). Acá está lo nuevo: vos elegís <b>DÓNDE</b> trabaja y <b>CON QUÉ</b> herramienta, como elegir en qué taller y con qué máquina. Y trabaja con <b>las llaves de Rosa, en la nube de Rosa</b> — la cuenta la paga ella, nosotros no tocamos su plata.</p>
+      <div class="lanes">
+        <div class="lane"><div class="ic">📱</div><div class="nm">La app móvil</div><div class="who">agente Flutter</div></div>
+        <div class="lane"><div class="ic">💻</div><div class="nm">La web de Rosa</div><div class="who">agente React</div></div>
+        <div class="lane"><div class="ic">🗄️</div><div class="nm">Los datos</div><div class="who">agente backend</div></div>
+      </div>
+      <div class="behind">🔧 detrás de escena · <b>Capa de Runtime</b> = <b>Runtime</b> (dónde: GitHub del cliente / máquina local / docker aislado / nube) × <b>Provider</b> (qué CLI: Claude, Copilot, Codex…) × <b>ExecEnv</b> (cada tarea en su cajita aislada). Todo elegible por dato. Las credenciales viven en el org del cliente (BYO).</div>
+    </div>
+  </div>
+
+  <!-- 5 -->
+  <div class="step done">
+    <div class="num">5</div>
+    <div class="card">
+      <h2>Antes de aceptar nada: se revisa que esté bien.</h2>
+      <p class="lead">El trabajo no entra por la cara. Corren las <b>pruebas</b>, un <b>revisor</b> lee el código, y para las pantallas se compara con el <b>dibujo aprobado</b> (que se vea de verdad como lo que Rosa dijo “me gusta”). Si algo falla, <b>no pasa</b>.</p>
+      <div class="checks">
+        <div class="chk"><span class="b">✓</span> Las pruebas pasan</div>
+        <div class="chk"><span class="b">✓</span> Un revisor aprobó el código</div>
+        <div class="chk"><span class="b">✓</span> La pantalla se ve como el dibujo</div>
+      </div>
+      <div class="behind">🔧 detrás de escena · <b>Gate de verificación REQUERIDO</b> (pruebas + revisión). <b>Hoy:</b> Playwright prueba que la pantalla <i>arranca</i>; el juicio de si <i>se ve como el dibujo</i> (juez-visión vs mockup) todavía no está cableado (LM-3 / AUTO-3).</div>
+    </div>
+  </div>
+
+  <!-- 6 -->
+  <div class="step done">
+    <div class="num">6</div>
+    <div class="card">
+      <h2>Cada tarea llega como una “propuesta” que se aprueba con un click.</h2>
+      <p class="lead">Cuando una tarea está lista y revisada, aparece como una <b>propuesta de cambio</b>. Rosa (o la agencia) la mira y aprueba. Nada entra a la app sin ese OK final.</p>
+      <div class="pr">
+        <div class="top">🔀 <b>Reservar un turno</b> — listo para aprobar <span class="mg">APROBAR ▸</span></div>
+        <div class="sub">cierra T-02 · pruebas ✓ · revisión ✓ · pantalla ✓</div>
+      </div>
+      <div class="behind">🔧 detrás de escena · <b>Pull Request</b> con los checks requeridos en verde → auto-merge o aprobación humana según la autonomía elegida.</div>
+    </div>
+  </div>
+
+  <!-- 7 -->
+  <div class="step done">
+    <div class="num">7</div>
+    <div class="card">
+      <h2>La WEB se ve en vivo — y se publica.</h2>
+      <p class="lead">Antes de publicar, Fluxo genera un <b>link de vista previa</b>: Rosa abre el navegador y ve su página <b>funcionando de verdad</b> (como Lovable). Si le gusta, con un click va a producción, en su propia dirección de internet.</p>
+      <div class="frames">
+        <div>
+          <div class="browser">
+            <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="url">bella-turnos.web.app/turnos</span></div>
+            <div class="body"><div class="h"></div><div class="row2"><div class="b1"></div><div class="b2"></div></div><div class="line"></div><div class="line s"></div></div>
+          </div>
+          <div class="caption">💻 la web de Rosa — vista previa en vivo</div>
+        </div>
+        <div class="lane" style="display:grid;place-content:center;text-align:center">
+          <div class="ic">🔗</div>
+          <div class="nm" style="margin-top:8px">Vista previa</div>
+          <div class="who">un link · logs en vivo · “publicar” con un click</div>
+        </div>
+      </div>
+      <div class="behind">🔧 detrás de escena · <b>Runtime + preview por branch</b> (Vercel / Cloudflare): URL viva embebida en la consola, sin código propio.</div>
+    </div>
+  </div>
+
+  <!-- 8 -->
+  <div class="step done">
+    <div class="num">8</div>
+    <div class="card">
+      <h2>La APP MÓVIL se arma y se publica a las clientas.</h2>
+      <p class="lead">Para el celular, Fluxo <b>arma la app</b> (el archivo instalable) en un trabajo aparte y la manda a un <b>link de prueba</b> para que Rosa la pruebe en su teléfono. <b>La publicación final a las tiendas</b> (firma de release, cuenta de Apple/Google, revisión) es un paso que <b>todavía estamos cableando</b> — ver la nota de estado más abajo.</p>
+      <div class="frames">
+        <div class="phone">
+          <div class="scr"><span class="notch"></span>
+            <div class="top"></div>
+            <div class="bk"><div class="bt"></div><div class="slot">✂️ Corte · 15:00</div><div class="slot">💅 Manicura · 16:30</div><div class="slot">🎨 Color · 18:00</div></div>
+            <div class="cta">Reservar turno</div>
+          </div>
+        </div>
+        <div class="lane" style="display:grid;place-content:center;text-align:center">
+          <div class="ic">📦</div>
+          <div class="nm" style="margin-top:8px">Se arma la app</div>
+          <div class="who">un “build” aparte → link de prueba → tiendas</div>
+        </div>
+      </div>
+      <div class="caption">📱 lo que ven las clientas en el celular</div>
+      <div class="behind">🔧 detrás de escena · <b>Runtime</b> (job de CI dedicado que compila el APK) — el agente hace código y tests; el artefacto lo arma un trabajo aparte. <b>Hoy:</b> APK firmado con clave <i>debug</i> como artefacto interno (<span class="mono">build-apk.yml</span>). Firma de release + iOS + tiendas = pendiente (LM-1).</div>
+    </div>
+  </div>
+
+  <!-- 9 -->
+  <div class="step done">
+    <div class="num">9</div>
+    <div class="card">
+      <h2>Todo queda anotado — el cuaderno que Rosa puede mostrar.</h2>
+      <p class="lead">Cada decisión, cada aprobación y cada cambio quedan guardados y <b>enlazados</b>: Rosa puede ver que “la pantalla de reservar nació de este pedido, se hizo en esta tarea, y se entregó en esta propuesta”. Es la <b>trazabilidad</b> que le da confianza (y que la agencia le muestra).</p>
+      <div class="brain">
+        <div class="bn"><span class="dt"></span> Pedido de Rosa: “reservar turno” <span class="ar">→</span></div>
+        <div class="bn"><span class="dt"></span> Tarea T-02 (en su GitHub) <span class="ar">→</span></div>
+        <div class="bn"><span class="dt"></span> Propuesta #57 (aprobada) <span class="ar">→</span></div>
+        <div class="bn"><span class="dt"></span> Publicado ✓</div>
+      </div>
+      <div class="behind">🔧 detrás de escena · <b>Brain</b> (registro auditable) — el hilo requisito → tarea → propuesta → publicado, guardado por proyecto.</div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<section class="wrap" style="max-width:900px;margin:0 auto 8px">
+  <div class="card" style="border-color:var(--accent-line)">
+    <h2 style="font-size:21px">Honestidad: qué es real hoy y qué falta</h2>
+    <p class="lead">Este recorrido es el <b>objetivo</b> de punta a punta. Verificado contra el código, hoy la foto es:</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px">
+      <div>
+        <div class="mono" style="font-size:12px;color:var(--emerald);font-weight:600;margin-bottom:8px">✓ YA FUNCIONA</div>
+        <ul style="margin:0;padding-left:18px;color:var(--ink2);font-size:14px;line-height:1.85">
+          <li>Diseño gateado → backlog → tareas en el GitHub del cliente</li>
+          <li>Agentes escriben código en la nube del cliente, con sus llaves</li>
+          <li>Pruebas + revisión de código; se arma un APK instalable (interno)</li>
+        </ul>
+      </div>
+      <div>
+        <div class="mono" style="font-size:12px;color:var(--accent);font-weight:600;margin-bottom:8px">⧗ TODAVÍA EN CONSTRUCCIÓN</div>
+        <ul style="margin:0;padding-left:18px;color:var(--ink2);font-size:14px;line-height:1.85">
+          <li>Publicar a las tiendas (firma de release, iOS, App Store/Play) — LM-1</li>
+          <li>Levantar el backend real del cliente (Firebase/Supabase, dominio, prod) — LM-2</li>
+          <li>Juzgar que la pantalla “se ve como el dibujo”, no solo que arranca — LM-3</li>
+        </ul>
+      </div>
+    </div>
+    <p class="behind" style="border:0;padding:0;margin-top:14px">🔧 El plan de estas piezas está en <span class="mono">docs/PLAN-2026-07-11-sprints-migracion-v2.md</span> → sección “Última milla”.</p>
+  </div>
+</section>
+
+<section class="final">
+  <div class="finalcard">
+    <h2>¿Y si Rosa quiere un cambio?</h2>
+    <p>Le dice a Fluxo “agregá que a las clientas les llegue un recordatorio por WhatsApp” — y eso entra como una tarea nueva y vuelve a recorrer <b>el mismo camino</b>. La app y la web mejoran solas, sprint tras sprint, siempre con Rosa aprobando.</p>
+    <div class="loop">↻ nuevo pedido → mismo ciclo → app y web actualizadas</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">Fluxo · by AIuda Labs · <a href="index.html">landing</a> · <a href="arquitectura-v2.html">arquitectura</a> — el mismo ejemplo, mapeado a la arquitectura v2 (Runtime × Provider × ExecEnv).</div>
+</footer>
+
+</body>
+</html>
