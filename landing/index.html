@@ -1,227 +1,224 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Fluxo · La fábrica de software gobernada, en el GitHub de tu cliente</title>
-<meta name="description" content="Convertí el brief de tu cliente en un backlog gobernado y trazable que tu cliente firma — en español, en su propio GitHub. Diseño gateado idea→PRD→arquitectura→UI→backlog, con trail requisito→issue→PR. Por AIuda Labs." />
-<meta property="og:title" content="Fluxo — la fábrica de software gobernada" />
-<meta property="og:description" content="Del brief del cliente a un backlog trazable que firma. Gates humanos, en su propio GitHub, en español." />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,900;1,9..144,500&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<meta name="description" content="Del brief del cliente a un backlog que firma. Diseño gateado idea→PRD→arquitectura→UI→backlog, ejecución gobernada y un registro auditable de todo — en español, en su propio GitHub. Por AIuda Labs."/>
+<meta property="og:title" content="Fluxo — la fábrica de software gobernada"/>
+<meta property="og:description" content="Del brief del cliente a un backlog trazable que firma. Gates humanos, registro auditable, en su propio GitHub."/>
+<link rel="preconnect" href="https://api.fontshare.com" crossorigin/>
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
+  /* ===== aiudalabs.com design system (globals.css) ===== */
   :root{
-    /* Aiuda palette — portada del diagrama del ciclo */
-    --orange:#e8440a; --orange-soft:#fdede5;
-    --blue:#1660c9;   --blue-soft:#e8f0fd;
-    --amber:#b45309;  --fail:#b3261e;
-    --ink:#141310;    --ink2:#57534a;  --ink3:#8a8378;
-    --paper:#f7f2ea;  --paper2:#efe7db; --card:#fffdf9;
-    --line:#e6ddcf;   --line2:#d8cdb9;
-    --shadow: 0 1px 2px rgba(20,19,16,.05), 0 8px 30px -12px rgba(20,19,16,.18);
-    --shadow-lg: 0 2px 4px rgba(20,19,16,.06), 0 30px 60px -24px rgba(20,19,16,.26);
-    --sans:"Public Sans", -apple-system, system-ui, sans-serif;
-    --serif:"Fraunces", Georgia, serif;
-    --mono:"JetBrains Mono", ui-monospace, monospace;
-    --maxw:1120px;
+    --bg:#FAF8F4; --bg2:#F3F0EA; --bg3:#EBE7DE;
+    --ink:#0D0D0F; --ink2:#2A2A2F; --ink3:#52525A; --ink4:#8A8A92;
+    --accent:#E8440A; --accent-h:#D13A06; --accent-soft:rgba(232,68,10,.07); --accent-line:rgba(232,68,10,.24);
+    --emerald:#0A7B5A; --emerald-soft:rgba(10,123,90,.07); --navy:#142850; --navy-soft:rgba(20,40,80,.07);
+    --stroke:rgba(13,13,15,.07); --stroke-strong:rgba(13,13,15,.14);
+    --shadow-soft:0 16px 42px rgba(13,13,15,.07); --shadow-accent:0 12px 28px rgba(232,68,10,.20);
+    --display:"Satoshi",system-ui,sans-serif; --serif:"Instrument Serif",Georgia,serif; --mono:"JetBrains Mono",monospace;
+    --ease:cubic-bezier(.16,1,.3,1); --max:1120px; --r:12px; --r-lg:16px; --r-xl:28px;
+    /* diagrama Fluxo — su propio lenguaje visual (naranja compartido con el accent) */
+    --cyc-orange:#e8440a; --cyc-orange-soft:#fdede5; --cyc-blue:#1660c9; --cyc-blue-soft:#e8f0fd;
+    --cyc-amber:#b45309; --cyc-fail:#b3261e; --cyc-ink:#141310; --cyc-ink2:#57534a; --cyc-white:#fffdf9;
   }
-  *{box-sizing:border-box}
+  *,*::before,*::after{box-sizing:border-box}
   html{scroll-behavior:smooth}
-  body{
-    margin:0; background:var(--paper); color:var(--ink);
-    font-family:var(--sans); font-size:17px; line-height:1.6;
-    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-    /* grano de papel */
-    background-image:
-      radial-gradient(1200px 600px at 82% -8%, var(--orange-soft) 0%, transparent 55%),
-      radial-gradient(1000px 520px at -6% 4%, var(--blue-soft) 0%, transparent 50%),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .035 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-    background-attachment:fixed, fixed, fixed;
-  }
-  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 28px}
-  a{color:inherit}
-  h1,h2,h3{margin:0; font-family:var(--serif); font-weight:900; letter-spacing:-.02em; line-height:1.02}
+  body{margin:0;color:var(--ink);font-family:var(--display);font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+    background:radial-gradient(circle at 12% 2%,rgba(232,68,10,.10),transparent 27%),radial-gradient(circle at 92% 8%,rgba(20,40,80,.07),transparent 30%),linear-gradient(180deg,#faf8f4 0%,#f7f4ee 42%,#faf8f4 100%);}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.028;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  ::selection{background:var(--accent);color:#fff}
+  a{color:inherit;text-decoration:none}
+  strong{color:var(--ink)}
+  em{font-family:var(--serif);font-style:italic;font-weight:400;color:var(--accent)}
+  h1,h2,h3,h4{margin:0}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
   .mono{font-family:var(--mono)}
-  .kicker{font-family:var(--mono); font-size:12.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--orange); font-weight:600}
 
-  /* ---------- NAV ---------- */
-  header.nav{position:sticky; top:0; z-index:50; backdrop-filter:saturate(1.2) blur(8px);
-    background:color-mix(in srgb, var(--paper) 82%, transparent); border-bottom:1px solid var(--line)}
-  .nav .wrap{display:flex; align-items:center; gap:22px; height:64px}
-  .brand{display:flex; align-items:center; gap:10px; font-family:var(--serif); font-weight:900; font-size:20px; letter-spacing:-.02em; text-decoration:none}
-  .brand .dot{width:13px; height:13px; border-radius:3px; background:var(--orange); box-shadow:0 0 0 3px var(--orange-soft); rotate:45deg}
-  .brand small{font-family:var(--mono); font-weight:400; font-size:10.5px; color:var(--ink3); letter-spacing:.1em; text-transform:uppercase}
-  .nav nav{margin-left:auto; display:flex; gap:26px; align-items:center}
-  .nav nav a{font-size:14.5px; font-weight:500; text-decoration:none; color:var(--ink2)}
-  .nav nav a:hover{color:var(--ink)}
-  .btn{display:inline-flex; align-items:center; gap:8px; font-weight:600; font-size:15px; text-decoration:none;
-    padding:11px 18px; border-radius:10px; border:1px solid transparent; transition:transform .12s ease, box-shadow .12s ease, background .12s}
-  .btn:active{transform:translateY(1px)}
-  .btn-primary{background:var(--orange); color:#fff; box-shadow:0 1px 0 rgba(0,0,0,.08), 0 8px 20px -8px var(--orange)}
-  .btn-primary:hover{background:#d13c07}
-  .btn-ghost{background:transparent; border-color:var(--line2); color:var(--ink)}
-  .btn-ghost:hover{background:var(--card)}
-  .nav .btn{padding:9px 15px}
+  .eyebrow{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .eyebrow .ln{width:20px;height:1.5px;background:var(--accent);display:block}
+  .eyebrow .kx{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
 
-  /* ---------- HERO ---------- */
-  .hero{padding:72px 0 34px; position:relative}
-  .hero .wrap{display:grid; grid-template-columns:1.05fr .95fr; gap:52px; align-items:center}
-  .hero-copy > *{opacity:0; transform:translateY(14px); animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
-  .hero-copy > *:nth-child(1){animation-delay:.02s} .hero-copy > *:nth-child(2){animation-delay:.10s}
-  .hero-copy > *:nth-child(3){animation-delay:.18s} .hero-copy > *:nth-child(4){animation-delay:.26s}
-  .hero-copy > *:nth-child(5){animation-delay:.34s}
-  @keyframes rise{to{opacity:1; transform:none}}
-  .hero h1{font-size:clamp(38px,5.4vw,62px); letter-spacing:-.03em}
-  .hero h1 em{font-style:italic; font-weight:500; color:var(--orange)}
-  .hero .lede{font-size:20px; color:var(--ink2); margin-top:22px; max-width:34ch}
-  .hero .lede b{color:var(--ink); font-weight:600}
-  .cta-row{display:flex; gap:14px; margin-top:30px; flex-wrap:wrap}
-  .trust{margin-top:26px; font-family:var(--mono); font-size:12.5px; color:var(--ink3); display:flex; gap:8px 18px; flex-wrap:wrap; align-items:center}
-  .trust b{color:var(--ink2); font-weight:600}
-  .trust .sep{width:4px; height:4px; border-radius:50%; background:var(--line2)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 20px;min-height:42px;border-radius:var(--r);
+    font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.04em;cursor:pointer;border:1px solid transparent;transition:all .2s var(--ease)}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:var(--accent-h);transform:translateY(-1px);box-shadow:var(--shadow-accent)}
+  .btn-outline{background:transparent;color:var(--ink3);border-color:var(--stroke-strong)}
+  .btn-outline:hover{color:var(--ink);border-color:var(--ink);transform:translateY(-1px)}
+  .btn-dark{background:var(--ink);color:var(--bg)}
+  .btn-dark:hover{background:var(--accent);color:#fff}
+  .btn-ghost{background:transparent;color:rgba(255,255,255,.75);border-color:rgba(255,255,255,.2)}
+  .btn-ghost:hover{color:#fff;border-color:rgba(255,255,255,.45)}
 
-  .badge{display:inline-flex; align-items:center; gap:9px; padding:7px 13px 7px 9px; border-radius:100px;
-    background:var(--card); border:1px solid var(--line); font-size:13px; font-weight:500; color:var(--ink2); box-shadow:var(--shadow)}
-  .badge .pill{font-family:var(--mono); font-size:10.5px; font-weight:600; color:#fff; background:var(--ink); padding:2px 7px; border-radius:100px; letter-spacing:.04em}
+  .pill{font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--ink3);background:var(--bg2);border:1px solid rgba(13,13,15,.06);padding:6px 12px;border-radius:100px}
 
-  /* diagrama mini en hero */
-  .hero-art{position:relative}
-  .hero-art .framelabel{position:absolute; top:-13px; left:22px; z-index:2; font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink3); background:var(--paper); padding:0 8px}
+  /* ===== NAV ===== */
+  header.nav{position:sticky;top:0;z-index:100;background:rgba(250,248,244,.88);backdrop-filter:blur(20px);border-bottom:1px solid rgba(13,13,15,.04)}
+  .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:68px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:900;font-size:20px;letter-spacing:-.02em}
+  .brand .dot{width:12px;height:12px;border-radius:3px;background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);rotate:45deg}
+  .brand small{font-family:var(--mono);font-weight:400;font-size:10px;color:var(--ink4);letter-spacing:.1em;text-transform:uppercase}
+  .nav ul{display:flex;gap:22px;list-style:none;margin:0;padding:0;align-items:center}
+  .nav ul a{font-size:14px;font-weight:500;color:var(--ink3);transition:color .2s}
+  .nav ul a:hover{color:var(--ink)}
+  .nav .navcta{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.04em;background:var(--accent);color:#fff;padding:10px 20px;border-radius:var(--r);min-height:42px;display:inline-flex;align-items:center;transition:all .2s}
+  .nav .navcta:hover{background:var(--accent-h);transform:translateY(-1px);box-shadow:var(--shadow-accent)}
+  @media(max-width:820px){.nav ul{display:none}}
 
-  /* ---------- CICLO card ---------- */
-  .cyc-card{background:var(--card); border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow-lg); padding:14px}
-  .cyc-svg{width:100%; height:auto; display:block}
-  .cyc .f-orange{fill:var(--orange)} .cyc .f-blue{fill:var(--blue)} .cyc .f-ink{fill:var(--ink)}
-  .cyc .f-ink2{fill:var(--ink2)} .cyc .f-amber{fill:var(--amber)}
-  .cyc .mk-o{fill:var(--orange)} .cyc .mk-b{fill:var(--blue)}
-  .cyc .ar-o{stroke:var(--orange); stroke-width:2.5; fill:none}
-  .cyc .ar-o-thick{stroke:var(--orange); stroke-width:3; fill:none}
-  .cyc .ar-o-thin{stroke:var(--orange); stroke-width:2; fill:none}
-  .cyc .ar-b{stroke:var(--blue); stroke-width:2.5; fill:none; stroke-dasharray:6 4}
-  .cyc .ar-b-plain{stroke:var(--blue); stroke-width:2; fill:none; stroke-dasharray:4 4}
-  .cyc .cyc-daily{stroke:var(--blue); stroke-width:2.5; fill:none; stroke-dasharray:6 4}
-  .cyc .leg-o{stroke:var(--orange); stroke-width:3}
-  .cyc .leg-b{stroke:var(--blue); stroke-width:3; stroke-dasharray:6 4}
-  .cyc .shape{fill:var(--card)}
-  .cyc-run{animation:march 1s linear infinite}
-  @keyframes march{to{stroke-dashoffset:-20}}
-  .cyc-await{animation:awaitpulse 1.6s ease-in-out infinite}
-  @keyframes awaitpulse{0%,100%{opacity:1}50%{opacity:.45}}
-  .cyc-pulse{animation:awaitpulse 1.6s ease-in-out infinite}
+  /* ===== HERO ===== */
+  .hero{padding:80px 0 40px;position:relative;overflow:hidden}
+  .hero .glow{position:absolute;top:-200px;right:-200px;width:600px;height:600px;border-radius:50%;background:radial-gradient(circle,rgba(232,68,10,.04) 0%,transparent 70%);pointer-events:none}
+  .hero-grid{display:grid;grid-template-columns:1fr .9fr;gap:60px;align-items:center}
+  .reveal{opacity:0;transform:translateY(32px);animation:up .6s var(--ease) forwards}
+  .d0{animation-delay:0s}.d1{animation-delay:.08s}.d2{animation-delay:.16s}.d3{animation-delay:.24s}.d4{animation-delay:.32s}.d5{animation-delay:.2s}
+  @keyframes up{to{opacity:1;transform:none}}
+  .hero h1{font-size:clamp(38px,5vw,60px);font-weight:900;line-height:1.04;letter-spacing:-.035em;margin-bottom:24px}
+  .hero .sub{font-size:18px;line-height:1.7;color:var(--ink3);max-width:520px;margin-bottom:30px}
+  .hero .sub b{color:var(--ink);font-weight:700}
+  .cta-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:30px}
+  .pills{display:flex;flex-wrap:wrap;gap:8px}
 
-  /* ---------- SECTIONS ---------- */
-  section{padding:60px 0}
-  .sec-head{max-width:60ch}
-  .sec-head h2{font-size:clamp(28px,3.4vw,40px)}
-  .sec-head p{color:var(--ink2); font-size:18px; margin-top:16px}
-  .eyebrow{display:flex; align-items:center; gap:12px; margin-bottom:16px}
-  .eyebrow .ln{height:1px; width:40px; background:var(--orange)}
+  /* dark decision panel (aiudalabs v10) */
+  .panel{position:relative;overflow:hidden;border-radius:var(--r-xl);border:1px solid rgba(255,255,255,.06);background:var(--ink);color:var(--bg);padding:20px;box-shadow:0 28px 86px rgba(13,13,15,.18)}
+  .panel .pglow{position:absolute;top:-18%;right:-14%;width:280px;height:280px;border-radius:50%;background:radial-gradient(circle,rgba(232,68,10,.22),transparent 70%);pointer-events:none}
+  .panel h2{position:relative;font-size:19px;font-weight:700;letter-spacing:-.02em;line-height:1.3;margin-bottom:10px;color:var(--bg)}
+  .panel .ptext{position:relative;font-size:13.5px;line-height:1.6;color:rgba(255,255,255,.55);margin-bottom:20px}
+  .panel .opts{position:relative;display:flex;flex-direction:column;gap:12px}
+  .panel .opt{display:flex;align-items:flex-start;gap:12px;padding:18px;border-radius:15px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.055);transition:all .2s}
+  .panel .opt:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2)}
+  .panel .opt .ot{font-size:14px;font-weight:600;letter-spacing:-.01em;margin-bottom:4px;color:var(--bg)}
+  .panel .opt .od{font-size:12px;line-height:1.5;color:rgba(255,255,255,.55)}
+  .panel .opt .ol{flex-shrink:0;margin-top:2px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#ff7546}
+  .panel .pnote{position:relative;font-size:12px;line-height:1.55;color:rgba(255,255,255,.7);margin-top:12px;border-radius:14px;border:1px solid var(--accent-line);background:rgba(232,68,10,.1);padding:18px}
 
-  /* pipeline / how it works */
-  .pipe{display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-top:40px}
-  .pstep{background:var(--card); border:1px solid var(--line); border-radius:13px; padding:16px 15px; position:relative; box-shadow:var(--shadow)}
-  .pstep .n{font-family:var(--mono); font-size:11px; color:var(--orange); font-weight:600}
-  .pstep h4{margin:8px 0 6px; font-family:var(--serif); font-weight:600; font-size:17px; letter-spacing:-.01em}
-  .pstep p{margin:0; font-size:13px; color:var(--ink2); line-height:1.5}
-  .pstep .gate{position:absolute; top:12px; right:12px; color:var(--amber); font-size:13px}
-  .pipe-flow{grid-column:1/-1; display:flex; align-items:center; gap:10px; margin-top:6px; font-family:var(--mono); font-size:12.5px; color:var(--ink3); flex-wrap:wrap}
-  .pipe-flow .tag{background:var(--ink); color:var(--paper); padding:3px 9px; border-radius:6px; font-weight:600}
+  /* ===== SECTIONS ===== */
+  section{padding:96px 0}
+  .sec-head h2{font-size:clamp(28px,3.8vw,44px);font-weight:900;line-height:1.08;letter-spacing:-.03em}
+  .sec-head p{color:var(--ink3);font-size:18px;line-height:1.7;margin-top:16px;max-width:70ch}
+  .on-bg2{background:var(--bg2)} .on-bg3{background:var(--bg3)}
 
-  /* differentiator */
-  .diff{display:grid; grid-template-columns:1fr 1fr; gap:22px; margin-top:38px}
-  .diff-card{border-radius:16px; padding:26px; border:1px solid var(--line)}
-  .diff-commodity{background:var(--paper2)}
-  .diff-yours{background:var(--ink); color:var(--paper)}
-  .diff-card h3{font-size:22px; margin-bottom:6px}
-  .diff-yours h3{color:#fff}
-  .diff-card .sub{font-family:var(--mono); font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; opacity:.7}
-  .diff-yours .sub{color:var(--orange); opacity:1}
-  .diff-list{list-style:none; padding:0; margin:18px 0 0}
-  .diff-list li{padding:9px 0 9px 28px; position:relative; font-size:15px; border-top:1px solid color-mix(in srgb, currentColor 12%, transparent)}
-  .diff-list li:first-child{border-top:0}
-  .diff-commodity .diff-list li::before{content:"—"; position:absolute; left:0; color:var(--ink3); font-weight:700}
-  .diff-yours .diff-list li::before{content:"✓"; position:absolute; left:0; color:var(--orange); font-weight:700}
-  .diff-yours .diff-list li b{color:#fff}
+  /* ===== CICLO (centerpiece) ===== */
+  .cyc-card{background:var(--cyc-white);border:1px solid var(--stroke);border-radius:var(--r-xl);box-shadow:var(--shadow-soft);padding:18px;margin-top:36px}
+  .cyc-svg{width:100%;height:auto;display:block}
+  .cyc .f-orange{fill:var(--cyc-orange)} .cyc .f-blue{fill:var(--cyc-blue)} .cyc .f-ink{fill:var(--cyc-ink)}
+  .cyc .f-ink2{fill:var(--cyc-ink2)} .cyc .f-amber{fill:var(--cyc-amber)}
+  .cyc .mk-o{fill:var(--cyc-orange)} .cyc .mk-b{fill:var(--cyc-blue)}
+  .cyc .ar-o{stroke:var(--cyc-orange);stroke-width:2.5;fill:none}
+  .cyc .ar-o-thick{stroke:var(--cyc-orange);stroke-width:3;fill:none}
+  .cyc .ar-o-thin{stroke:var(--cyc-orange);stroke-width:2;fill:none}
+  .cyc .ar-b{stroke:var(--cyc-blue);stroke-width:2.5;fill:none;stroke-dasharray:6 4}
+  .cyc .ar-b-plain{stroke:var(--cyc-blue);stroke-width:2;fill:none;stroke-dasharray:4 4}
+  .cyc .cyc-daily{stroke:var(--cyc-blue);stroke-width:2.5;fill:none;stroke-dasharray:6 4}
+  .cyc .leg-o{stroke:var(--cyc-orange);stroke-width:3} .cyc .leg-b{stroke:var(--cyc-blue);stroke-width:3;stroke-dasharray:6 4}
+  .cyc .shape{fill:var(--cyc-white)}
+  .cyc-run{animation:march 1s linear infinite} @keyframes march{to{stroke-dashoffset:-20}}
+  .cyc-pulse{animation:pulse 1.6s ease-in-out infinite} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
 
-  /* deliverable / traceability strip */
-  .trace{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:8px; box-shadow:var(--shadow); overflow:hidden}
-  .trace-inner{background:var(--paper2); border-radius:11px; padding:22px 24px; overflow-x:auto}
-  .trace-row{display:flex; align-items:stretch; gap:0; min-width:640px; font-family:var(--mono); font-size:13px}
-  .trace-node{flex:1; background:var(--card); border:1px solid var(--line2); border-radius:10px; padding:12px 14px}
-  .trace-node .lbl{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink3)}
-  .trace-node .val{margin-top:5px; font-weight:600; color:var(--ink)}
-  .trace-arrow{align-self:center; color:var(--orange); font-size:20px; padding:0 12px; font-family:var(--sans)}
+  /* ===== HOW (numbered, aiudalabs) ===== */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:0;position:relative;margin-top:52px}
+  .steps .conn{position:absolute;top:32px;left:16.66%;right:16.66%;height:1px;background:rgba(13,13,15,.08)}
+  .step{display:flex;flex-direction:column;align-items:flex-start;text-align:left;padding:0 24px;margin-bottom:20px}
+  .step .circ{position:relative;z-index:2;width:64px;height:64px;border-radius:50%;background:var(--bg);border:1px solid rgba(13,13,15,.08);display:flex;align-items:center;justify-content:center;margin-bottom:22px;box-shadow:0 2px 12px rgba(0,0,0,.05)}
+  .step .circ span{font-family:var(--mono);font-size:22px;font-weight:600;color:var(--accent)}
+  .step h3{font-size:18px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
+  .step p{font-size:14px;line-height:1.65;color:var(--ink3)}
+  .step .gate{font-family:var(--mono);font-size:11px;color:var(--cyc-amber);margin-top:8px}
+  @media(min-width:821px){.step{align-items:center;text-align:center}}
 
-  /* audience */
-  .who{display:grid; grid-template-columns:1.1fr .9fr; gap:40px; align-items:start}
-  .who-list{list-style:none; padding:0; margin:22px 0 0; display:grid; gap:14px}
-  .who-list li{display:flex; gap:14px; align-items:flex-start; font-size:16px}
-  .who-list .ic{flex:0 0 34px; height:34px; border-radius:9px; background:var(--orange-soft); color:var(--orange); display:grid; place-items:center; font-weight:700; font-family:var(--mono); font-size:15px}
-  .not-for{background:var(--card); border:1px dashed var(--line2); border-radius:14px; padding:22px}
-  .not-for h4{font-family:var(--mono); font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink3); margin:0 0 12px}
-  .not-for ul{margin:0; padding-left:18px; color:var(--ink2); font-size:14.5px; line-height:1.7}
+  /* ===== DIFERENCIA ===== */
+  .diff{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:44px}
+  .dcard{border-radius:var(--r-lg);padding:30px;border:1px solid var(--stroke)}
+  .dcard.commodity{background:var(--bg)}
+  .dcard.wrapper{background:var(--ink);color:var(--bg);border-color:transparent;position:relative;overflow:hidden}
+  .dcard.wrapper .wglow{position:absolute;bottom:-30%;right:-10%;width:320px;height:320px;border-radius:50%;background:radial-gradient(circle,rgba(232,68,10,.18),transparent 65%)}
+  .dcard .dsub{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink4)}
+  .dcard.wrapper .dsub{color:#ff7546}
+  .dcard h3{font-size:22px;font-weight:800;letter-spacing:-.02em;margin:6px 0 0}
+  .dcard.wrapper h3{color:#fff}
+  .dlist{list-style:none;padding:0;margin:20px 0 0;position:relative}
+  .dlist li{padding:10px 0 10px 28px;position:relative;font-size:15px;line-height:1.5;border-top:1px solid rgba(13,13,15,.08)}
+  .dcard.wrapper .dlist li{border-top-color:rgba(255,255,255,.1)}
+  .dlist li:first-child{border-top:0}
+  .commodity .dlist li::before{content:"—";position:absolute;left:0;color:var(--ink4);font-weight:700}
+  .wrapper .dlist li::before{content:"✓";position:absolute;left:0;color:var(--accent);font-weight:700}
+  .wrapper .dlist li b{color:#fff}
 
-  /* pricing */
-  .prices{display:grid; grid-template-columns:repeat(3,1fr); gap:20px; margin-top:38px}
-  .price{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:26px; box-shadow:var(--shadow); display:flex; flex-direction:column}
-  .price.feat{border-color:var(--orange); box-shadow:0 0 0 1px var(--orange), var(--shadow-lg); position:relative}
-  .price.feat::before{content:"Recomendado para agencias"; position:absolute; top:-11px; left:22px; background:var(--orange); color:#fff; font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; padding:3px 10px; border-radius:100px; font-weight:600}
-  .price h3{font-size:20px}
-  .price .amt{font-family:var(--serif); font-weight:900; font-size:40px; letter-spacing:-.03em; margin:10px 0 2px}
-  .price .amt small{font-family:var(--mono); font-size:13px; font-weight:400; color:var(--ink3); letter-spacing:0}
-  .price .desc{font-size:14px; color:var(--ink2); min-height:44px}
-  .price ul{list-style:none; padding:0; margin:16px 0 22px; display:grid; gap:9px; font-size:14px}
-  .price li{padding-left:24px; position:relative; color:var(--ink)}
-  .price li::before{content:"→"; position:absolute; left:0; color:var(--orange)}
-  .price .btn{margin-top:auto; justify-content:center}
-  .price .note{font-family:var(--mono); font-size:11px; color:var(--ink3); margin-top:12px; line-height:1.5}
+  /* trazabilidad */
+  .trace{background:var(--cyc-white);border:1px solid var(--stroke);border-radius:var(--r-lg);padding:8px;box-shadow:var(--shadow-soft);margin-top:8px}
+  .trace-in{background:var(--bg2);border-radius:12px;padding:22px;overflow-x:auto}
+  .trace-row{display:flex;align-items:stretch;min-width:660px;font-family:var(--mono);font-size:13px}
+  .tnode{flex:1;background:var(--bg);border:1px solid var(--stroke-strong);border-radius:10px;padding:12px 14px}
+  .tnode .lbl{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink4)}
+  .tnode .val{margin-top:5px;font-weight:600;color:var(--ink)}
+  .tarr{align-self:center;color:var(--accent);font-size:20px;padding:0 12px}
+
+  /* who */
+  .who{display:grid;grid-template-columns:1.1fr .9fr;gap:44px;align-items:start}
+  .wholist{list-style:none;padding:0;margin:24px 0 0;display:grid;gap:16px}
+  .wholist li{display:flex;gap:14px;align-items:flex-start;font-size:16px}
+  .wholist .ic{flex:0 0 34px;height:34px;border-radius:9px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;font-family:var(--mono);font-size:15px}
+  .notfor{background:var(--bg);border:1px dashed var(--stroke-strong);border-radius:var(--r-lg);padding:24px}
+  .notfor h4{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink4);margin:0 0 12px}
+  .notfor ul{margin:0;padding-left:18px;color:var(--ink3);font-size:14.5px;line-height:1.75}
+
+  /* precios */
+  .prices{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:44px}
+  .price{background:var(--cyc-white);border:1px solid var(--stroke);border-radius:var(--r-lg);padding:28px;box-shadow:var(--shadow-soft);display:flex;flex-direction:column}
+  .price.feat{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--shadow-soft);position:relative}
+  .price.feat::before{content:"Recomendado para agencias";position:absolute;top:-11px;left:24px;background:var(--accent);color:#fff;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;padding:3px 10px;border-radius:100px;font-weight:500}
+  .price h3{font-size:20px;font-weight:800;letter-spacing:-.02em}
+  .price .amt{font-size:38px;font-weight:900;letter-spacing:-.03em;margin:10px 0 2px}
+  .price .amt small{font-family:var(--mono);font-size:13px;font-weight:400;color:var(--ink4);letter-spacing:0}
+  .price .desc{font-size:14px;color:var(--ink3);min-height:46px;line-height:1.55}
+  .price ul{list-style:none;padding:0;margin:16px 0 22px;display:grid;gap:9px;font-size:14px}
+  .price li{padding-left:24px;position:relative;color:var(--ink2)}
+  .price li::before{content:"→";position:absolute;left:0;color:var(--accent)}
+  .price .btn{margin-top:auto;width:100%}
+  .price .note{font-family:var(--mono);font-size:11px;color:var(--ink4);margin-top:12px;line-height:1.5}
+
+  /* arquitectura link */
+  .archrow{display:grid;grid-template-columns:1fr .8fr;gap:36px;align-items:center;margin-top:36px;background:var(--ink);border-radius:var(--r-xl);padding:40px;color:var(--bg);position:relative;overflow:hidden}
+  .archrow .aglow{position:absolute;top:-30%;left:-8%;width:360px;height:360px;border-radius:50%;background:radial-gradient(circle,rgba(20,40,80,.5),transparent 60%)}
+  .archrow h3{font-size:26px;font-weight:900;letter-spacing:-.03em;color:#fff;position:relative}
+  .archrow p{color:rgba(255,255,255,.7);font-size:15.5px;line-height:1.65;margin-top:12px;position:relative}
+  .archrow .mini{position:relative;display:grid;gap:8px}
+  .archrow .layer{border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px 14px;font-family:var(--mono);font-size:12px;display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,.04)}
+  .archrow .layer b{color:#fff;font-weight:600}
+  .archrow .layer .tag{font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+  .archrow .layer .rented{color:#7db1ff} .archrow .layer .owned{color:#ff7546}
 
   /* docs */
-  .docs{display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:36px}
-  .doccard{display:block; text-decoration:none; background:var(--card); border:1px solid var(--line); border-radius:13px; padding:20px; transition:transform .14s ease, box-shadow .14s ease}
-  .doccard:hover{transform:translateY(-3px); box-shadow:var(--shadow-lg)}
-  .doccard .n{font-family:var(--mono); font-size:11px; color:var(--orange)}
-  .doccard h4{margin:8px 0 5px; font-family:var(--serif); font-weight:600; font-size:18px}
-  .doccard p{margin:0; font-size:13.5px; color:var(--ink2)}
+  .docs{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:40px}
+  .doccard{display:block;background:var(--cyc-white);border:1px solid var(--stroke);border-radius:var(--r);padding:22px;transition:all .2s var(--ease)}
+  .doccard:hover{transform:translateY(-3px);box-shadow:var(--shadow-soft);border-color:var(--stroke-strong)}
+  .doccard .n{font-family:var(--mono);font-size:11px;color:var(--accent)}
+  .doccard h4{margin:8px 0 5px;font-size:18px;font-weight:700;letter-spacing:-.01em}
+  .doccard p{margin:0;font-size:13.5px;color:var(--ink3);line-height:1.55}
 
   /* final cta */
-  .final{margin:20px 0 70px}
-  .final-card{background:var(--ink); color:var(--paper); border-radius:22px; padding:56px 44px; text-align:center; position:relative; overflow:hidden}
-  .final-card::after{content:""; position:absolute; inset:0; background:radial-gradient(600px 300px at 80% 120%, rgba(232,68,10,.35), transparent 60%); pointer-events:none}
-  .final-card h2{font-size:clamp(28px,4vw,44px); color:#fff; position:relative}
-  .final-card p{color:#d9d2c6; max-width:52ch; margin:18px auto 30px; position:relative}
-  .final-card .cta-row{justify-content:center; position:relative}
-  .final-card .btn-ghost{border-color:rgba(255,255,255,.28); color:#fff}
-  .final-card .btn-ghost:hover{background:rgba(255,255,255,.08)}
+  .final{padding:0 0 96px}
+  .finalcard{background:var(--ink);color:var(--bg);border-radius:var(--r-xl);padding:64px 44px;text-align:center;position:relative;overflow:hidden}
+  .finalcard .fglow{position:absolute;inset:0;background:radial-gradient(600px 300px at 80% 120%,rgba(232,68,10,.35),transparent 60%);pointer-events:none}
+  .finalcard h2{font-size:clamp(28px,4vw,44px);font-weight:900;letter-spacing:-.03em;color:#fff;position:relative}
+  .finalcard p{color:rgba(255,255,255,.72);max-width:54ch;margin:18px auto 30px;position:relative;line-height:1.65}
+  .finalcard .cta-row{justify-content:center;position:relative;margin:0}
 
-  footer{border-top:1px solid var(--line); padding:34px 0 60px}
-  footer .wrap{display:flex; gap:20px; align-items:center; flex-wrap:wrap; color:var(--ink3); font-size:13.5px}
+  footer{border-top:1px solid var(--stroke);padding:36px 0 60px}
+  footer .wrap{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
   footer .brand{font-size:17px}
-  footer nav{margin-left:auto; display:flex; gap:20px; flex-wrap:wrap}
-  footer a{text-decoration:none; color:var(--ink2)}
-  footer a:hover{color:var(--ink)}
-  .disclaimer{font-family:var(--mono); font-size:11px; color:var(--ink3); margin-top:14px; line-height:1.6}
+  footer nav{margin-left:auto;display:flex;gap:20px;flex-wrap:wrap}
+  footer nav a{font-size:14px;color:var(--ink3)} footer nav a:hover{color:var(--ink)}
+  .disc{font-family:var(--mono);font-size:11px;color:var(--ink4);margin-top:14px;line-height:1.6}
 
-  @media (max-width:900px){
-    .hero .wrap{grid-template-columns:1fr; gap:34px}
-    .hero-art{order:-1}
-    .pipe{grid-template-columns:repeat(2,1fr)}
-    .diff, .who, .prices, .docs{grid-template-columns:1fr}
-    .nav nav a:not(.btn){display:none}
-  }
-
-  @media (prefers-color-scheme:dark){
-    :root{
-      --paper:#17150f; --paper2:#201d15; --card:#211d15; --ink:#f4efe4; --ink2:#c3bba9; --ink3:#8f877690;
-      --line:#332d20; --line2:#443c2c; --orange-soft:#3a1a0d; --blue-soft:#0f2036;
-      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 30px -12px rgba(0,0,0,.6);
-      --shadow-lg:0 2px 4px rgba(0,0,0,.5), 0 30px 60px -24px rgba(0,0,0,.7);
-    }
-    .cyc .shape{fill:var(--card)}
-    .cyc .f-ink{fill:var(--ink)}
-    .diff-commodity{background:var(--paper2)}
-    .badge .pill{background:var(--orange)}
+  @media(max-width:820px){
+    .hero-grid,.diff,.who,.prices,.docs,.steps,.archrow{grid-template-columns:1fr}
+    .hero-art{order:-1}.steps .conn{display:none}
   }
 </style>
 </head>
@@ -230,128 +227,82 @@
 <header class="nav">
   <div class="wrap">
     <a class="brand" href="#top"><span class="dot"></span> Fluxo <small>by AIuda Labs</small></a>
-    <nav>
-      <a href="#ciclo">El ciclo</a>
-      <a href="#como">Cómo funciona</a>
-      <a href="#diferencia">Diferencia</a>
-      <a href="#para-quien">Para quién</a>
-      <a href="#precios">Precios</a>
-      <a class="btn btn-primary" href="#demo">Solicitar demo</a>
-    </nav>
+    <ul>
+      <li><a href="#ciclo">El ciclo</a></li>
+      <li><a href="#como">Cómo funciona</a></li>
+      <li><a href="#diferencia">Diferencia</a></li>
+      <li><a href="#arquitectura">Arquitectura</a></li>
+      <li><a href="#precios">Precios</a></li>
+    </ul>
+    <a class="navcta" href="#demo">Solicitar demo →</a>
   </div>
 </header>
-
 <a id="top"></a>
 
 <!-- ===================== HERO ===================== -->
 <section class="hero">
+  <span class="glow"></span>
   <div class="wrap">
-    <div class="hero-copy">
-      <span class="badge"><span class="pill">v1</span> El sistema de registro auditable de tu desarrollo con IA</span>
-      <h1>Del <em>brief</em> del cliente a un backlog que <em>firma</em>.</h1>
-      <p class="lede">Fluxo convierte un brief vago en español en un <b>backlog gobernado y trazable</b> —
-        discovery → PRD → arquitectura → UI → backlog, con <b>gates humanos</b> en cada fase — que aterriza como
-        Issues en el GitHub de tu cliente. Y <b>guarda todo el conocimiento que el vibecoding pierde</b>:
-        decisiones, respuestas de cada gate, el trail requisito → issue → PR. En una <b>UI de equipo</b>, con
-        <b>una sola factura</b> (los modelos incluidos).</p>
-      <div class="cta-row">
-        <a class="btn btn-primary" href="#demo">Solicitar demo para tu agencia →</a>
-        <a class="btn btn-ghost" href="#ciclo">Ver el ciclo</a>
+    <div class="hero-grid">
+      <div>
+        <div class="eyebrow reveal d0"><span class="ln"></span><span class="kx">El sistema de registro de tu desarrollo con IA</span></div>
+        <h1 class="reveal d1">Del <em>brief</em> del cliente a un backlog que <em>firma</em>.</h1>
+        <p class="sub reveal d2">Fluxo convierte un brief vago en español en un <b>backlog gobernado y trazable</b> —
+          discovery → PRD → arquitectura → UI → backlog, con <b>tu aprobación</b> en cada fase — que aterriza en el
+          GitHub de tu cliente. Y <b>guarda todo el conocimiento que se pierde</b>: decisiones, aprobaciones, el trail
+          requisito → issue → PR. En una <b>UI de equipo</b>, con <b>una sola factura</b>.</p>
+        <div class="cta-row reveal d3">
+          <a class="btn btn-primary" href="#demo">Solicitar demo para tu agencia →</a>
+          <a class="btn btn-outline" href="#ciclo">Ver el ciclo</a>
+        </div>
+        <div class="pills reveal d4">
+          <span class="pill">Conocimiento auditable</span>
+          <span class="pill">Una sola factura</span>
+          <span class="pill">En su propio GitHub</span>
+          <span class="pill">Español-first</span>
+        </div>
       </div>
-      <div class="trust">
-        <span><b>Conocimiento persistente y auditable</b></span><span class="sep"></span>
-        <span>Una sola factura</span><span class="sep"></span>
-        <span>En su propio GitHub</span><span class="sep"></span>
-        <span><b>Gates humanos</b>, no autonomía a ciegas</span>
-      </div>
-    </div>
 
-    <div class="hero-art">
-      <span class="framelabel">Studio · vista de diseño</span>
-      <div class="cyc-card cyc" style="padding:18px">
-        <!-- mini-secuencia del pipeline de diseño -->
-        <svg viewBox="0 0 420 300" class="cyc-svg" role="img" aria-label="Pipeline de diseño gateado de Fluxo">
-          <defs>
-            <marker id="ha" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" class="mk-o"/></marker>
-          </defs>
-          <!-- fila de fases -->
-          <g font-family="JetBrains Mono, monospace">
-            <!-- brief done -->
-            <g>
-              <rect x="14" y="24" width="118" height="52" rx="10" class="shape" style="stroke:var(--orange); stroke-width:2"/>
-              <text x="26" y="45" font-size="10" font-weight="600" class="f-ink">01 · discovery</text>
-              <text x="26" y="62" font-size="9" class="f-ink2">brief → alcance</text>
-              <text x="118" y="45" font-size="12" class="f-orange" text-anchor="end">✓</text>
-            </g>
-            <path d="M132 50 H 150" class="ar-o" marker-end="url(#ha)"/>
-            <!-- prd done -->
-            <g>
-              <rect x="152" y="24" width="118" height="52" rx="10" class="shape" style="stroke:var(--orange); stroke-width:2"/>
-              <text x="164" y="45" font-size="10" font-weight="600" class="f-ink">02 · PRD</text>
-              <text x="164" y="62" font-size="9" class="f-ink2">+ data-model</text>
-              <text x="256" y="45" font-size="12" class="f-orange" text-anchor="end">✓</text>
-            </g>
-            <path d="M270 50 H 288" class="ar-o" marker-end="url(#ha)"/>
-            <!-- arch running -->
-            <g>
-              <rect x="290" y="24" width="118" height="52" rx="10" class="shape cyc-run" style="stroke:var(--orange); stroke-width:2; stroke-dasharray:6 4"/>
-              <text x="302" y="45" font-size="10" font-weight="600" class="f-ink">03 · arquitectura</text>
-              <text x="302" y="62" font-size="9" class="f-ink2">en curso…</text>
-              <circle cx="398" cy="41" r="3" class="f-orange"/>
-            </g>
-          </g>
-          <!-- gate humano -->
-          <g class="cyc-await">
-            <rect x="120" y="108" width="180" height="40" rx="10" class="shape" style="stroke:var(--amber); stroke-width:2; fill:var(--card)"/>
-            <text x="210" y="126" font-size="11" font-weight="700" text-anchor="middle" class="f-amber">◆ GATE HUMANO</text>
-            <text x="210" y="140" font-size="8.5" text-anchor="middle" class="f-ink2">aprobar · corregir · responder</text>
-          </g>
-          <path d="M210 76 V 106" class="ar-o" marker-end="url(#ha)"/>
-          <path d="M210 148 V 172" class="ar-o" marker-end="url(#ha)"/>
-          <!-- salida: issues -->
-          <g>
-            <rect x="70" y="176" width="280" height="96" rx="12" class="shape" style="stroke:var(--blue); stroke-width:2; fill:var(--blue-soft)"/>
-            <text x="86" y="198" font-size="11" font-weight="700" class="f-blue" font-family="JetBrains Mono, monospace">GitHub Issues + grafo blocked_by</text>
-            <g font-family="JetBrains Mono, monospace" font-size="9">
-              <text x="86" y="218" class="f-ink2">#12  Auth · login OAuth</text>
-              <text x="330" y="218" text-anchor="end" class="f-blue">S1-01</text>
-              <text x="86" y="234" class="f-ink2">#13  Perfil · bloqueada por #12</text>
-              <text x="330" y="234" text-anchor="end" class="f-blue">S1-02</text>
-              <text x="86" y="250" class="f-ink2">#14  Reservas · bloqueada por #13</text>
-              <text x="330" y="250" text-anchor="end" class="f-blue">S2-01</text>
-            </g>
-            <text x="86" y="266" font-size="8.5" class="f-ink2" font-style="italic">→ en el repo de tu cliente · trazable a cada requisito</text>
-          </g>
-        </svg>
+      <div class="hero-art reveal d5">
+        <div class="panel">
+          <span class="pglow"></span>
+          <h2>Lo que tu agencia entrega, gobernado de punta a punta.</h2>
+          <p class="ptext">No reinventamos el agente de código. Envolvemos todo el ciclo en una capa que tu cliente puede ver, aprobar y firmar.</p>
+          <div class="opts">
+            <div class="opt"><div><div class="ot">Diseño gateado</div><p class="od">brief → PRD → arquitectura → UI → backlog, con tu aprobación en cada fase</p></div><span class="ol">Studio</span></div>
+            <div class="opt"><div><div class="ot">Ejecución gobernada</div><p class="od">Copilot o Claude en el GitHub de tu cliente, sin lock-in del modelo</p></div><span class="ol">Sprint</span></div>
+            <div class="opt"><div><div class="ot">Registro auditable</div><p class="od">cada decisión, aprobación y PR — trazable y presentable al cliente</p></div><span class="ol">Brain</span></div>
+          </div>
+          <p class="pnote">En su propio GitHub · una sola factura (modelos incluidos) · español-first · gates humanos, no autonomía a ciegas.</p>
+        </div>
       </div>
     </div>
   </div>
 </section>
 
 <!-- ===================== EL CICLO (centerpiece) ===================== -->
-<section id="ciclo">
+<section id="ciclo" class="on-bg2">
   <div class="wrap">
-    <div class="eyebrow"><span class="ln"></span><span class="kicker">El ciclo Scrum de Fluxo</span></div>
+    <div class="eyebrow"><span class="ln"></span><span class="kx">El ciclo Scrum de Fluxo</span></div>
     <div class="sec-head">
-      <h2>Un método vivo, no un PDF de proceso.</h2>
-      <p>Cada estación de este diagrama es real y observable en tiempo real: naranja = hecho o activo,
-        azul punteado = aún no corrido, <span style="color:var(--amber); font-weight:600">◆ ámbar = gate esperando tu decisión</span>.
-        El humano decide en los rombos; el motor hace el resto — sin quitarte el control en ningún punto.</p>
+      <h2>Un método vivo, no un <em>PDF de proceso</em>.</h2>
+      <p>Cada estación es real y observable en tiempo real: naranja = hecho o activo, azul punteado = aún no corrido,
+        <span style="color:var(--cyc-amber);font-weight:700">◆ ámbar = esperando tu decisión</span>. Vos decidís en los rombos; el motor hace el resto — sin quitarte el control.</p>
     </div>
 
-    <div class="cyc-card cyc" style="margin-top:34px">
-      <!-- === Diagrama del ciclo, portado de FlowCycle.tsx (viewBox 940×560) === -->
+    <div class="cyc-card cyc">
+      <!-- Diagrama del ciclo — terminología Scrum client-facing (feat/flow-scrum-control-board), viewBox 940×560 -->
       <svg viewBox="0 0 940 560" class="cyc-svg" role="img" aria-label="El ciclo Scrum de Fluxo">
         <defs>
           <marker id="cAO" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" class="mk-o"/></marker>
           <marker id="cAB" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" class="mk-b"/></marker>
         </defs>
 
-        <!-- IZQUIERDA: pipeline de diseño (banda STUDIO) -->
-        <rect x="18" y="118" width="150" height="300" rx="14" class="shape" style="stroke:var(--orange); stroke-width:2; fill:var(--orange-soft)"/>
+        <!-- STUDIO / DISEÑO -->
+        <rect x="18" y="118" width="150" height="300" rx="14" class="shape" style="stroke:var(--cyc-orange);stroke-width:2;fill:var(--cyc-orange-soft)"/>
         <text x="93" y="143" text-anchor="middle" font-size="13" font-weight="800" class="f-orange">STUDIO / DISEÑO</text>
-        <text x="93" y="158" text-anchor="middle" font-size="9" class="f-ink2">design.yaml · gateado</text>
-        <g font-size="10.5" font-weight="600" font-family="Public Sans, sans-serif">
+        <text x="93" y="158" text-anchor="middle" font-size="9" class="f-ink2">de la idea al backlog</text>
+        <g font-size="10.5" font-weight="600">
           <text x="93" y="182" text-anchor="middle" class="f-ink">idea → brief</text>
           <text x="93" y="200" text-anchor="middle" class="f-ink">constitución</text>
           <text x="93" y="218" text-anchor="middle" class="f-ink">PRD · data-model</text>
@@ -359,91 +310,87 @@
           <text x="93" y="254" text-anchor="middle" class="f-orange cyc-pulse">UI · mockups</text>
           <text x="93" y="272" text-anchor="middle" class="f-ink2">backlog</text>
         </g>
-        <text x="93" y="294" text-anchor="middle" font-size="9" font-weight="700" class="f-amber cyc-pulse">◆ gates humanos por fase</text>
-        <text x="93" y="308" text-anchor="middle" font-size="9" font-weight="700" class="f-blue">+ responder · validar</text>
+        <text x="93" y="294" text-anchor="middle" font-size="9" font-weight="700" class="f-amber cyc-pulse">◆ tus aprobaciones por fase</text>
+        <text x="93" y="308" text-anchor="middle" font-size="9" font-weight="700" class="f-blue">responder · aprobar · rechazar</text>
 
-        <!-- Product backlog -->
-        <rect x="33" y="330" width="120" height="72" rx="10" class="shape" style="stroke:var(--orange); stroke-width:2"/>
+        <!-- PRODUCT BACKLOG -->
+        <rect x="33" y="330" width="120" height="72" rx="10" class="shape" style="stroke:var(--cyc-orange);stroke-width:2"/>
         <text x="93" y="352" text-anchor="middle" font-size="11" font-weight="800" class="f-ink">PRODUCT</text>
         <text x="93" y="366" text-anchor="middle" font-size="11" font-weight="800" class="f-ink">BACKLOG</text>
-        <text x="93" y="382" text-anchor="middle" font-size="8.5" class="f-ink2">issues + deps nativas</text>
-        <text x="93" y="394" text-anchor="middle" font-size="8.5" class="f-ink2">(en el repo del cliente)</text>
+        <text x="93" y="382" text-anchor="middle" font-size="8.5" class="f-ink2">las historias del producto</text>
+        <text x="93" y="394" text-anchor="middle" font-size="8.5" class="f-ink2">(del diseño aprobado)</text>
         <path d="M168 366 H 216" class="ar-o" marker-end="url(#cAO)"/>
 
-        <!-- Sprint planning -->
-        <rect x="222" y="330" width="118" height="72" rx="10" class="shape" style="stroke:var(--orange); stroke-width:2; fill:var(--orange-soft)"/>
-        <text x="281" y="354" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">SPRINT</text>
-        <text x="281" y="368" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">PLANNING</text>
-        <text x="281" y="384" text-anchor="middle" font-size="8.5" class="f-blue">planner + ◆ gate</text>
-        <text x="281" y="395" text-anchor="middle" font-size="8.5" class="f-blue">mover / dividir / diferir</text>
+        <!-- SPRINT PLANNING -->
+        <rect x="222" y="330" width="118" height="72" rx="10" class="shape" style="stroke:var(--cyc-orange);stroke-width:2;fill:var(--cyc-orange-soft)"/>
+        <text x="281" y="356" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">SPRINT</text>
+        <text x="281" y="370" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">PLANNING</text>
+        <text x="281" y="388" text-anchor="middle" font-size="8.5" class="f-blue">el plan · ◆ tu aprobación</text>
         <path d="M340 366 H 388" class="ar-b" marker-end="url(#cAB)"/>
 
-        <!-- Sprint backlog -->
-        <rect x="394" y="330" width="112" height="72" rx="10" class="shape" style="stroke:var(--orange); stroke-width:2"/>
+        <!-- SPRINT BACKLOG -->
+        <rect x="394" y="330" width="112" height="72" rx="10" class="shape" style="stroke:var(--cyc-orange);stroke-width:2"/>
         <text x="450" y="354" text-anchor="middle" font-size="11" font-weight="800" class="f-ink">SPRINT</text>
         <text x="450" y="368" text-anchor="middle" font-size="11" font-weight="800" class="f-ink">BACKLOG</text>
-        <text x="450" y="384" text-anchor="middle" font-size="8.5" class="f-ink2">stories listas por deps</text>
-        <text x="450" y="395" text-anchor="middle" font-size="8.5" class="f-ink2">claim + fire</text>
+        <text x="450" y="384" text-anchor="middle" font-size="8.5" class="f-ink2">listas por dependencias</text>
+        <text x="450" y="395" text-anchor="middle" font-size="8.5" class="f-ink2">se ejecutan en orden</text>
         <path d="M506 366 C 550 366, 560 330, 590 300" class="ar-o" marker-end="url(#cAO)"/>
 
-        <!-- Daily digest -->
+        <!-- DAILY SCRUM -->
         <circle cx="660" cy="118" r="46" class="cyc-daily"/>
         <path d="M660 72 A 46 46 0 0 1 706 118" class="ar-b" marker-end="url(#cAB)"/>
-        <text x="660" y="110" text-anchor="middle" font-size="10.5" font-weight="800" class="f-blue">DAILY</text>
-        <text x="660" y="123" text-anchor="middle" font-size="10.5" font-weight="800" class="f-blue">DIGEST</text>
-        <text x="660" y="137" text-anchor="middle" font-size="8" class="f-blue">resumen diario</text>
+        <text x="660" y="112" text-anchor="middle" font-size="10.5" font-weight="800" class="f-blue">DAILY</text>
+        <text x="660" y="125" text-anchor="middle" font-size="10.5" font-weight="800" class="f-blue">SCRUM</text>
+        <text x="660" y="139" text-anchor="middle" font-size="8" class="f-blue">resumen a tu canal</text>
         <path d="M660 168 V 196" class="ar-b-plain"/>
 
-        <!-- Sprint N (círculo, running) -->
-        <circle cx="660" cy="300" r="100" class="shape cyc-run" style="stroke:var(--orange); stroke-width:3; fill:var(--orange-soft); stroke-dasharray:6 4"/>
-        <text x="628" y="248" text-anchor="middle" font-size="11" font-weight="800" style="fill:var(--orange)">✓3</text>
-        <text x="660" y="248" text-anchor="middle" font-size="11" font-weight="800" style="fill:var(--blue)">●2</text>
-        <text x="692" y="248" text-anchor="middle" font-size="11" font-weight="800" style="fill:var(--fail)">✕0</text>
+        <!-- SPRINT N -->
+        <circle cx="660" cy="300" r="100" class="shape cyc-run" style="stroke:var(--cyc-orange);stroke-width:3;fill:var(--cyc-orange-soft);stroke-dasharray:6 4"/>
+        <text x="628" y="248" text-anchor="middle" font-size="11" font-weight="800" style="fill:var(--cyc-orange)">✓3</text>
+        <text x="660" y="248" text-anchor="middle" font-size="11" font-weight="800" style="fill:var(--cyc-blue)">●2</text>
+        <text x="692" y="248" text-anchor="middle" font-size="11" font-weight="800" style="fill:var(--cyc-fail)">✕0</text>
         <text x="660" y="268" text-anchor="middle" font-size="14" font-weight="900" class="f-orange">SPRINT 2</text>
-        <g font-size="9.5" font-weight="600">
-          <text x="660" y="288" text-anchor="middle" class="f-ink">groom JIT → implementar</text>
-          <text x="660" y="303" text-anchor="middle" class="f-ink">gate → review → verify</text>
-          <text x="660" y="318" text-anchor="middle" class="f-ink">→ Pull Request</text>
+        <g font-size="9" font-weight="600">
+          <text x="660" y="288" text-anchor="middle" class="f-ink">spec dev-ready → implementación</text>
+          <text x="660" y="303" text-anchor="middle" class="f-ink">tests → revisión → verificación</text>
+          <text x="660" y="318" text-anchor="middle" class="f-ink">+ QA visual vs mockup → PR</text>
         </g>
-        <text x="660" y="340" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">cambios mid-sprint: editar /</text>
-        <text x="660" y="351" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">mover / cancelar / dividir</text>
+        <text x="660" y="340" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">cambios mid-sprint: editar · mover ·</text>
+        <text x="660" y="351" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">cancelar · partir · bugs</text>
         <path d="M660 200 A 100 100 0 0 1 760 300" class="ar-o-thick" marker-end="url(#cAO)"/>
         <path d="M660 400 A 100 100 0 0 1 560 300" class="ar-o-thick" marker-end="url(#cAO)"/>
         <path d="M746 364 C 790 400, 800 420, 812 440" class="ar-o" marker-end="url(#cAO)"/>
 
-        <!-- Incremento -->
-        <rect x="768" y="446" width="120" height="62" rx="10" class="shape" style="stroke:var(--blue); stroke-width:2; stroke-dasharray:6 4"/>
+        <!-- INCREMENTO -->
+        <rect x="768" y="446" width="120" height="62" rx="10" class="shape" style="stroke:var(--cyc-blue);stroke-width:2;stroke-dasharray:6 4"/>
         <text x="828" y="468" text-anchor="middle" font-size="11" font-weight="800" class="f-ink">INCREMENTO</text>
-        <text x="828" y="483" text-anchor="middle" font-size="8.5" class="f-ink2">PRs mergeados</text>
-        <text x="828" y="495" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">+ deploy preview</text>
+        <text x="828" y="483" text-anchor="middle" font-size="8.5" class="f-ink2">PRs integrados al producto</text>
+        <text x="828" y="495" text-anchor="middle" font-size="8.5" font-weight="700" class="f-blue">+ preview navegable</text>
         <path d="M768 477 H 700" class="ar-b" marker-end="url(#cAB)"/>
 
-        <!-- Sprint review -->
-        <rect x="576" y="446" width="118" height="62" rx="10" class="shape" style="stroke:var(--blue); stroke-width:2; fill:var(--blue-soft); stroke-dasharray:6 4"/>
-        <text x="635" y="466" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">SPRINT REVIEW</text>
-        <text x="635" y="481" text-anchor="middle" font-size="8.5" class="f-blue">demo-reporter</text>
-        <text x="635" y="493" text-anchor="middle" font-size="8.5" class="f-blue">◆ acepta / corrige</text>
+        <!-- SPRINT REVIEW -->
+        <rect x="576" y="446" width="118" height="62" rx="10" class="shape" style="stroke:var(--cyc-blue);stroke-width:2;fill:var(--cyc-blue-soft);stroke-dasharray:6 4"/>
+        <text x="635" y="468" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">SPRINT REVIEW</text>
+        <text x="635" y="483" text-anchor="middle" font-size="8.5" class="f-blue">reporte con evidencia</text>
+        <text x="635" y="495" text-anchor="middle" font-size="8.5" class="f-blue">◆ tu aprobación</text>
         <path d="M576 477 H 508" class="ar-b" marker-end="url(#cAB)"/>
 
-        <!-- Retro -->
-        <rect x="384" y="446" width="118" height="62" rx="10" class="shape" style="stroke:var(--blue); stroke-width:2; fill:var(--blue-soft); stroke-dasharray:6 4"/>
-        <text x="443" y="466" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">RETRO</text>
-        <text x="443" y="481" text-anchor="middle" font-size="8.5" class="f-blue">lee telemetría →</text>
-        <text x="443" y="493" text-anchor="middle" font-size="8.5" class="f-blue">edita el MÉTODO</text>
+        <!-- RETROSPECTIVA -->
+        <rect x="384" y="446" width="118" height="62" rx="10" class="shape" style="stroke:var(--cyc-blue);stroke-width:2;fill:var(--cyc-blue-soft);stroke-dasharray:6 4"/>
+        <text x="443" y="470" text-anchor="middle" font-size="11" font-weight="800" class="f-blue">RETROSPECTIVA</text>
+        <text x="443" y="486" text-anchor="middle" font-size="8.5" class="f-blue">analiza y mejora el método</text>
         <path d="M384 477 C 300 477, 281 460, 281 408" class="ar-b" marker-end="url(#cAB)"/>
-        <text x="322" y="452" text-anchor="middle" font-size="9" font-weight="700" class="f-blue">método mejorado → sprint N+1</text>
+        <text x="322" y="452" text-anchor="middle" font-size="9" font-weight="700" class="f-blue">mejoras → próximo sprint</text>
 
         <!-- Evolución -->
         <path d="M828 446 C 828 60, 400 40, 110 40 C 60 40, 40 60, 55 112" class="ar-o-thin" marker-end="url(#cAO)"/>
-        <text x="440" y="32" text-anchor="middle" font-size="10" font-weight="700" class="f-orange">change-requests / bugs → nuevo ciclo de diseño (backlog DELTA)</text>
+        <text x="440" y="32" text-anchor="middle" font-size="10" font-weight="700" class="f-orange">nuevas necesidades · bugs → refinamiento → Product Backlog</text>
 
         <!-- Leyenda -->
         <g transform="translate(22,470)">
-          <line x1="0" y1="0" x2="26" y2="0" class="leg-o"/>
-          <text x="32" y="4" font-size="10" font-weight="600" class="f-ink">completado / activo</text>
-          <line x1="0" y1="20" x2="26" y2="20" class="leg-b"/>
-          <text x="32" y="24" font-size="10" font-weight="600" class="f-ink">pendiente / aún no corrido</text>
-          <text x="0" y="46" font-size="10" font-weight="700" class="f-amber">◆ = gate esperando decisión</text>
+          <line x1="0" y1="0" x2="26" y2="0" class="leg-o"/><text x="32" y="4" font-size="10" font-weight="600" class="f-ink">completado / activo</text>
+          <line x1="0" y1="20" x2="26" y2="20" class="leg-b"/><text x="32" y="24" font-size="10" font-weight="600" class="f-ink">pendiente / aún no corrido</text>
+          <text x="0" y="46" font-size="10" font-weight="700" class="f-amber">◆ = esperando tu decisión</text>
         </g>
       </svg>
     </div>
@@ -451,57 +398,48 @@
 </section>
 
 <!-- ===================== CÓMO FUNCIONA ===================== -->
-<section id="como">
+<section id="como" class="on-bg3">
   <div class="wrap">
-    <div class="eyebrow"><span class="ln"></span><span class="kicker">Cómo funciona</span></div>
-    <div class="sec-head">
-      <h2>Seis fases gateadas. Cada una la firmás vos (o tu cliente).</h2>
-      <p>El brief entra por un lado; salen Issues de GitHub con dependencias nativas por el otro. En cada
-        fase hay un ◆ gate: aprobás, corregís, o <b>respondés las preguntas abiertas</b> de esa fase.</p>
-    </div>
-    <div class="pipe">
-      <div class="pstep"><span class="gate">◆</span><div class="n">01</div><h4>Discovery</h4><p>Brief vago en español → alcance, supuestos y preguntas abiertas resueltas contigo.</p></div>
-      <div class="pstep"><span class="gate">◆</span><div class="n">02</div><h4>PRD + data-model</h4><p>El QUÉ antes del CÓMO: requisitos y modelo de datos con dueños de transición server-side.</p></div>
-      <div class="pstep"><span class="gate">◆</span><div class="n">03</div><h4>Arquitectura</h4><p>Estructura, límites de paquetes, presupuestos de performance, contrato de provisioning.</p></div>
-      <div class="pstep"><span class="gate">◆</span><div class="n">04</div><h4>UI + mockups</h4><p>Pantallas descritas + un mockup HTML navegable que el cliente clickea y aprueba.</p></div>
-      <div class="pstep"><span class="gate">◆</span><div class="n">05</div><h4>Backlog</h4><p>Épicas → sprints → stories con criterios de aceptación y un grafo de dependencias.</p></div>
-      <div class="pstep"><span class="gate">◆</span><div class="n">06</div><h4>Handoff</h4><p>Publica Issues en el repo del cliente con el grafo <span class="mono">blocked_by</span> nativo.</p></div>
-      <div class="pipe-flow">
-        <span class="tag">brief</span> → discovery → PRD → arquitectura → UI → backlog →
-        <span class="tag">GitHub Issues + deps</span> → ejecución gobernada (Copilot o Claude, tu decidís) →
-        <span class="tag">Pull Requests trazables</span>
-      </div>
+    <div class="eyebrow"><span class="ln"></span><span class="kx">Cómo funciona</span></div>
+    <div class="sec-head"><h2>Seis fases gateadas. Cada una la <em>firmás vos</em> (o tu cliente).</h2></div>
+    <div class="steps">
+      <span class="conn"></span>
+      <div class="step"><div class="circ"><span>1</span></div><h3>Discovery</h3><p>Brief vago en español → alcance, supuestos y preguntas abiertas resueltas contigo.</p><span class="gate">◆ tu aprobación</span></div>
+      <div class="step"><div class="circ"><span>2</span></div><h3>PRD + data-model</h3><p>El QUÉ antes del CÓMO: requisitos y modelo de datos con dueños de transición claros.</p><span class="gate">◆ tu aprobación</span></div>
+      <div class="step"><div class="circ"><span>3</span></div><h3>Arquitectura</h3><p>Estructura, límites de paquetes, presupuestos de performance, contrato de frontera.</p><span class="gate">◆ tu aprobación</span></div>
+      <div class="step"><div class="circ"><span>4</span></div><h3>UI + mockups</h3><p>Pantallas descritas + un mockup HTML navegable que el cliente clickea y aprueba.</p><span class="gate">◆ tu aprobación</span></div>
+      <div class="step"><div class="circ"><span>5</span></div><h3>Backlog</h3><p>Épicas → sprints → historias con criterios de aceptación y un grafo de dependencias.</p><span class="gate">◆ tu aprobación</span></div>
+      <div class="step"><div class="circ"><span>6</span></div><h3>Handoff</h3><p>Publica Issues en el repo del cliente con el grafo <span class="mono">blocked_by</span> nativo.</p><span class="gate">◆ tu aprobación</span></div>
     </div>
   </div>
 </section>
 
-<!-- ===================== DIFERENCIA (honesta) ===================== -->
+<!-- ===================== DIFERENCIA ===================== -->
 <section id="diferencia">
   <div class="wrap">
-    <div class="eyebrow"><span class="ln"></span><span class="kicker">Por qué no es "otra herramienta de specs"</span></div>
+    <div class="eyebrow"><span class="ln"></span><span class="kx">Por qué no es "otra herramienta de specs"</span></div>
     <div class="sec-head">
-      <h2>El artefacto es una commodity. El registro auditable es el producto.</h2>
-      <p>Generar un spec y correr agentes multi-modelo ya existe — pero en una terminal, sin memoria y sin nada
-        que mostrarle a un cliente. No reinventamos eso: lo <b>envolvemos</b>. Lo que una agencia cobra es lo que
-        esas herramientas <b>no</b> te dan: un registro persistente y auditable de todo el conocimiento que se
-        genera, en una UI de equipo, con una sola factura.</p>
+      <h2>El artefacto es una commodity. El <em>registro auditable</em> es el producto.</h2>
+      <p>Generar un spec y correr agentes ya existe — pero en una terminal, sin memoria y sin nada que mostrarle a un cliente.
+        No reinventamos eso: lo <b style="color:var(--ink)">envolvemos</b>. Lo que una agencia cobra es lo que esas herramientas no dan.</p>
     </div>
     <div class="diff">
-      <div class="diff-card diff-commodity">
-        <div class="sub">Commodity · una herramienta stateless</div>
+      <div class="dcard commodity">
+        <div class="dsub">Commodity · una herramienta stateless</div>
         <h3>Generar specs y correr agentes</h3>
-        <ul class="diff-list">
+        <ul class="dlist">
           <li>El artefacto de spec / backlog — se genera y se olvida, sin memoria</li>
           <li>Un CLI en el IDE de un dev: no es de equipo, hay que estar en la terminal</li>
           <li>El conocimiento (por qué se decidió X, qué se descartó) se pierde entre sesiones</li>
           <li>Ningún registro auditable · nada que mostrarle ni firmar a un cliente</li>
         </ul>
       </div>
-      <div class="diff-card diff-yours">
-        <div class="sub">El envoltorio que se cobra</div>
+      <div class="dcard wrapper">
+        <span class="wglow"></span>
+        <div class="dsub">El envoltorio que se cobra</div>
         <h3>Un sistema de registro, no una herramienta</h3>
-        <ul class="diff-list">
-          <li><b>Knowledge base auditable y persistente</b> — por proyecto y por cliente; guarda lo que el vibecoding pierde</li>
+        <ul class="dlist">
+          <li><b>Registro auditable y persistente</b> — por proyecto y cliente; guarda lo que se pierde</li>
           <li><b>Trail requisito → issue → PR</b> — un entregable auditable que le mostrás al cliente</li>
           <li><b>UI de equipo</b> — grafo de dependencias y click-para-despachar, no una terminal</li>
           <li><b>Una sola factura, modelos incluidos</b> — sin repartir API keys entre devs</li>
@@ -512,25 +450,24 @@
   </div>
 </section>
 
-<!-- ===================== ENTREGABLE / TRAZABILIDAD ===================== -->
-<section>
+<!-- ===================== TRAZABILIDAD ===================== -->
+<section class="on-bg2">
   <div class="wrap">
-    <div class="eyebrow"><span class="ln"></span><span class="kicker">El entregable que factura</span></div>
+    <div class="eyebrow"><span class="ln"></span><span class="kx">El entregable que factura</span></div>
     <div class="sec-head" style="margin-bottom:26px">
-      <h2>Trazabilidad de punta a punta, en un solo hilo.</h2>
-      <p>Cada línea de código llega a un PR; cada PR cierra un Issue; cada Issue nace de un requisito que el
-        cliente aprobó. Ese hilo es lo que adjuntás a la factura y lo que gana la confianza del cliente.</p>
+      <h2>Trazabilidad de punta a punta, en un <em>solo hilo</em>.</h2>
+      <p>Cada línea de código llega a un PR; cada PR cierra un Issue; cada Issue nace de un requisito que el cliente aprobó. Ese hilo es lo que adjuntás a la factura.</p>
     </div>
     <div class="trace">
-      <div class="trace-inner">
+      <div class="trace-in">
         <div class="trace-row">
-          <div class="trace-node"><div class="lbl">Requisito</div><div class="val">R-04 · "reservar turno con seña"</div></div>
-          <div class="trace-arrow">→</div>
-          <div class="trace-node"><div class="lbl">Issue (GitHub)</div><div class="val">#14 · S2-01 · blocked_by #13</div></div>
-          <div class="trace-arrow">→</div>
-          <div class="trace-node"><div class="lbl">Pull Request</div><div class="val">#57 · verify ✓ · review ✓</div></div>
-          <div class="trace-arrow">→</div>
-          <div class="trace-node"><div class="lbl">Firmado</div><div class="val">merge a main · demo aceptada</div></div>
+          <div class="tnode"><div class="lbl">Requisito</div><div class="val">R-04 · "reservar turno con seña"</div></div>
+          <div class="tarr">→</div>
+          <div class="tnode"><div class="lbl">Issue (GitHub)</div><div class="val">#14 · S2-01 · blocked_by #13</div></div>
+          <div class="tarr">→</div>
+          <div class="tnode"><div class="lbl">Pull Request</div><div class="val">#57 · verify ✓ · review ✓</div></div>
+          <div class="tarr">→</div>
+          <div class="tnode"><div class="lbl">Firmado</div><div class="val">integrado · demo aceptada</div></div>
         </div>
       </div>
     </div>
@@ -542,25 +479,48 @@
   <div class="wrap">
     <div class="who">
       <div>
-        <div class="eyebrow"><span class="ln"></span><span class="kicker">Para quién es</span></div>
-        <h2 style="font-size:clamp(26px,3.2vw,36px)">Agencias y dev shops boutique de LATAM.</h2>
-        <ul class="who-list">
+        <div class="eyebrow"><span class="ln"></span><span class="kx">Para quién es</span></div>
+        <h2 style="font-size:clamp(26px,3.2vw,36px);font-weight:900;letter-spacing:-.03em">Agencias y dev shops boutique de LATAM.</h2>
+        <ul class="wholist">
           <li><span class="ic">1</span><div><b>3–20 devs</b> que entregan software a la medida a clientes externos de pago, sobre GitHub.</div></li>
           <li><span class="ic">2</span><div>Que necesitan <b>proceso y trazabilidad</b> para ganar y retener la confianza del cliente — no solo escribir código.</div></li>
           <li><span class="ic">3</span><div><b>Español-first</b>, elicitando requisitos con clientes que hablan español.</div></li>
           <li><span class="ic">4</span><div>Que ya viven en GitHub y quieren <b>specs de calidad + ejecución gobernada</b> sin atarse a un modelo.</div></li>
         </ul>
       </div>
-      <div class="not-for">
+      <div class="notfor">
         <h4>No es para</h4>
         <ul>
           <li>El indie hacker / founder no-técnico "idea→app" — usá Lovable, Bolt o v0.</li>
           <li>El dev solo que solo quiere mejores specs — Spec Kit es gratis en tu IDE.</li>
           <li>El enterprise con procurement de 9 meses y SSO/SOC2 como requisito de entrada.</li>
         </ul>
-        <p style="font-family:var(--mono); font-size:11.5px; color:var(--ink3); margin:16px 0 0; line-height:1.6">
-          Preferimos decirte que no somos para vos hoy, a venderte un asiento que no vas a usar.
-        </p>
+        <p class="disc" style="margin-top:16px">Preferimos decirte que no somos para vos hoy, a venderte un asiento que no vas a usar.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ARQUITECTURA (link) ===================== -->
+<section id="arquitectura" class="on-bg3">
+  <div class="wrap">
+    <div class="eyebrow"><span class="ln"></span><span class="kx">Cómo está construido</span></div>
+    <div class="sec-head"><h2>Casi cero infraestructura. El método es <em>lo único propio</em>.</h2>
+      <p>El sustrato determinista no se escribe: se alquila como config declarativa (Postgres+RLS, GitHub, preview deploys). Lo único propio es el método en markdown + un pegamento fino.</p></div>
+    <div class="archrow">
+      <span class="aglow"></span>
+      <div>
+        <h3>Arquitectura v2 — agent-native</h3>
+        <p>Un diagrama navegable de la propuesta: clic en cada bloque para ver qué es, qué reemplaza y qué elimina. Cuatro lentes conmutables: Arquitectura · Alquilado vs propio · Flujos de datos · Qué elimina.</p>
+        <div class="cta-row" style="margin:22px 0 0">
+          <a class="btn btn-primary" href="arquitectura-v2.html">Abrir el diagrama navegable →</a>
+        </div>
+      </div>
+      <div class="mini">
+        <div class="layer"><b>L3 · UI</b><span class="tag owned">propio</span></div>
+        <div class="layer"><b>L0 · Supabase · GitHub · Vercel</b><span class="tag rented">alquilado</span></div>
+        <div class="layer"><b>L1 · Método (markdown)</b><span class="tag owned">propio</span></div>
+        <div class="layer"><b>L2 · Agentes + Maestro</b><span class="tag owned">propio</span></div>
       </div>
     </div>
   </div>
@@ -569,50 +529,34 @@
 <!-- ===================== PRECIOS ===================== -->
 <section id="precios">
   <div class="wrap">
-    <div class="eyebrow"><span class="ln"></span><span class="kicker">Precios</span></div>
+    <div class="eyebrow"><span class="ln"></span><span class="kx">Precios</span></div>
     <div class="sec-head">
-      <h2>Por agencia, no por asiento. Una sola factura.</h2>
-      <p>Los modelos vienen incluidos: no repartís API keys entre devs ni sumás una segunda suscripción. Cobramos
-        el método, la gobernanza y el registro auditable; el compute de IA va medido como overage transparente.
-        ¿Ya tenés tus propias keys? Traelas (BYO-key) en el plan Estudio+.</p>
+      <h2>Por agencia, no por asiento. <em>Una sola factura.</em></h2>
+      <p>Los modelos vienen incluidos: no repartís API keys ni sumás una segunda suscripción. Cobramos el método, la gobernanza y el registro auditable; el compute de IA va como overage transparente.</p>
     </div>
     <div class="prices">
       <div class="price">
         <h3>Piloto</h3>
         <div class="amt">Done-with-you</div>
         <div class="desc">Lo corremos con tu equipo en un proyecto real de un cliente. Salís con un caso y un método instalado.</div>
-        <ul>
-          <li>Un proyecto cliente de punta a punta</li>
-          <li>Método + templates a medida de tu stack</li>
-          <li>Acompañamiento en los gates</li>
-        </ul>
-        <a class="btn btn-ghost" href="#demo">Hablar con nosotros</a>
+        <ul><li>Un proyecto cliente de punta a punta</li><li>Método + templates de tu stack</li><li>Acompañamiento en los gates</li></ul>
+        <a class="btn btn-outline" href="#demo">Hablar con nosotros</a>
         <div class="note">Ideal para la primera entrega. Sin tarjeta.</div>
       </div>
       <div class="price feat">
         <h3>Agencia</h3>
         <div class="amt">$199–500<small> /mes</small></div>
-        <div class="desc">El plano de control hosted para tu agencia: proyectos ilimitados, knowledge base auditable, gates y ejecución con los modelos incluidos.</div>
-        <ul>
-          <li>Proyectos de cliente ilimitados</li>
-          <li>Knowledge base persistente + trail requisito→issue→PR</li>
-          <li>Modelos incluidos (una sola factura), medidos como overage</li>
-          <li>UI de equipo: grafo de deps + click-para-despachar · español-first</li>
-        </ul>
+        <div class="desc">El plano de control hosted: proyectos ilimitados, registro auditable, gates y ejecución con los modelos incluidos.</div>
+        <ul><li>Proyectos de cliente ilimitados</li><li>Registro auditable + trail requisito→issue→PR</li><li>Modelos incluidos (una factura), overage transparente</li><li>UI de equipo: grafo + click · español-first</li></ul>
         <a class="btn btn-primary" href="#demo">Solicitar demo →</a>
-        <div class="note">Compute de IA medido como overage transparente. Subcotiza el tier Team de un "ingeniero autónomo" a $500.</div>
+        <div class="note">Subcotiza el tier Team de un "ingeniero autónomo" a $500.</div>
       </div>
       <div class="price">
         <h3>Estudio+</h3>
         <div class="amt">A medida</div>
-        <div class="desc">Para grupos de agencias o studios con volumen: instancia dedicada, SSO y método compartido entre equipos.</div>
-        <ul>
-          <li>Instancia y aislamiento dedicados</li>
-          <li>BYO-key (tus propias API keys) o modelos incluidos</li>
-          <li>Método compartido entre equipos · SSO</li>
-          <li>Onboarding y soporte prioritario</li>
-        </ul>
-        <a class="btn btn-ghost" href="#demo">Contactar</a>
+        <div class="desc">Para grupos de agencias con volumen: instancia dedicada, SSO y método compartido entre equipos.</div>
+        <ul><li>Instancia y aislamiento dedicados</li><li>BYO-key (tus propias keys) o incluidas</li><li>Método compartido · SSO</li><li>Onboarding y soporte prioritario</li></ul>
+        <a class="btn btn-outline" href="#demo">Contactar</a>
         <div class="note">Cuando la escala lo pida, no antes.</div>
       </div>
     </div>
@@ -620,17 +564,17 @@
 </section>
 
 <!-- ===================== DOCS ===================== -->
-<section id="docs">
+<section id="docs" class="on-bg2">
   <div class="wrap">
-    <div class="eyebrow"><span class="ln"></span><span class="kicker">Documentación</span></div>
+    <div class="eyebrow"><span class="ln"></span><span class="kx">Documentación</span></div>
     <div class="sec-head"><h2>Cómo pensamos la fábrica.</h2></div>
     <div class="docs">
-      <a class="doccard" href="/docs/01-el-viaje.md"><div class="n">01</div><h4>El viaje</h4><p>De la idea al PR: el recorrido completo de un proyecto por Fluxo.</p></a>
-      <a class="doccard" href="/docs/02-arquitectura.md"><div class="n">02</div><h4>Arquitectura</h4><p>El kernel determinista, el registry como método, y el plano de control.</p></a>
-      <a class="doccard" href="/docs/03-agentes-y-templates.md"><div class="n">03</div><h4>Agentes y templates</h4><p>Los roles del método y qué se scaffoldea en el repo del cliente.</p></a>
-      <a class="doccard" href="/docs/04-calidad-y-seguridad.md"><div class="n">04</div><h4>Calidad y seguridad</h4><p>Verificación en capas, gates humanos y el modelo multi-tenant.</p></a>
-      <a class="doccard" href="/docs/05-operacion.md"><div class="n">05</div><h4>Operación</h4><p>Cómo se corre, se observa y se recupera un ciclo en producción.</p></a>
-      <a class="doccard" href="#ciclo"><div class="n">↗</div><h4>El ciclo, en vivo</h4><p>Volvé al diagrama y seguí cada estación al estado real de un proyecto.</p></a>
+      <a class="doccard" href="#ciclo"><div class="n">01</div><h4>El viaje</h4><p>De la idea al PR: el recorrido completo de un proyecto por Fluxo.</p></a>
+      <a class="doccard" href="arquitectura-v2.html"><div class="n">02</div><h4>Arquitectura</h4><p>El diagrama navegable: sustrato alquilado, método propio, Maestro determinista.</p></a>
+      <a class="doccard" href="#como"><div class="n">03</div><h4>El método</h4><p>Las 6 fases gateadas y qué produce cada una.</p></a>
+      <a class="doccard" href="#diferencia"><div class="n">04</div><h4>Calidad y registro</h4><p>Gates humanos, verificación en capas y el registro auditable.</p></a>
+      <a class="doccard" href="#precios"><div class="n">05</div><h4>Precios</h4><p>Por agencia, factura única, modelos incluidos.</p></a>
+      <a class="doccard" href="#demo"><div class="n">↗</div><h4>Hablar con nosotros</h4><p>Traé un brief real y te devolvemos un backlog que tu cliente puede firmar.</p></a>
     </div>
   </div>
 </section>
@@ -638,10 +582,10 @@
 <!-- ===================== FINAL CTA ===================== -->
 <section class="final">
   <div class="wrap">
-    <div class="final-card" id="demo">
-      <h2>Mostrale a tu cliente un backlog que puede firmar.</h2>
-      <p>Traé un brief real. Te devolvemos, gateado y en tu propio GitHub, el discovery → PRD → arquitectura →
-        UI → backlog trazable — en español. Sin lock-in, sin autonomía a ciegas, con vos en cada decisión.</p>
+    <div class="finalcard" id="demo">
+      <span class="fglow"></span>
+      <h2>Mostrale a tu cliente un backlog que puede <em>firmar</em>.</h2>
+      <p>Traé un brief real. Te devolvemos, gateado y en tu propio GitHub, el discovery → PRD → arquitectura → UI → backlog trazable — en español. Sin lock-in, sin autonomía a ciegas, con vos en cada decisión.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="mailto:hola@aiudalabs.com?subject=Demo%20de%20Fluxo%20para%20mi%20agencia">Solicitar demo →</a>
         <a class="btn btn-ghost" href="#ciclo">Ver el ciclo otra vez</a>
@@ -653,20 +597,9 @@
 <footer>
   <div class="wrap">
     <a class="brand" href="#top"><span class="dot"></span> Fluxo <small>by AIuda Labs</small></a>
-    <nav>
-      <a href="#ciclo">El ciclo</a>
-      <a href="#diferencia">Diferencia</a>
-      <a href="#precios">Precios</a>
-      <a href="#docs">Docs</a>
-      <a href="mailto:hola@aiudalabs.com">Contacto</a>
-    </nav>
+    <nav><a href="#ciclo">El ciclo</a><a href="#diferencia">Diferencia</a><a href="#arquitectura">Arquitectura</a><a href="#precios">Precios</a><a href="mailto:hola@aiudalabs.com">Contacto</a></nav>
   </div>
-  <div class="wrap">
-    <p class="disclaimer">Fluxo es un producto de AIuda Labs · fluxo.aiudalabs.com · El diagrama del ciclo es el mismo
-      modelo que la vista <span class="mono">/flow</span> del producto. Copy y posicionamiento alineados al ICP
-      determinado en la auditoría 2026-07-11: agencia boutique LATAM español-first. La ejecución (Copilot / Claude)
-      corre con las credenciales del cliente; Fluxo no revende compute.</p>
-  </div>
+  <div class="wrap"><p class="disc">Fluxo es un producto de AIuda Labs · fluxo.aiudalabs.com · El diagrama del ciclo es el mismo modelo que la vista /flow del producto. La ejecución (Copilot / Claude) corre con las credenciales del proyecto; los modelos van en una sola factura.</p></div>
 </footer>
 
 </body>
