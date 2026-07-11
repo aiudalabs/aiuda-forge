@@ -19,9 +19,42 @@ Formato de historia: `[ID] título — closes:<hallazgo> · files:<archivos> · 
 
 ---
 
-## SPRINT 0 — Hardening crítico (kernel Go de hoy · aditivo · NO bloquea v2)
-**Objetivo:** parar la sangría de seguridad/aislamiento que bloquea un 2º tenant. Todo quirúrgico; la variante correcta ya existe al lado.
-**Vende:** "Fluxo es seguro para poner dos clientes en la misma instancia." Prerequisito de cualquier onboarding externo.
+## Enfoque (la valoración fix-vs-new): REBUILD del sustrato, CARRY del método
+
+Dado que (a) los bugs críticos son **arquitectónicos** (SQLite de 1 conexión, conductor serial, estado derivado de 1 lectura eventual,
+scoping a mano, metodología en Go) y se *"arreglan y vuelven"* —el historial de Waves lo prueba—, (b) **NO hay tenants de pago en vivo**
+que mantener corriendo (marketpty es dogfood de aiudalabs), y (c) **el tiempo no es restricción**:
+
+**La recomendación NO es "refactor in-place" ni "greenfield de página en blanco". Es REBUILD del SUSTRATO sobre la arquitectura v2,
+CARGANDO el método.** No es el "trap del rewrite" clásico porque el activo valioso está DESACOPLADO del kernel roto y es **portable**, y
+el kernel roto se **reemplaza por plataforma alquilada**, no se reescribe línea por línea:
+
+| CARGAR (el valor — se conserva casi intacto) | REEMPLAZAR (el sustrato roto — plataforma/config, no código) |
+|---|---|
+| `registry/` (agents · skills · workflows · templates · stack-profiles) = el método/moat | store SQLite → Postgres + RLS |
+| el pipeline de diseño gateado + el brain (concepto) + el ejemplo Rosa como spec | conductor serial 25s → Maestro por webhooks + histéresis |
+| la consola (~19k TS: flow, studio, tickets, statusToken) — se re-apunta al nuevo data-layer | scoping a mano → RLS declarativa |
+| los harnesses de verify (e2e, provisioning-lint, ui-verify) + los stacks | minting de tokens en archivo → Vault |
+| el conocimiento operativo (disciplina efímera, contrato de buildability, el baile GitHub-native) = como **contratos/tests** | switch de canales en Go → **Runtime × Provider en data** (ver `PLAN-2026-07-11-capa-runtime-agnostica.md`) |
+
+**Neto:** ~49k LOC de Go se encogen a ~2-5k de pegamento + config; el método queda intacto; la consola mayormente porta. Se ejecuta
+igual por **strangler** (aunque el tiempo no apremie, el strangler DE-RISKea: cada capa se valida contra la realidad antes de apagar la
+vieja — así el rebuild no se vuelve un greenfield que re-aprende viejos bugs y nunca shippea).
+
+**Consecuencia para Sprint 0:** si nos comprometemos al rebuild, **NO tiene sentido invertir en endurecer el Go que vamos a borrar.**
+Sprint 0 se ENCOGE a lo mínimo para que el dogfood siga vivo, y se SALTA el hardening cross-tenant/seguridad (RLS lo mata en v2, no un
+parche). Ver la nota en Sprint 0.
+
+---
+
+## SPRINT 0 — Mantener el dogfood vivo (kernel Go de hoy · MÍNIMO)
+**Objetivo (corregido por la valoración fix-vs-new):** ya NO es "endurecer para un 2º tenant" — eso lo resuelve RLS en el rebuild. Es
+solo **lo mínimo para que el dogfood de aiudalabs siga corriendo mientras construimos v2.** Todo lo demás de este sprint (los fixes
+cross-tenant/seguridad ARCH-1/3, SEC-1/2/6) **se SALTA**: es código que se borra. **Excepción:** si vas a exponer v1 a un 2º tenant
+ANTES del rebuild, entonces sí corré el Sprint 0 completo (las historias siguen listadas abajo).
+**Hacer sí o sí (afectan el dogfood):** `[S0-06]` histéresis anti-flap (ARCH-2 — quema runs pagos) · `[S0-07]` gate no verde-vacío
+(AUTO-3 — falsea calidad) · `[S0-08]` requeue desde running (AUTO-2 — destraba a mano). **Saltar si vamos al rebuild:** S0-01..S0-05.
+**Vende:** "el dogfood no se cae mientras migramos." (El "seguro para 2 tenants" lo entrega S2 con RLS, no este sprint.)
 
 - `[S0-01]` **SyncExternalStatus scoped por project_id** — closes:ARCH-1 · files:`tickets.go`,`projection.go`,`dispatch.go` ·
   AC: firma `SyncExternalStatus(projectID,id,...)`; SELECT/UPDATE/DELETE con `AND project_id=?`; test: el tick del proyecto A con
