@@ -155,7 +155,7 @@
     <button class="lens" data-l="flows">Flujos de datos</button>
     <button class="lens" data-l="kills">Qué elimina</button>
   </div>
-  <p class="lens-note" id="lensNote">Las 4 capas. El sustrato (L0) es plataforma alquilada; el método (L1) es markdown; los agentes (L2) ejecutan; la UI (L3) es una vista sobre el brain.</p>
+  <p class="lens-note" id="lensNote">Las capas: sustrato alquilado (L0), método markdown (L1), agentes + Maestro (L2), y la CAPA DE RUNTIME agnóstica (Runtime × Provider × ExecEnv). La UI (L3) es una vista sobre el brain.</p>
 
   <div class="legend">
     <b><span class="sw rented"></span> alquilado · declarativo (cero código)</b>
@@ -184,13 +184,19 @@
 
     <!-- L1 + L2 -->
     <div class="band">
-      <div class="band-hd"><span class="l">L1 · Método &nbsp;+&nbsp; L2 · Agentes</span><span class="t">lo único propio: markdown que define, agentes que ejecutan</span></div>
+      <div class="band-hd"><span class="l">L1 · Método &nbsp;+&nbsp; L2 · Agentes</span><span class="t">lo único propio: markdown que define, agentes que deciden y ejecutan</span></div>
       <div class="row" id="l12"></div>
+    </div>
+
+    <!-- Capa de Runtime -->
+    <div class="band">
+      <div class="band-hd"><span class="l">Capa de Runtime · agnóstica</span><span class="t">Runtime × Provider × ExecEnv — sumar un engine (local / docker / E2E) o un CLI = data, cero Go</span></div>
+      <div class="row" id="rt"></div>
     </div>
   </div>
 </div>
 
-<footer>Fluxo v2 · propuesta post-auditoría 2026-07-11 · el sustrato determinista se alquila (Supabase RLS+Realtime+Vault · GitHub Actions · Vercel preview); lo propio es el método (agents/skills/markdown) + un Maestro reconciliador determinista con histéresis.</footer>
+<footer>Fluxo v2 · propuesta post-auditoría 2026-07-11 · sustrato alquilado (Supabase RLS+Realtime+Vault · GitHub · Vercel) + método en markdown + Maestro determinista + una CAPA DE RUNTIME agnóstica (Runtime × Provider × ExecEnv): sumar un engine local/docker/E2E o un CLI es data, no Go. Ver docs/PLAN-2026-07-11-capa-runtime-agnostica.md.</footer>
 
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="drawer" aria-hidden="true">
@@ -217,8 +223,8 @@ const NODES = {
     que:"Supabase Auth hace el login con GitHub y emite el JWT que lleva el tenant_id que las policies RLS consumen. La identidad y el tenant dejan de ser costura hecha a mano.",
     v1:"Hoy: email+password sembrado por env + una costura de tokens (OAuth user-to-server + installation) resuelta a mano en Go.",
     tag:"rented", kills:[]},
-  vault:{kind:"rented",group:"Supabase",k:"Vault",title:"Managed keys",sub:"las API keys de los modelos, cifradas; factura única",
-    que:"Las keys de Anthropic/otros viven en Supabase Vault. El dispatch las inyecta como secret efímero al job del agente; el metering es por tenant_id. Habilita el modelo de factura única sin repartir keys entre devs.",
+  vault:{kind:"rented",group:"Supabase",k:"Vault",title:"Secrets + keys (cloud)",sub:"secrets de la App + keys efímeras del runtime cloud (OPCIONAL)",
+    que:"Guarda los secrets de la GitHub App y —solo para el runtime `cloud` OPCIONAL— keys de modelo efímeras. El DEFAULT no lo usa: en github_actions las credenciales viven en el org del cliente (BYO). Managed-keys / factura-única es el runtime cloud, un upsell — NO el default.",
     v1:"Hoy: la llave maestra de la GitHub App (PEM + secrets) en <b>un archivo plaintext 0600 en el host</b>, sin KMS ni rotación.",
     tag:"rented", kills:["SEC-3"]},
   repos:{kind:"rented",group:"GitHub",k:"Repos (cliente)",title:"En el GitHub del cliente",sub:"el código vive en el repo del cliente, no en Fluxo",
@@ -229,10 +235,10 @@ const NODES = {
     que:"El backlog es Issues nativos con dependencias. Fluxo no inventa un backlog paralelo: usa el de GitHub como verdad y le proyecta estado.",
     v1:"Hoy ya publica Issues — pero la jerarquía épica→sprint→story está <b>hardcodeada en Go</b> (publish.go), no en el registry.",
     tag:"rented", kills:[]},
-  actions:{kind:"rented",group:"GitHub",k:"Actions",title:"Runtime del agente",sub:"claude-code-action / Copilot corren en Actions del cliente",
-    que:"El agente de ejecución corre en los Actions del repo del cliente, con las keys inyectadas efímeras. El runtime multi-agente es de GitHub — Fluxo lo ENVUELVE, no lo reimplementa.",
-    v1:"Hoy ya usa Actions — pero la liveness de la sesión se lee de forma frágil (404 de Copilot = 'sin veredicto' → sesión colgada).",
-    tag:"rented", kills:["AUTO-4"]},
+  actions:{kind:"rented",group:"GitHub",k:"Actions",title:"El runner de Actions",sub:"el ExecEnv donde corre el runtime github_actions",
+    que:"El runner de GitHub Actions en el repo del cliente: el ExecEnv del runtime `github_actions`. El runtime multi-agente es de GitHub — Fluxo lo ENVUELVE, no lo reimplementa. La liveness se lee del workflow_run (robusta), no de la Agent-tasks API.",
+    v1:"Hoy ya usa Actions — pero cableado, sin abstracción de runtime; la liveness de Copilot se lee del 404 frágil.",
+    tag:"rented", kills:[]},
   branch:{kind:"rented",group:"GitHub",k:"Branch protection",title:"Gates duros",sub:"verify como check REQUERIDO — no continue-on-error",
     que:"Los gates de verificación (e2e, ui-verify, review) son checks REQUERIDOS por branch protection: un PR no mergea si no pasan de verdad. El gate deja de ser decorativo.",
     v1:"Hoy: el gate es <b>verde-pero-vacío</b> — e2e-verify es continue-on-error y ui-verify se SKIPea siempre ({{app_path}} sin renderizar).",
@@ -249,10 +255,34 @@ const NODES = {
     que:"Cada agente de diseño = system prompt (el rol .md) + skills + tools MCP hacia el brain y GitHub. 'El agente vive en markdown' se vuelve literal. Escribe al brain vía la skill brain-write y publica Issues.",
     v1:"Hoy: un step-runner en Go orquesta a los agentes de diseño; el contexto entre fases era latente (bug del resolver $step.text).",
     tag:"owned", kills:[]},
-  exec:{kind:"owned",group:null,k:"L2 · Ejecución",title:"Agentes de código",sub:"claude-code-action / Copilot, un lane = un canal por dato",
-    que:"El agente de implementación corre en Actions con la key efímera del Vault. El canal (Claude o Copilot) se elige por dato, por lane — sin lock-in del modelo.",
-    v1:"Hoy ya existe — pero con la costura de tokens a mano y sin failover limpio por agotamiento de créditos.",
+  dispatch:{kind:"owned",group:null,k:"L2 · Dispatcher (Fluxo)",title:"Decide la unidad",sub:"sprint / story / orden-de-deps / goal-mode → entrega un prompt a un runtime",
+    que:"Fluxo decide QUÉ despachar (sprint entero en un PR, o story, en orden de deps) y se lo entrega a un Runtime como unidad de trabajo (prompt + repo + contexto). Agnóstico a DÓNDE corre y con QUÉ CLI: elige (runtime, provider) por lane, con fallback ordenado. Esta decomposición es la diferenciación de Fluxo — vive ARRIBA de la capa de runtime (multica despacha tickets sueltos; Fluxo, la unidad que su orquestación decidió).",
+    v1:"Hoy: 2 executors cableados (copilot|claude_action) con switch/otherExecutor/capacityBlock en Go — viola la regla de oro del kernel; sumar un 3er canal exige editar Go.",
     tag:"owned", kills:[]},
+  providers:{kind:"owned",group:null,k:"registry/providers/*.yaml",title:"Providers (QUÉ CLI · data)",sub:"claude · copilot · codex · opencode · cursor — como datos",
+    que:"Cada provider declara en YAML su invocación (workflow / argv / api), DÓNDE vive la credencial y de quién es el gasto, cómo se prueba capacidad, cómo se lee liveness, y su preámbulo de prompt (markdown). Sumar un CLI = un YAML, cero Go. Cierra la violación de la regla de oro del kernel y AUTO-4 (liveness declarada por workflow_run, no el 404).",
+    v1:"Hoy: el 'canal' es un string de 2 valores con switch/otherExecutor/capacityBlock en Go; el preámbulo efímero horneado en el código.",
+    tag:"owned", kills:["AUTO-4","CQ-1"]},
+  rt_gha:{kind:"rented",group:"Runtime (DÓNDE)",k:"Runtime · github_actions",title:"En el GitHub del cliente",sub:"corre en Actions del repo del cliente · creds del cliente (BYO)",
+    que:"El runtime DEFAULT: corre en los Actions del repo del cliente, con las credenciales del CLIENTE (su Copilot / su CLAUDE_CODE_OAUTH_TOKEN). Cero COGS para Fluxo, sin revender compute, el cliente dueño de su gasto y su data.",
+    v1:"Existe hoy pero cableado, sin abstracción de runtime; imposible sumar otro 'dónde' sin Go.",
+    tag:"rented", kills:[]},
+  rt_local:{kind:"owned",group:"Runtime (DÓNDE)",k:"Runtime · local_daemon",title:"Daemon local",sub:"reusa worker + sandbox del kernel v1 · claim/exec",
+    que:"Un daemon local (reusa cmd/worker + internal/sandbox del kernel v1) reclama unidades y corre el CLI localmente. Para dev, on-prem, o el operador. Ya tenés las piezas — este trabajo las conecta a la MISMA interfaz de Runtime.",
+    v1:"Hoy: worker+sandbox viven en un universo separado, sin hablar con el path GitHub-native.",
+    tag:"owned", kills:[]},
+  rt_docker:{kind:"glue",group:"Runtime (DÓNDE)",k:"Runtime · docker_isolated",title:"Docker aislado (E2E)",sub:"contenedor egress-deny · deps vendorizadas",
+    que:"Corre el agente en un contenedor efímero con egress-deny (internal/sandbox), para verificación E2E offline creíble o clientes que exigen aislamiento. Es un Runtime más — misma interfaz, distinto 'dónde'.",
+    v1:"Hoy: el sandbox del kernel v1 no está enchufado al despacho GitHub-native.",
+    tag:"glue", kills:[]},
+  rt_cloud:{kind:"rented",group:"Runtime (DÓNDE)",k:"Runtime · cloud (opcional)",title:"Cloud (managed)",sub:"sandbox cloud · keys efímeras de Vault · el upsell",
+    que:"El ÚNICO runtime donde Fluxo pone las keys (de Vault) y come el COGS: el tier de conveniencia 'factura única' para quien no quiere traer sus propias credenciales. OPCIONAL, no el default.",
+    v1:"No existe hoy.",
+    tag:"rented", kills:[]},
+  execenv:{kind:"glue",group:"Aislamiento",k:"ExecEnv",title:"Aislamiento por tarea",sub:"dir/branch por unidad · contexto inyectado · repo on-demand",
+    que:"Cada unidad de trabajo corre en su entorno aislado (runner de Actions / dir local / contenedor). Inyecta el contexto (module map, contrato de provisioning) y limpia al terminar. Es el tercer eje: cómo-se-aísla, ortogonal a runtime y provider.",
+    v1:"Parcial en internal/sandbox (v1), no unificado.",
+    tag:"glue", kills:[]},
   maestro:{kind:"glue",group:null,k:"L2 · Edge Function · DETERMINISTA",title:"Maestro (reconciliador)",sub:"lee estado deseado vs real; emite la próxima acción — con histéresis",
     que:"NO es un LLM. Es una Edge Function con máquina de estados real: reacciona a webhooks (PR/checks/workflow_run) y emite la próxima acción. Con histéresis desde el día 1: una story solo se demota en un evento terminal EXPLÍCITO (failed/cancelled), nunca por 'no vi PR en este tick'. Aquí es donde el juicio de un LLM sería un desastre — por eso es código, pequeño y determinista.",
     v1:"Hoy: el conductor deriva liveness de 1 lectura eventual + UPDATE crudo sin gate/histéresis, y re-despacha en el mismo tick → <b>duplica runs pagos</b>. Y Reencolar no rescata 'running' → ediciones manuales de DB.",
@@ -265,7 +295,12 @@ const L0_GROUPS=[
   {name:"GitHub",nodes:["repos","issues","actions","branch"]},
   {name:"Vercel / CF",nodes:["preview"]},
 ];
-const L12=["method","design","exec","maestro"];
+const L12=["method","design","dispatch","maestro"];
+const RUNTIME_GROUPS=[
+  {name:"Provider (QUÉ CLI · data)",nodes:["providers"]},
+  {name:"Runtime (DÓNDE)",nodes:["rt_gha","rt_local","rt_docker","rt_cloud"]},
+  {name:"Aislamiento",nodes:["execenv"]},
+];
 
 const CONNS=[
   {from:"realtime",to:"ui",kind:"realtime",label:"Realtime (sin polling)"},
@@ -275,13 +310,16 @@ const CONNS=[
   {from:"design",to:"pg",kind:"write",label:"brain-write (MCP)"},
   {from:"design",to:"issues",kind:"write",label:"publica backlog"},
   {from:"method",to:"design",kind:"config",label:"roles + skills"},
-  {from:"exec",to:"actions",kind:"config",label:"corre en Actions"},
-  {from:"vault",to:"exec",kind:"secret",label:"keys efímeras"},
+  {from:"method",to:"providers",kind:"config",label:"providers = data"},
+  {from:"dispatch",to:"rt_gha",kind:"write",label:"unidad de trabajo"},
+  {from:"providers",to:"rt_gha",kind:"config",label:"provider (data)"},
+  {from:"rt_gha",to:"actions",kind:"config",label:"corre en"},
+  {from:"vault",to:"rt_cloud",kind:"secret",label:"managed keys (opcional)"},
   {from:"auth",to:"ui",kind:"realtime",label:"JWT tenant"},
 ];
 
 const LENS_NOTES={
-  arch:"Las 4 capas. El sustrato (L0) es plataforma alquilada; el método (L1) es markdown; los agentes (L2) ejecutan; la UI (L3) es una vista sobre el brain.",
+  arch:"Las capas: sustrato alquilado (L0), método markdown (L1), agentes + Maestro (L2), y la CAPA DE RUNTIME agnóstica (Runtime × Provider × ExecEnv). La UI (L3) es una vista sobre el brain.",
   own:"Azul = alquilado/declarativo (no lo escribís, lo configurás). Naranja = tuyo (markdown/agentes). Ámbar = el único pegamento determinista. Lo apagado es lo que NO mantenés.",
   flows:"Los flujos: webhooks empujan eventos al Maestro; el Maestro escribe estado; la UI se sincroniza por Realtime; los agentes escriben al brain y despachan; el Vault inyecta keys efímeras.",
   kills:"Cada pieza muestra el/los hallazgo(s) de la auditoría que ELIMINA como clase. Lo apagado no elimina nada directo (es sustrato de apoyo).",
@@ -312,6 +350,15 @@ L0_GROUPS.forEach(g=>{
 // L1+L2
 const l12=document.getElementById("l12");
 L12.forEach(id=>l12.appendChild(nodeEl(id)));
+// Capa de Runtime
+const rt=document.getElementById("rt");
+RUNTIME_GROUPS.forEach(g=>{
+  const gg=document.createElement("div"); gg.className="group";
+  gg.innerHTML=`<div class="gname"><span class="gd"></span>${g.name}</div>`;
+  const gn=document.createElement("div"); gn.className="gnodes";
+  g.nodes.forEach(id=>gn.appendChild(nodeEl(id)));
+  gg.appendChild(gn); rt.appendChild(gg);
+});
 
 // ---- wires ----
 const stage=document.getElementById("stage");
