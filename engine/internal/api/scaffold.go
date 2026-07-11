@@ -70,6 +70,11 @@ func (s *Server) scaffoldGitHub(w http.ResponseWriter, r *http.Request) {
 		// project can turn it off (req.Vars below) to measure its cost/value. The
 		// template's `if` reads `!= 'off'`, so on/absent both keep it on.
 		"art_director": "on",
+		// app_path: la app que buildean/verifican ui-verify + build-apk. SIN default,
+		// el token {{app_path}} quedaba sin sustituir en los workflows y su guard
+		// hashFiles nunca matcheaba → el build se saltaba en verde-vacío. Default
+		// apps/customer (multi-app: el caller lo pisa vía req.Vars, y el matrix es fase 2).
+		"app_path": "apps/customer",
 	}
 	if s.Tickets != nil {
 		if stories, err := s.Tickets.ListStoriesByProject(id); err == nil {

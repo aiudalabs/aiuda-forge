@@ -62,7 +62,15 @@ func (s *Server) OnBacklogPublished(projectID, repoURL string) {
 		return
 	}
 	if len(missing) > 0 {
-		log.Printf("costura(%s): scaffold con vars sin valor: %s", projectID, strings.Join(missing, ", "))
+		// Fail-loud: NUNCA commitear un archivo que aún tenga un placeholder {{var}} sin
+		// resolver (p.ej. un workflow con APP_PATH: "{{app_path}}" cuyo guard hashFiles
+		// nunca matchea → build verde-vacío que aparenta pasar). Los excluimos del apply y
+		// lo dejamos VISIBLE en el log, en vez de hornear basura al repo. (Con los defaults
+		// de vars, `missing` normalmente es vacío y no se descarta nada.)
+		var dropped []string
+		files, dropped = dropUnresolvedFiles(files, missing)
+		log.Printf("costura(%s): scaffold con vars sin valor: %s — NO se aplican %d archivo(s) con placeholders: %s",
+			projectID, strings.Join(missing, ", "), len(dropped), strings.Join(dropped, ", "))
 	}
 	written, skipped, err := scaffold.Apply(ctx, gh, repoURL, "main", files, "chore(scaffold): especialización github-native (auto, post-diseño)")
 	if err != nil {
@@ -189,11 +197,36 @@ func (s *Server) stackForProject(projectID string) string {
 	return "python-fastapi-react"
 }
 
+// dropUnresolvedFiles separa los archivos rendidos en los que quedaron limpios y los que
+// aún contienen un placeholder `{{<var>}}` de alguna variable no resuelta (`missing`). Solo
+// mira los tokens `{{var}}` del scaffold, así que NO confunde las expresiones `${{ ... }}` de
+// GitHub Actions (que también contienen `{{`). Es la base del fail-loud de la costura: nunca
+// hornear al repo un archivo con un placeholder sin sustituir.
+func dropUnresolvedFiles(files []scaffold.File, missing []string) (clean []scaffold.File, dropped []string) {
+	for _, f := range files {
+		bad := false
+		for _, mv := range missing {
+			if strings.Contains(f.Content, "{{"+mv+"}}") {
+				bad = true
+				break
+			}
+		}
+		if bad {
+			dropped = append(dropped, f.Path)
+		} else {
+			clean = append(clean, f)
+		}
+	}
+	return clean, dropped
+}
+
 // scaffoldVarsFor deriva las variables de template del proyecto (nombre, lanes).
 func (s *Server) scaffoldVarsFor(projectID, stack string) scaffold.Vars {
 	// art_director: on by default — gates the ui-verify visual-acceptance step. The
 	// template reads `!= 'off'`, so on/absent both keep it on.
-	vars := scaffold.Vars{"stack": stack, "language": "es", "art_director": "on"}
+	// app_path default (ver scaffold.go): sin esto {{app_path}} quedaba sin sustituir y
+	// el build se saltaba en verde-vacío. apps/customer es el default; multi-app = fase 2.
+	vars := scaffold.Vars{"stack": stack, "language": "es", "art_director": "on", "app_path": "apps/customer"}
 	if s.Projects != nil {
 		if p, err := s.Projects.Get(projectID); err == nil {
 			vars["project_name"] = p.Name

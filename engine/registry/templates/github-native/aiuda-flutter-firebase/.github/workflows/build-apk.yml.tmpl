@@ -47,6 +47,27 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # Self-heal (§2C): si el agente escribió lib/+pubspec pero nunca corrió
+      # `flutter create`, la carpeta android/ no existe y el build fallaría. El comando
+      # de bootstrap vive en el contrato del stack (DATA, §1-bis); lo corremos SOLO si
+      # falta la plataforma android — `flutter create` es idempotente (genera solo lo
+      # que falta). Así un repo con lib/ pero sin android/ buildea igual. Cierra el
+      # "bug #1" que hoy el provisioning-lint solo detecta, no repara.
+      - name: Ensure Android platform (self-heal from contract)
+        if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' && hashFiles('{{app_path}}/android/app/src/main/AndroidManifest.xml') == '' }}
+        working-directory: ${{ env.APP_PATH }}
+        run: |
+          set -euo pipefail
+          BOOT="$(sed -n 's/^[[:space:]]*bootstrap:[[:space:]]*"\(.*\)".*/\1/p' "$GITHUB_WORKSPACE/.fluxo/verify/stack.verify.yaml" | head -1 || true)"
+          # Guarda de seguridad: solo aceptamos un `flutter create ...` del contrato;
+          # si no, un default conservador (solo android, la plataforma que falta acá).
+          case "$BOOT" in
+            "flutter create"*) : ;;
+            *) BOOT="flutter create --platforms=android ." ;;
+          esac
+          echo "Self-heal de plataforma (lib/ presente, android/ ausente): $BOOT"
+          eval "$BOOT"
+
       - name: Bootstrap Dart workspace (melos, best-effort)
         if: ${{ hashFiles('{{app_path}}/pubspec.yaml') != '' }}
         run: |
