@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Fluxo v2 · Arquitectura agent-native (navegable)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,900&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+<style>
+  :root{
+    --orange:#e8440a; --orange-soft:#fdede5; --blue:#1660c9; --blue-soft:#e8f0fd;
+    --amber:#b45309; --amber-soft:#fbeecb; --fail:#b3261e;
+    --ink:#141310; --ink2:#57534a; --ink3:#8a8378;
+    --paper:#f7f2ea; --paper2:#efe7db; --card:#fffdf9; --line:#e6ddcf; --line2:#d8cdb9;
+    --sans:"Public Sans",system-ui,sans-serif; --serif:"Fraunces",Georgia,serif; --mono:"JetBrains Mono",monospace;
+    --shadow:0 1px 2px rgba(20,19,16,.05),0 10px 30px -14px rgba(20,19,16,.22);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;-webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(1100px 520px at 88% -10%,var(--orange-soft),transparent 55%),radial-gradient(900px 440px at -8% 0%,var(--blue-soft),transparent 55%);
+    background-attachment:fixed;}
+  h1,h2,h3{font-family:var(--serif);margin:0;letter-spacing:-.02em}
+  .mono{font-family:var(--mono)}
+  .top{padding:22px 26px 0;max-width:1200px;margin:0 auto}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-weight:900;font-size:20px}
+  .brand .dot{width:12px;height:12px;border-radius:3px;background:var(--orange);box-shadow:0 0 0 3px var(--orange-soft);rotate:45deg}
+  .brand small{font-family:var(--mono);font-weight:400;font-size:10px;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase}
+  h1.title{font-size:clamp(24px,3.2vw,34px);margin-top:14px}
+  .sub{color:var(--ink2);margin-top:8px;max-width:70ch;font-size:15px}
+  .hint{font-family:var(--mono);font-size:11.5px;color:var(--ink3);margin-top:6px}
+
+  /* lens toggles */
+  .lenses{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 6px}
+  .lens{font-family:var(--mono);font-size:12px;font-weight:600;padding:8px 13px;border-radius:9px;border:1px solid var(--line2);
+    background:var(--card);color:var(--ink2);cursor:pointer;transition:.12s}
+  .lens:hover{color:var(--ink)}
+  .lens.active{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  .lens-note{font-size:13px;color:var(--ink2);min-height:20px;margin:4px 0 0}
+
+  /* legend */
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:11.5px;color:var(--ink2);margin:10px 0 2px}
+  .legend b{display:inline-flex;align-items:center;gap:6px;font-weight:600}
+  .sw{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.1)}
+  .sw.rented{background:var(--blue-soft);border-color:var(--blue)}
+  .sw.owned{background:var(--orange-soft);border-color:var(--orange)}
+  .sw.glue{background:var(--amber-soft);border-color:var(--amber)}
+
+  /* stage */
+  .stage-wrap{max-width:1200px;margin:8px auto 40px;padding:0 26px}
+  .stage{position:relative;padding:6px 0}
+  svg.wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;overflow:visible}
+  .band{position:relative;z-index:2;border:1px dashed var(--line2);border-radius:16px;padding:12px 14px 16px;margin:22px 0;background:color-mix(in srgb,var(--card) 55%,transparent)}
+  .band-hd{display:flex;align-items:baseline;gap:12px;margin:2px 4px 12px}
+  .band-hd .l{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink);letter-spacing:.04em}
+  .band-hd .t{font-size:12px;color:var(--ink3)}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .group{flex:1;min-width:200px;border:1px solid var(--line);border-radius:13px;padding:10px 10px 12px;background:color-mix(in srgb,var(--paper2) 60%,transparent)}
+  .group .gname{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink2);margin:2px 4px 9px;display:flex;align-items:center;gap:7px}
+  .group .gname .gd{width:8px;height:8px;border-radius:2px;background:var(--blue)}
+  .group .gnodes{display:flex;gap:10px;flex-wrap:wrap}
+
+  .node{position:relative;flex:1;min-width:150px;border:1.5px solid var(--line2);border-radius:11px;padding:12px 13px;background:var(--card);
+    cursor:pointer;transition:transform .12s,box-shadow .12s,border-color .12s;box-shadow:var(--shadow)}
+  .node:hover{transform:translateY(-2px);box-shadow:0 14px 34px -16px rgba(20,19,16,.4)}
+  .node[data-kind="rented"]{border-color:color-mix(in srgb,var(--blue) 45%,var(--line2))}
+  .node[data-kind="owned"]{border-color:color-mix(in srgb,var(--orange) 45%,var(--line2))}
+  .node[data-kind="glue"]{border-color:color-mix(in srgb,var(--amber) 55%,var(--line2))}
+  .node .k{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+  .node[data-kind="rented"] .k{color:var(--blue)} .node[data-kind="owned"] .k{color:var(--orange)} .node[data-kind="glue"] .k{color:var(--amber)}
+  .node h3{font-size:16px;font-weight:600;margin:5px 0 3px}
+  .node p{margin:0;font-size:12px;color:var(--ink2);line-height:1.45}
+  .node .kills{margin-top:8px;display:none;flex-wrap:wrap;gap:4px}
+  .node .kill{font-family:var(--mono);font-size:9.5px;font-weight:600;background:var(--fail);color:#fff;padding:2px 6px;border-radius:5px}
+  .node.big{min-width:100%}
+
+  /* lens: owned vs rented — dim the others */
+  body[data-lens="own"] .node{opacity:.34;filter:grayscale(.5)}
+  body[data-lens="own"] .node[data-kind="owned"],body[data-lens="own"] .node[data-kind="glue"]{opacity:1;filter:none}
+  body[data-lens="own"] .node[data-kind="owned"]{background:var(--orange-soft)}
+  body[data-lens="own"] .node[data-kind="glue"]{background:var(--amber-soft)}
+  /* lens: kills */
+  body[data-lens="kills"] .node .kills{display:flex}
+  body[data-lens="kills"] .node:not(.has-kills){opacity:.4}
+  /* lens: flows — show wire labels + animate */
+  .wire{stroke-width:2;fill:none;opacity:.5}
+  .wire.write{stroke:var(--orange)} .wire.realtime{stroke:var(--blue)} .wire.event{stroke:var(--amber)}
+  .wire.config{stroke:var(--ink3)} .wire.secret{stroke:var(--fail)} .wire.embed{stroke:var(--blue)}
+  .wlabel{font-family:var(--mono);font-size:10px;fill:var(--ink2);opacity:0;transition:.2s}
+  .wlabel-bg{fill:var(--paper);opacity:0;transition:.2s}
+  body[data-lens="flows"] .wire{opacity:.95;stroke-dasharray:6 5;animation:march 1.1s linear infinite}
+  body[data-lens="flows"] .wlabel,body[data-lens="flows"] .wlabel-bg{opacity:1}
+  body[data-lens="flows"] .node{opacity:.55}
+  @keyframes march{to{stroke-dashoffset:-22}}
+
+  /* drawer */
+  .scrim{position:fixed;inset:0;background:rgba(20,19,16,.35);opacity:0;pointer-events:none;transition:.2s;z-index:40}
+  .scrim.open{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:min(430px,92vw);background:var(--card);border-left:1px solid var(--line);
+    box-shadow:-20px 0 60px -30px rgba(0,0,0,.5);transform:translateX(100%);transition:transform .24s cubic-bezier(.2,.7,.2,1);z-index:41;overflow-y:auto}
+  .drawer.open{transform:none}
+  .drawer .dhd{padding:22px 24px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card)}
+  .drawer .dk{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase}
+  .drawer h2{font-size:24px;margin:8px 0 2px}
+  .drawer .dsub{font-size:13px;color:var(--ink2)}
+  .drawer .dbody{padding:20px 24px 40px}
+  .drawer .block{margin-bottom:20px}
+  .drawer .block h4{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin:0 0 7px}
+  .drawer .block p{margin:0;font-size:14px;line-height:1.55;color:var(--ink)}
+  .drawer .kchips{display:flex;flex-wrap:wrap;gap:6px}
+  .drawer .kchip{font-family:var(--mono);font-size:11px;font-weight:600;background:var(--fail);color:#fff;padding:3px 8px;border-radius:6px}
+  .drawer .tag{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;padding:3px 9px;border-radius:100px}
+  .tag.rented{background:var(--blue-soft);color:var(--blue)} .tag.owned{background:var(--orange-soft);color:var(--orange)} .tag.glue{background:var(--amber-soft);color:var(--amber)}
+  .dclose{position:absolute;top:18px;right:18px;width:32px;height:32px;border-radius:8px;border:1px solid var(--line2);background:var(--card);cursor:pointer;font-size:16px;color:var(--ink2);line-height:1}
+  .drawer .v1{background:var(--paper2);border-radius:10px;padding:12px 14px;font-size:13.5px;color:var(--ink2)}
+  .drawer .v1 b{color:var(--ink)}
+
+  footer{max-width:1200px;margin:0 auto 40px;padding:16px 26px;font-family:var(--mono);font-size:11px;color:var(--ink3);border-top:1px solid var(--line)}
+  @media (prefers-color-scheme:dark){
+    :root{--paper:#17150f;--paper2:#211d15;--card:#211d15;--ink:#f4efe4;--ink2:#c3bba9;--ink3:#8f8776;--line:#332d20;--line2:#443c2c;--orange-soft:#3a1a0d;--blue-soft:#0f2036;--amber-soft:#3a2a0c}
+  }
+</style>
+</head>
+<body data-lens="arch">
+
+<div class="top">
+  <div class="brand"><span class="dot"></span> Fluxo <small>v2 · arquitectura agent-native</small></div>
+  <h1 class="title">Orchestration-as-data: el sustrato se alquila, el método es lo único propio</h1>
+  <p class="sub">Diagrama navegable de la propuesta. <b>Clic en cualquier bloque</b> para ver qué es, qué reemplaza de hoy y qué hallazgo de la auditoría elimina. Cambiá de <b>lente</b> abajo.</p>
+  <p class="hint">tip · probá la lente "Qué elimina" para ver cómo cada pieza mata una clase de bug de la auditoría 2026-07-11.</p>
+
+  <div class="lenses" id="lenses">
+    <button class="lens active" data-l="arch">Arquitectura</button>
+    <button class="lens" data-l="own">Alquilado vs propio</button>
+    <button class="lens" data-l="flows">Flujos de datos</button>
+    <button class="lens" data-l="kills">Qué elimina</button>
+  </div>
+  <p class="lens-note" id="lensNote">Las 4 capas. El sustrato (L0) es plataforma alquilada; el método (L1) es markdown; los agentes (L2) ejecutan; la UI (L3) es una vista sobre el brain.</p>
+
+  <div class="legend">
+    <b><span class="sw rented"></span> alquilado · declarativo (cero código)</b>
+    <b><span class="sw owned"></span> propio · markdown / agentes</b>
+    <b><span class="sw glue"></span> pegamento determinista (Edge Function)</b>
+  </div>
+</div>
+
+<div class="stage-wrap">
+  <div class="stage" id="stage">
+    <svg class="wires" id="wires" preserveAspectRatio="none"></svg>
+
+    <!-- L3 -->
+    <div class="band">
+      <div class="band-hd"><span class="l">L3 · UI</span><span class="t">una vista sobre el brain — casi sin backend propio</span></div>
+      <div class="row">
+        <div class="node big" data-id="ui"></div>
+      </div>
+    </div>
+
+    <!-- L0 -->
+    <div class="band">
+      <div class="band-hd"><span class="l">L0 · Sustrato alquilado</span><span class="t">cero código bespoke — todo es config declarativa</span></div>
+      <div class="row" id="l0"></div>
+    </div>
+
+    <!-- L1 + L2 -->
+    <div class="band">
+      <div class="band-hd"><span class="l">L1 · Método &nbsp;+&nbsp; L2 · Agentes</span><span class="t">lo único propio: markdown que define, agentes que ejecutan</span></div>
+      <div class="row" id="l12"></div>
+    </div>
+  </div>
+</div>
+
+<footer>Fluxo v2 · propuesta post-auditoría 2026-07-11 · el sustrato determinista se alquila (Supabase RLS+Realtime+Vault · GitHub Actions · Vercel preview); lo propio es el método (agents/skills/markdown) + un Maestro reconciliador determinista con histéresis.</footer>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <button class="dclose" id="dclose" aria-label="Cerrar">✕</button>
+  <div class="dhd"><div class="dk" id="dK"></div><h2 id="dTitle"></h2><div class="dsub" id="dSub"></div></div>
+  <div class="dbody" id="dBody"></div>
+</aside>
+
+<script>
+const NODES = {
+  ui:{kind:"owned",group:null,k:"L3 · Next.js delgado",title:"UI de equipo",sub:"board · grafo de deps + click-para-despachar · brain explorer · preview live · gates conversacionales",
+    que:"Un Next.js que lee Supabase directo con RLS + Realtime. Casi no tiene backend propio: es una VISTA sobre el brain. El grafo de dependencias con click-para-despachar y el preview embebido en vivo son la ergonomía que ningún agente-de-terminal da.",
+    v1:"Hoy la consola habla con un control plane en Go y una UI que, tras publicar el backlog, <b>se queda muda</b> (default dispatch 'approve', Studio no linkea a ejecución).",
+    tag:"owned", kills:["UX-1","UX-4"]},
+  pg:{kind:"rented",group:"Supabase",k:"Postgres + RLS",title:"El brain multi-tenant",sub:"tabla append-only brain_events + stories/runs, aislamiento por Row-Level Security",
+    que:"Cada fila lleva tenant_id/project_id y una policy `using (tenant_id = auth.jwt()->>'tenant')`. El aislamiento deja de ser un WHERE que un dev olvida y pasa a ser IMPOSIBLE de saltar: la DB rechaza la lectura/escritura cruzada. Una regla declarativa mata la clase entera de bugs cross-tenant.",
+    v1:"Hoy: SQLite con <b>MaxOpenConns(1)</b>, sin índice project_id, y scoping a mano con UPDATE `WHERE id=?` <b>sin project_id</b> → un tenant pisa la story de otro.",
+    tag:"rented", kills:["ARCH-1","ARCH-3","ARCH-5","SEC-1","SEC-2","SEC-6"]},
+  realtime:{kind:"rented",group:"Supabase",k:"Realtime",title:"Proyección viva",sub:"la UI se suscribe a los cambios; cero polling",
+    que:"El estado se EMPUJA a la UI por websocket cuando cambia. Adiós al conductor serial que pollea GitHub cada 25s y al flap por lectura eventual: el board no se deriva de una foto, se sincroniza solo.",
+    v1:"Hoy: un goroutine conductor serial recorre TODOS los tenants con GitHub bloqueante cada 25s; el 'running' se deriva de 1 lectura eventual del label → <b>flap running↔backlog</b>.",
+    tag:"rented", kills:["ARCH-2","ARCH-4"]},
+  auth:{kind:"rented",group:"Supabase",k:"Auth",title:"Identidad + tenant",sub:"GitHub OAuth nativo → JWT con tenant_id",
+    que:"Supabase Auth hace el login con GitHub y emite el JWT que lleva el tenant_id que las policies RLS consumen. La identidad y el tenant dejan de ser costura hecha a mano.",
+    v1:"Hoy: email+password sembrado por env + una costura de tokens (OAuth user-to-server + installation) resuelta a mano en Go.",
+    tag:"rented", kills:[]},
+  vault:{kind:"rented",group:"Supabase",k:"Vault",title:"Managed keys",sub:"las API keys de los modelos, cifradas; factura única",
+    que:"Las keys de Anthropic/otros viven en Supabase Vault. El dispatch las inyecta como secret efímero al job del agente; el metering es por tenant_id. Habilita el modelo de factura única sin repartir keys entre devs.",
+    v1:"Hoy: la llave maestra de la GitHub App (PEM + secrets) en <b>un archivo plaintext 0600 en el host</b>, sin KMS ni rotación.",
+    tag:"rented", kills:["SEC-3"]},
+  repos:{kind:"rented",group:"GitHub",k:"Repos (cliente)",title:"En el GitHub del cliente",sub:"el código vive en el repo del cliente, no en Fluxo",
+    que:"El entregable vive donde el cliente ya trabaja. Sin lock-in del código: Fluxo orquesta, no secuestra el repo.",
+    v1:"Igual hoy — es la buena apuesta que se conserva.",
+    tag:"rented", kills:[]},
+  issues:{kind:"rented",group:"GitHub",k:"Issues",title:"Backlog = verdad",sub:"Issues + grafo blocked_by = la fuente de verdad del backlog",
+    que:"El backlog es Issues nativos con dependencias. Fluxo no inventa un backlog paralelo: usa el de GitHub como verdad y le proyecta estado.",
+    v1:"Hoy ya publica Issues — pero la jerarquía épica→sprint→story está <b>hardcodeada en Go</b> (publish.go), no en el registry.",
+    tag:"rented", kills:[]},
+  actions:{kind:"rented",group:"GitHub",k:"Actions",title:"Runtime del agente",sub:"claude-code-action / Copilot corren en Actions del cliente",
+    que:"El agente de ejecución corre en los Actions del repo del cliente, con las keys inyectadas efímeras. El runtime multi-agente es de GitHub — Fluxo lo ENVUELVE, no lo reimplementa.",
+    v1:"Hoy ya usa Actions — pero la liveness de la sesión se lee de forma frágil (404 de Copilot = 'sin veredicto' → sesión colgada).",
+    tag:"rented", kills:["AUTO-4"]},
+  branch:{kind:"rented",group:"GitHub",k:"Branch protection",title:"Gates duros",sub:"verify como check REQUERIDO — no continue-on-error",
+    que:"Los gates de verificación (e2e, ui-verify, review) son checks REQUERIDOS por branch protection: un PR no mergea si no pasan de verdad. El gate deja de ser decorativo.",
+    v1:"Hoy: el gate es <b>verde-pero-vacío</b> — e2e-verify es continue-on-error y ui-verify se SKIPea siempre ({{app_path}} sin renderizar).",
+    tag:"rented", kills:["AUTO-3"]},
+  preview:{kind:"rented",group:"Vercel / CF",k:"Preview deploy",title:"El 'Lovable' real",sub:"preview deployment por branch/PR: URL viva + logs en stream",
+    que:"Cada branch/PR obtiene un deploy de preview out-of-the-box: URL viva y logs de build en stream, embebidos en la UI. El 'deploy en real-time mostrando el end product' NO se programa: es integración de plataforma.",
+    v1:"Hoy: preview bespoke en Go (api/previews.go).",
+    tag:"rented", kills:[]},
+  method:{kind:"owned",group:null,k:"L1 · Registry",title:"El método",sub:"agents/*.md · skills/*.md · workflows/*.yaml — lo único verdaderamente propio",
+    que:"Roles, capacidades y ceremonias como DATA. En v2 es EL producto, no una capa de config sobre un kernel de Go. Skill clave nueva: brain-write (append auditable al brain). El '100% del método vive en el registry' se cumple de verdad.",
+    v1:"Hoy: el método está <b>parcialmente</b> en el registry y parcialmente hardcodeado en Go (publish.go, gate.go) — la regla de oro #1 se viola.",
+    tag:"owned", kills:["CQ-1"]},
+  design:{kind:"owned",group:null,k:"L2 · Claude Agent SDK",title:"Agentes de diseño",sub:"el loop vive en el SDK; el rol vive en markdown",
+    que:"Cada agente de diseño = system prompt (el rol .md) + skills + tools MCP hacia el brain y GitHub. 'El agente vive en markdown' se vuelve literal. Escribe al brain vía la skill brain-write y publica Issues.",
+    v1:"Hoy: un step-runner en Go orquesta a los agentes de diseño; el contexto entre fases era latente (bug del resolver $step.text).",
+    tag:"owned", kills:[]},
+  exec:{kind:"owned",group:null,k:"L2 · Ejecución",title:"Agentes de código",sub:"claude-code-action / Copilot, un lane = un canal por dato",
+    que:"El agente de implementación corre en Actions con la key efímera del Vault. El canal (Claude o Copilot) se elige por dato, por lane — sin lock-in del modelo.",
+    v1:"Hoy ya existe — pero con la costura de tokens a mano y sin failover limpio por agotamiento de créditos.",
+    tag:"owned", kills:[]},
+  maestro:{kind:"glue",group:null,k:"L2 · Edge Function · DETERMINISTA",title:"Maestro (reconciliador)",sub:"lee estado deseado vs real; emite la próxima acción — con histéresis",
+    que:"NO es un LLM. Es una Edge Function con máquina de estados real: reacciona a webhooks (PR/checks/workflow_run) y emite la próxima acción. Con histéresis desde el día 1: una story solo se demota en un evento terminal EXPLÍCITO (failed/cancelled), nunca por 'no vi PR en este tick'. Aquí es donde el juicio de un LLM sería un desastre — por eso es código, pequeño y determinista.",
+    v1:"Hoy: el conductor deriva liveness de 1 lectura eventual + UPDATE crudo sin gate/histéresis, y re-despacha en el mismo tick → <b>duplica runs pagos</b>. Y Reencolar no rescata 'running' → ediciones manuales de DB.",
+    tag:"glue", kills:["ARCH-2","AUTO-2"]},
+};
+
+// Layout
+const L0_GROUPS=[
+  {name:"Supabase",nodes:["pg","realtime","auth","vault"]},
+  {name:"GitHub",nodes:["repos","issues","actions","branch"]},
+  {name:"Vercel / CF",nodes:["preview"]},
+];
+const L12=["method","design","exec","maestro"];
+
+const CONNS=[
+  {from:"realtime",to:"ui",kind:"realtime",label:"Realtime (sin polling)"},
+  {from:"preview",to:"ui",kind:"embed",label:"embed preview live"},
+  {from:"actions",to:"maestro",kind:"event",label:"webhooks push"},
+  {from:"maestro",to:"pg",kind:"write",label:"escribe estado · histéresis"},
+  {from:"design",to:"pg",kind:"write",label:"brain-write (MCP)"},
+  {from:"design",to:"issues",kind:"write",label:"publica backlog"},
+  {from:"method",to:"design",kind:"config",label:"roles + skills"},
+  {from:"exec",to:"actions",kind:"config",label:"corre en Actions"},
+  {from:"vault",to:"exec",kind:"secret",label:"keys efímeras"},
+  {from:"auth",to:"ui",kind:"realtime",label:"JWT tenant"},
+];
+
+const LENS_NOTES={
+  arch:"Las 4 capas. El sustrato (L0) es plataforma alquilada; el método (L1) es markdown; los agentes (L2) ejecutan; la UI (L3) es una vista sobre el brain.",
+  own:"Azul = alquilado/declarativo (no lo escribís, lo configurás). Naranja = tuyo (markdown/agentes). Ámbar = el único pegamento determinista. Lo apagado es lo que NO mantenés.",
+  flows:"Los flujos: webhooks empujan eventos al Maestro; el Maestro escribe estado; la UI se sincroniza por Realtime; los agentes escriben al brain y despachan; el Vault inyecta keys efímeras.",
+  kills:"Cada pieza muestra el/los hallazgo(s) de la auditoría que ELIMINA como clase. Lo apagado no elimina nada directo (es sustrato de apoyo).",
+};
+
+// ---- render ----
+function nodeEl(id){
+  const n=NODES[id];
+  const el=document.createElement("div");
+  el.className="node"+(n.kills&&n.kills.length?" has-kills":"")+(id==="ui"?" big":"");
+  el.dataset.id=id; el.dataset.kind=n.kind;
+  el.innerHTML=`<div class="k">${n.k}</div><h3>${n.title}</h3><p>${n.sub}</p>`+
+    (n.kills&&n.kills.length?`<div class="kills">${n.kills.map(k=>`<span class="kill">${k}</span>`).join("")}</div>`:"");
+  el.addEventListener("click",()=>openDrawer(id));
+  return el;
+}
+// L3
+document.querySelector('.node.big[data-id="ui"]').replaceWith(nodeEl("ui"));
+// L0
+const l0=document.getElementById("l0");
+L0_GROUPS.forEach(g=>{
+  const gg=document.createElement("div"); gg.className="group";
+  gg.innerHTML=`<div class="gname"><span class="gd"></span>${g.name}</div>`;
+  const gn=document.createElement("div"); gn.className="gnodes";
+  g.nodes.forEach(id=>gn.appendChild(nodeEl(id)));
+  gg.appendChild(gn); l0.appendChild(gg);
+});
+// L1+L2
+const l12=document.getElementById("l12");
+L12.forEach(id=>l12.appendChild(nodeEl(id)));
+
+// ---- wires ----
+const stage=document.getElementById("stage");
+const wires=document.getElementById("wires");
+function centerBottom(r,s){return {x:r.left+r.width/2-s.left, y:r.bottom-s.top};}
+function centerTop(r,s){return {x:r.left+r.width/2-s.left, y:r.top-s.top};}
+function elById(id){return document.querySelector(`.node[data-id="${id}"]`);}
+function drawWires(){
+  const s=stage.getBoundingClientRect();
+  wires.setAttribute("viewBox",`0 0 ${s.width} ${s.height}`);
+  wires.style.height=s.height+"px";
+  let html="";
+  CONNS.forEach(c=>{
+    const a=elById(c.from), b=elById(c.to); if(!a||!b) return;
+    const ra=a.getBoundingClientRect(), rb=b.getBoundingClientRect();
+    let p1,p2;
+    if(ra.top<rb.top){p1=centerBottom(ra,s);p2=centerTop(rb,s);}
+    else{p1=centerTop(ra,s);p2=centerBottom(rb,s);}
+    const midy=(p1.y+p2.y)/2;
+    const d=`M ${p1.x} ${p1.y} C ${p1.x} ${midy}, ${p2.x} ${midy}, ${p2.x} ${p2.y}`;
+    const lx=(p1.x+p2.x)/2, ly=midy;
+    const w=c.label.length*5.6;
+    html+=`<path class="wire ${c.kind}" d="${d}"/>`+
+      `<rect class="wlabel-bg" x="${lx-w/2-4}" y="${ly-8}" width="${w+8}" height="16" rx="4"/>`+
+      `<text class="wlabel" x="${lx}" y="${ly+3}" text-anchor="middle">${c.label}</text>`;
+  });
+  wires.innerHTML=html;
+}
+window.addEventListener("load",()=>{drawWires();setTimeout(drawWires,300);});
+window.addEventListener("resize",drawWires);
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(drawWires);
+
+// ---- lenses ----
+const lensNote=document.getElementById("lensNote");
+document.getElementById("lenses").addEventListener("click",e=>{
+  const b=e.target.closest(".lens"); if(!b) return;
+  document.querySelectorAll(".lens").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active");
+  document.body.dataset.lens=b.dataset.l;
+  lensNote.textContent=LENS_NOTES[b.dataset.l];
+  requestAnimationFrame(drawWires);
+});
+
+// ---- drawer ----
+const drawer=document.getElementById("drawer"), scrim=document.getElementById("scrim");
+function openDrawer(id){
+  const n=NODES[id];
+  document.getElementById("dK").textContent=n.k;
+  document.getElementById("dTitle").textContent=n.title;
+  document.getElementById("dSub").textContent=n.sub;
+  const tagLbl={rented:"alquilado · declarativo",owned:"propio · markdown/agente",glue:"pegamento determinista"}[n.tag];
+  document.getElementById("dBody").innerHTML=
+    `<div class="block"><span class="tag ${n.tag}">${tagLbl}</span></div>`+
+    `<div class="block"><h4>Qué es</h4><p>${n.que}</p></div>`+
+    `<div class="block"><h4>Qué reemplaza de hoy</h4><div class="v1">${n.v1}</div></div>`+
+    (n.kills&&n.kills.length
+      ? `<div class="block"><h4>Elimina de la auditoría</h4><div class="kchips">${n.kills.map(k=>`<span class="kchip">${k}</span>`).join("")}</div></div>`
+      : `<div class="block"><h4>Elimina de la auditoría</h4><p style="color:var(--ink3)">Sustrato de apoyo — no elimina un hallazgo directo, pero habilita a los que sí.</p></div>`);
+  drawer.classList.add("open"); drawer.setAttribute("aria-hidden","false"); scrim.classList.add("open");
+}
+function closeDrawer(){drawer.classList.remove("open");drawer.setAttribute("aria-hidden","true");scrim.classList.remove("open");}
+document.getElementById("dclose").addEventListener("click",closeDrawer);
+scrim.addEventListener("click",closeDrawer);
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDrawer();});
+</script>
+</body>
+</html>
